@@ -1,62 +1,18 @@
 ---
-description: "Compute the price of long context, derive the mechanisms that reduce it, and measure whether a model can use the context it accepts."
+description: "Compute the price of long context, build the attention and position mechanisms that reduce it — grouped and latent KV, sliding windows, sinks, RoPE and its extensions — and measure, with our own probe, whether a model can use the context it accepts."
 ---
 
-# Attention, Position, and Long Context [F+S] {#sec-ch03}
+# Attention, Position, and Long Context {#sec-ch03}
 
-## What you need going in {#sec-ch03-prerequisites}
+In Chapter 2 we gave TinyGPT a learned absolute position table and called it a placeholder (@sec-ch02-decoder), and we watched its KV cache grow at exactly ${2BLds}$ bytes per token (@sec-ch02-kv-cache). This chapter cashes in both. The position table is replaced by rotary embeddings, which encode *relative* offset and can be stretched to longer contexts. And that innocuous ${2BLds}$, evaluated at a production scale, becomes the central cost of long context.
 
-> **Assumed:** neural-network fundamentals, matrix multiplication, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter 2, Cache Past Keys and Values Exactly](02-transformer-first-principles.qmd#sec-ch02-kv-cache) — cached decoding reuses projected keys and values without changing the next-token function; [Chapter 2, Multi-Head Attention and the Causal Mask](02-transformer-first-principles.qmd#sec-ch02-multihead) — each query head performs a causal weighted lookup.
->
-> **Not required:** distributed training, GPU-kernel programming, serving schedulers, or prior knowledge of rotary position embeddings.
+Here is the shock in one number. An agent has spent an hour reading a repository, opening issues, running tests, and refining a patch; its transcript reaches 128K tokens. The next request adds four words — "now fix the race." For a conventional 32-layer, 32-head model with 128-dimensional heads and two-byte cached scalars, that one conversation's keys and values occupy **64 GiB** — payload alone, before weights, activations, or allocator slack. At 4K tokens the same state is 2 GiB. Context grew by 32×; persistent attention state grew by 32× with it.
 
-## Contents {#sec-ch03-contents}
+We build the mechanisms that bend that curve, in small executed pieces: (i) a KV-byte calculator we run against real model configs; (ii) grouped-query and latent attention layers whose caches we shrink and measure; (iii) sliding-window and attention-sink masks we visualize and price; (iv) RoPE derived from rotation, with its relative-offset invariant printed live; (v) the PI, NTK, and YaRN recipes that reshape RoPE's frequency bands; and (vi) a synthetic retrieval-versus-position probe — the chapter's flagship figure — measured before and after scaling. Three questions organize the work: **capacity** (how many bytes stay live?), **computation** (how much work per token?), and **capability** (does the model actually use the evidence?).
 
-- [The bill arrives before the answer](#sec-ch03-bill)
-- [What you will build](#sec-ch03-will-build)
-- [The canonical KV-cache equation](#sec-ch03-kv-equation)
-- [Share keys and values: MQA and GQA](#sec-ch03-gqa)
-- [Compress the cache: MLA](#sec-ch03-mla)
-- [Restrict visibility: windows, interleaving, and sinks](#sec-ch03-patterns)
-- [RoPE encodes relative position by rotation](#sec-ch03-rope)
-- [Stretching RoPE changes the coordinate system](#sec-ch03-scaling)
-- [No position, dropped position, and distributed context](#sec-ch03-alternatives)
-- [Advertised context is not effective context](#sec-ch03-effective)
-- [Benchmark the failure you actually care about](#sec-ch03-benchmarks)
-- [Build](#sec-ch03-build)
-- [What endures, what changes](#sec-ch03-endures)
-- [Exercises](#sec-ch03-exercises)
-- [Notes and sources](#sec-ch03-notes)
+## The KV-cache equation {#sec-ch03-kv-equation}
 
-## The Bill Arrives Before the Answer {#sec-ch03-bill}
-
-An agent has spent an hour reading a repository, opening issue threads, running tests, and refining a patch. Its transcript has reached 128K tokens. The next request adds only a few words: “now fix the race.” The serving system must preserve enough state for every attention layer to make that small continuation depend on the entire retained history.
-
-For a conventional 32-layer, 32-head attention model with 128-dimensional heads and two-byte cached scalars, that one conversation's keys and values occupy 64 GiB at 128K tokens. This is payload alone: no model weights, activations, allocator metadata, temporary attention workspace, or safety margin. At 4K tokens the same state occupies 2 GiB. Context length changed by a factor of 32; persistent attention state changed by the same factor.
-
-That is the long-context economic story. Token limits are product-interface facts, but cache bytes determine how many live sessions fit in memory. Attention work determines how long the next token takes. Retrieval quality determines whether preserving all that state bought anything useful. A senior engineer has to keep the three ledgers separate:
-
-1. **Capacity:** how many bytes remain live for the request?
-2. **Computation:** how much work does prefill or the next decode step perform?
-3. **Capability:** does the model use the relevant evidence at this length and position?
-
-A KV cache removes repeated projection of old tokens. It does not make dense decoding constant-time. At decode step $T$, the new query still scores the retained keys and mixes their values, so attention work for that step remains linear in $T$. Dense prefill still contains a quadratic attention term. And a large accepted window does not establish accurate retrieval, synthesis, or reasoning throughout that window.
-
-The mechanisms in this chapter bend one of those curves. Multi-query and grouped-query attention share cached heads. Multi-head latent attention stores a compressed representation. Sliding windows stop most tokens from remaining visible to most queries. RoPE supplies a relative positional coordinate system, while extension methods alter its frequencies. Long-context benchmarks test whether the model's useful window grew with its declared one. None is a free “long context” switch.
-
-## What you will build {#sec-ch03-will-build}
-
-::: {.callout-tip}
-**The chapter artifact.** [`kv_math.py`](../code/ch03/kv_math.py) contains the book's single canonical KV-byte function, one grouped-query layer whose KV-head dial spans MHA, GQA, and MQA, and an inspectable MLA-style layer. [`rope.py`](../code/ch03/rope.py) implements RoPE, NTK-aware base scaling, and YaRN's frequency-by-parts and magnitude scaling. [`run_build.py`](../code/ch03/run_build.py) loads three dated configuration excerpts, writes exact footprint tables, exercises both attention layers, and runs a seeded synthetic needle probe over 21 positions. The default is offline and deterministic. Success means the analytic bytes match known cases, cached chunks preserve grouped-attention outputs, RoPE preserves its relative-offset invariant, and every plotted point comes from a saved CSV.
-:::
-
-This is one progressive artifact, not a serving runtime. It owns architecture arithmetic and a mechanism probe. Chapter 9 will use the equation when analyzing inference behavior; Chapter 10 will use it for capacity planning and add paging, allocation, eviction, cache precision, and kernels. Those later chapters should cite this declaration rather than creating a competing formula.
-
-## The Canonical KV-Cache Equation {#sec-ch03-kv-equation}
-
-Start from one layer. For every retained token and request in a batch, standard attention caches one key and one value for each KV head. Define:
+Start from one layer. During autoregressive decoding the query projections are transient, but every retained token contributes one key and one value *per KV head* that must persist so the next token can attend over the whole history. Multiply that per-token slice out over the model and we have the whole cost. Define:
 
 | Symbol | Meaning |
 |---|---|
@@ -64,395 +20,808 @@ Start from one layer. For every retained token and request in a batch, standard 
 | $T$ | retained tokens per sequence |
 | $L$ | attention layers |
 | $H_{kv}$ | key-value heads per layer |
-| $d_h$ | scalar dimensions in each cached head |
+| $d_h$ | dimensions in each cached head |
 | $s$ | bytes per cached scalar |
 
 The payload is
 
 $$
-\operatorname{KVBytes}=B\,T\,L\,(2H_{kv}d_h)\,s.
-$$
+\operatorname{KVBytes}=B\,T\,L\,(2\,H_{kv}\,d_h)\,s.
+$$ {#eq-ch03-kvbytes}
 
-The factor of two is not an informal safety factor: it is one tensor for keys and one for values. $H_{kv}d_h$ is the width of each tensor's per-token slice. Multiplying by layers, tokens, batch, and scalar width accounts for every stored element. This equation assumes a uniform architecture, equal key and value widths, and an append-only unquantized cache. Hybrid layers require summing layer-specific terms. Padding, sharding, alignment, replication, and runtime metadata belong in a deployment capacity model, not silently inside this payload equation.
+The factor of two is not a safety margin — it is one tensor for keys and one for values. $H_{kv}d_h$ is the width of each tensor's per-token slice; multiplying by layers, tokens, batch, and scalar width counts every stored element. @eq-ch03-kvbytes assumes a uniform architecture, equal key and value widths, and an append-only, unquantized cache. We write it once, as the book's canonical KV function, with a small config object so an unusual cache can declare its own stored width without a second formula.
 
-The opening example follows directly:
+```{python}
+# @save
+from dataclasses import dataclass
 
-$$
-2\cdot32\cdot32\cdot128\cdot2
-=524{,}288\text{ bytes/token}=512\text{ KiB/token}.
-$$
 
-Multiplying by 4,096 tokens gives exactly 2 GiB. Multiplying by 131,072 gives exactly 64 GiB. Both use binary units: one KiB is ${2^{10}}$ bytes and one GiB is ${2^{30}}$ bytes. Decimal “K tokens” is often used loosely in model interfaces, so a capacity review must record the exact token count.
+@dataclass(frozen=True)
+class KVConfig:
+    """Architectural quantities that fix a model's persistent KV state.
 
-The implementation declares the equation once:
+    These are exactly the fields @eq-ch03-kvbytes multiplies together. A
+    standard attention layer stores ``2 * kv_heads * head_dim`` scalars per
+    layer per token; a latent (MLA) layer overrides that with a compressed
+    width, which is why the stored width is a method rather than a constant.
 
-```python
+    Args:
+        name: A label used in tables and plots.
+        layers: Number of attention layers, ``L``.
+        query_heads: Number of query heads, ``H_q`` (state-neutral; kept for
+            the MHA/GQA ratio).
+        head_dim: Dimensions per cached head, ``d_h``.
+        bytes_per_scalar: Cache dtype width ``s`` (2 for fp16/bf16, 1 for int8).
+        kv_heads: Key-value heads ``H_kv`` for standard attention; ``None`` for
+            a latent cache.
+        latent_rank: Width ``r`` of an MLA latent, when the cache is compressed.
+        rope_key_dim: Width ``d_R`` of an MLA decoupled rotary key, cached
+            alongside the latent.
+    """
+
+    name: str
+    layers: int
+    query_heads: int
+    head_dim: int
+    bytes_per_scalar: int
+    kv_heads: int | None = None
+    latent_rank: int | None = None
+    rope_key_dim: int = 0
+
+    def cached_scalars_per_layer_token(self) -> int:
+        """Return the stored scalar width per layer per token.
+
+        Standard attention stores ``2 * H_kv * d_h`` (keys and values); a
+        latent cache stores ``r + d_R`` (the compressed latent plus its
+        decoupled rotary key). This is the only place the two cache designs
+        differ in the byte accounting.
+        """
+        if self.latent_rank is not None:
+            return self.latent_rank + self.rope_key_dim
+        if self.kv_heads is None:
+            raise ValueError("standard attention requires kv_heads")
+        return 2 * self.kv_heads * self.head_dim
+
+
 def kv_bytes(config: KVConfig, tokens: int, batch: int = 1) -> int:
-    return (
-        batch
-        * tokens
-        * config.layers
-        * config.cached_scalars_per_layer_token()
-        * config.bytes_per_scalar
-    )
+    """Return payload bytes for one append-only, unquantized KV cache.
+
+    This is the book's canonical KV-byte declaration (@eq-ch03-kvbytes). It is
+    tensor payload only: it excludes allocator metadata, padding, temporary
+    attention workspaces, and tensor-parallel duplication, all of which a
+    deployment capacity model (Chapter 10) adds on top.
+
+    Args:
+        config: The architecture whose cache we are sizing.
+        tokens: Retained tokens per sequence, ``T``.
+        batch: Sequences represented at once, ``B``.
+
+    Returns:
+        Total cache payload in bytes.
+
+    Raises:
+        ValueError: If ``tokens`` is negative or ``batch`` is not positive.
+    """
+    if tokens < 0 or batch < 1:
+        raise ValueError("tokens must be nonnegative and batch positive")
+    return batch * tokens * config.layers * config.cached_scalars_per_layer_token() * config.bytes_per_scalar
 ```
 
-`cached_scalars_per_layer_token()` returns ${2H_{kv}d_h}$ for standard attention. The separate method lets an MLA-style configuration state its different stored width without declaring a second byte formula.
+The opening 64 GiB now follows from the function, not from arithmetic in the margin. We instantiate the 32-layer MHA model and read off the per-token slice and the two headline totals.
 
-The equation also prevents a common complexity error. Caching avoids recomputing old $K$ and $V$ projections. It does not eliminate reading those tensors or computing the new query's scores against them. Memory is $O(T)$ for fixed architecture and batch. Dense attention work for a single new token is $O(T)$; producing a length-$T$ continuation from a growing cache sums those steps. Prefill's dense attention score work is $O(T^2)$. “The KV cache makes generation $O(1)$” confuses avoided projection work with total decode work.
+```{python}
+mha = KVConfig("MHA 7B-class", layers=32, query_heads=32, kv_heads=32, head_dim=128, bytes_per_scalar=2)
+per_token = kv_bytes(mha, 1)
+print(f"per token: {per_token:,} bytes = {per_token / 1024:.0f} KiB")
+print(f"at   4,096 tokens: {kv_bytes(mha,   4_096) / 2**30:.2f} GiB")
+print(f"at 131,072 tokens: {kv_bytes(mha, 131_072) / 2**30:.2f} GiB")
+```
+
+Half a mebibyte per token, and the totals are exact: 2 GiB at 4K, 64 GiB at 128K. Before we spend the chapter shrinking that number, one complexity myth needs correcting, because it hides the *computation* question behind the *capacity* one. In Chapter 2 we measured the cache reproducing uncached logits while its storage grew linearly (@sec-ch02-kv-cache). What the cache avoids is *reprojecting* old tokens — $O(1)$ projection work per step instead of $O(T)$. It does not avoid *reading* those keys and values: the new query still scores against all $T$ of them and mixes $T$ values, so decode attention stays $O(T)$ per step and memory stays $O(T)$. "The KV cache makes generation $O(1)$" confuses avoided projection with total work.
+
+Real models fight the byte count with architecture, and the differences are visible the moment we plug their published configs into the same function. Multi-query and grouped-query models cut $H_{kv}$; latent models replace ${2H_{kv}d_h}$ with a compressed width. We build three configs from dated public sources and sweep them over context length.
+
+```{python}
+# Fields taken from published config.json files (see the Verify-live box below).
+llama2 = KVConfig("Llama 2 7B (MHA)", layers=32, query_heads=32, kv_heads=32, head_dim=128, bytes_per_scalar=2)
+llama31 = KVConfig("Llama 3.1 8B (GQA-8)", layers=32, query_heads=32, kv_heads=8, head_dim=128, bytes_per_scalar=2)
+deepseek = KVConfig("DeepSeek-V2-Lite (MLA)", layers=27, query_heads=16, head_dim=128,
+                    bytes_per_scalar=2, latent_rank=512, rope_key_dim=64)
+
+contexts = (4_096, 16_384, 32_768, 65_536, 131_072)
+print(f"{'context':>9} | {'Llama 2 MHA':>12} | {'Llama 3.1 GQA':>13} | {'DeepSeek MLA':>12}")
+for t in contexts:
+    row = [kv_bytes(cfg, t) / 2**30 for cfg in (llama2, llama31, deepseek)]
+    print(f"{t:>9,} | {row[0]:>9.2f} GiB | {row[1]:>10.2f} GiB | {row[2]:>9.3f} GiB")
+```
+
+Read the 64K row: a single Llama 3.1 8B conversation at 64K tokens holds 8 GiB of KV cache — 8.6 GB in the decimal units a datasheet quotes — and eight such sessions fill an 80 GB accelerator before any weights load. The GQA column is exactly one quarter of the MHA column (8 KV heads instead of 32), and the MLA column is smaller again. @fig-ch03-kv-footprints plots the three slopes.
+
+```{python}
+#| label: fig-ch03-kv-footprints
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does cache architecture change the bytes-per-token slope? Each line is the calculator's own output. MHA (top) grows fastest; GQA-8 is exactly 4x shallower; the MLA-style latent cache is shallower still. Layer counts and widths differ across models, so this compares cache designs, not model quality."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(6.6, 3.7))
+styles = [("#b13f3f", "s", "--"), ("#2a7f9e", "^", "-"), ("#7356a8", "o", ":")]
+for cfg, (color, marker, ls) in zip((llama2, llama31, deepseek), styles):
+    xs = [t / 1024 for t in contexts]
+    ys = [kv_bytes(cfg, t) / 2**30 for t in contexts]
+    ax.plot(xs, ys, marker=marker, linestyle=ls, color=color, label=cfg.name)
+ax.set_xlabel("context represented in cache (Ki tokens)")
+ax.set_ylabel("KV payload (GiB)")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
 
 ::: {.callout-note .landscape-2026}
-### Landscape 2026 — Configuration-derived footprints
+### Landscape 2026 — the config numbers behind the plot
 
-The local fixtures record only fields needed for cache accounting, with provenance beside each excerpt. At batch one and two bytes per cached scalar, the generated payloads are:
+The three configs are read from published files: [Llama 2 7B](https://huggingface.co/meta-llama/Llama-2-7b-hf/blob/main/config.json) (32 heads, MHA), [Llama 3.1 8B](https://huggingface.co/meta-llama/Llama-3.1-8B) (`num_key_value_heads: 8`, GQA), and [DeepSeek-V2-Lite](https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite-Chat/blob/main/config.json) (`kv_lora_rank: 512`, `qk_rope_head_dim: 64`, MLA). They pin *cache accounting fields only*; real allocated memory is higher and differently sharded.
 
-| Published configuration | Cache design | 4,096 tokens | 32,768 tokens | 131,072 tokens |
-|---|---|---:|---:|---:|
-| Llama 2 7B | 32-head MHA | 2.00 GiB | 16.00 GiB | 64.00 GiB |
-| Llama 3.1 8B | 8 KV-head GQA | 0.50 GiB | 4.00 GiB | 16.00 GiB |
-| DeepSeek-V2-Lite | 512-wide latent plus 64-wide rotary key | 0.119 GiB | 0.949 GiB | 3.797 GiB |
-
-![KV payload grows linearly with represented context, while the architectural cache width changes the slope. Values are computed locally from dated public configuration excerpts.](../code/ch03/generated/kv-footprints.svg){#fig-ch03-kv-footprints fig-alt="Directly labeled line plot of KV-cache GiB versus context length for an MHA, GQA, and MLA-style published configuration. Square-dashed MHA has the steepest line, triangle-dotted GQA is four times smaller, and circle-solid MLA-style is smaller again."}
-
-These are architecture comparisons, not model rankings. Layer counts and widths differ, and the MLA row uses the compressed state described by its implementation. Real allocated memory can be higher or differently sharded.
-
-**Verify live:** re-download the official model configuration or report recorded in the [Llama 2](../code/ch03/fixtures/llama2-7b/config.json), [Llama 3.1](../code/ch03/fixtures/llama31-8b/config.json), and [DeepSeek-V2-Lite](../code/ch03/fixtures/deepseek-v2-lite/config.json) excerpts, compare the relevant fields, and regenerate the CSV and figure before using these rows in a capacity decision. **Verified:** 2026-07-19.
+**Verify live:** re-download each `config.json`, map `num_key_value_heads`, `head_dim`, `num_hidden_layers`, and `torch_dtype` onto `KVConfig`, and recompute before using a row in a capacity decision. **Verified:** 2026-07-19.
 :::
 
-@fig-ch03-kv-footprints answers one narrow question: how does architecture change the bytes-per-token slope? It does not answer which model is more capable, which kernel is faster, or how many requests a server admits. A useful admission estimate subtracts weights, workspaces, and reserve from available device memory, then divides the remainder by per-request KV payload. Chapter 10 makes that estimate operational.
+## Share keys and values: MQA and GQA {#sec-ch03-gqa}
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `kv_math.py`: configuration plus `kv_bytes()` | 45 lines | The 32-layer MHA example is 512 KiB per token and exactly 2 GiB at 4,096 tokens. |
-:::
+Multi-head attention gives every query head its own key and value head. But the query projections vanish after each step; only the keys and values persist. So the cheapest lever on cache size is to let several query heads *share* one key-value head. If $H_q=H_{kv}$ we have ordinary **multi-head attention** (MHA). Collapse all query heads onto a single KV head ($H_{kv}=1$) and we have **multi-query attention** (MQA) [@shazeer2019mqa]. Anything in between is **grouped-query attention** (GQA) [@ainslie2023gqa]: with $H_q=32$ and $H_{kv}=8$, each KV head serves a group of four query heads, which keep their own queries and so can still ask different questions.
 
-## Share Keys and Values: MQA and GQA {#sec-ch03-gqa}
-
-Multi-head attention ordinarily gives every query head its own key head and value head. If $H_q=H_{kv}$, it is **multi-head attention** (MHA). Query projections are transient during autoregressive decoding; the historical keys and values persist. Reducing $H_{kv}$ therefore removes a factor from the state that grows with both users and context.
-
-**Multi-query attention** (MQA) takes the reduction to its endpoint: all $H_q$ query heads share one key head and one value head, so $H_{kv}=1$. **Grouped-query attention** (GQA) uses an intermediate number. If $H_q=32$ and $H_{kv}=8$, each KV head serves four query heads. Query heads retain separate query projections and can ask different questions; heads in a group compare against the same keys and receive the same value representation before the output projection mixes results.
-
-For fixed $B,T,L,d_h,$ and $s$, the cache ratio against MHA is simply
+The cache ratio against MHA falls straight out of @eq-ch03-kvbytes, since only $H_{kv}$ changes:
 
 $$
-\frac{\operatorname{KVBytes}_{\mathrm{grouped}}}
-{\operatorname{KVBytes}_{\mathrm{MHA}}}
-=\frac{H_{kv}}{H_q}.
-$$
+\frac{\operatorname{KVBytes}_{\text{grouped}}}{\operatorname{KVBytes}_{\text{MHA}}}=\frac{H_{kv}}{H_q}.
+$$ {#eq-ch03-gqaratio}
 
-| Mode with 32 query heads | KV heads | Query heads per KV head | Cache ratio versus MHA |
-|---|---:|---:|---:|
-| MHA | 32 | 1 | ${1}$ |
-| GQA-8 | 8 | 4 | ${1/4}$ |
-| GQA-4 | 4 | 8 | ${1/8}$ |
-| MQA | 1 | 32 | ${1/32}$ |
+This counts stored elements, not quality — the GQA paper showed an MHA checkpoint can be *converted* by grouping heads and briefly uptrained, recovering most of the quality at close to MQA speed. We build one layer whose `kv_heads` dial spans all three regimes, cache the compact keys and values, and expand groups only for the score computation.
 
-The ratio does not say that quality falls in the same proportion. It counts stored elements, not representational value. The GQA work showed that an MHA checkpoint can be converted by grouping KV heads and then uptrained on a fraction of the original pretraining compute, recovering much of the quality while approaching MQA speed. The right head count is empirical and workload-dependent.
+```{python}
+# @save
+import torch
+from torch import Tensor, nn
+from torch.nn import functional as F
 
-The reference layer projects compact keys and values, caches them in shape $[B,H_{kv},T,d_h]$, and only then repeats groups for the teaching implementation's attention computation:
 
-```python
-present = (k, v)                 # compact state owns H_kv heads
-repeats = query_heads // kv_heads
-k_compute = k.repeat_interleave(repeats, dim=1)
-v_compute = v.repeat_interleave(repeats, dim=1)
-scores = q @ k_compute.transpose(-2, -1) / head_dim**0.5
+class GroupedQueryAttention(nn.Module):
+    """Causal attention whose kv-head dial spans MHA, GQA, and MQA.
+
+    Queries get ``query_heads`` full heads; keys and values get only
+    ``kv_heads`` heads, which is all that is cached. At read time each KV head
+    is repeated to serve its group of query heads, so the stored state shrinks
+    by ``kv_heads / query_heads`` while the output shape is unchanged. A
+    production kernel repeats the heads implicitly; we materialize them so the
+    mechanism is visible.
+    """
+
+    def __init__(self, d_model: int, query_heads: int, kv_heads: int) -> None:
+        super().__init__()
+        if d_model % query_heads or query_heads % kv_heads:
+            raise ValueError("query_heads must divide width and be divisible by kv_heads")
+        self.query_heads, self.kv_heads = query_heads, kv_heads
+        self.head_dim = d_model // query_heads
+        self.q_proj = nn.Linear(d_model, query_heads * self.head_dim, bias=False)
+        self.k_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
+        self.v_proj = nn.Linear(d_model, kv_heads * self.head_dim, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+
+    def forward(self, x: Tensor, cache: tuple[Tensor, Tensor] | None = None) -> tuple[Tensor, tuple[Tensor, Tensor]]:
+        """Run causal attention and return the output and the compact KV cache.
+
+        The returned cache holds only ``kv_heads`` heads; group expansion
+        happens after it, so what is stored follows ``kv_heads`` while the
+        computation still uses ``query_heads``.
+        """
+        batch, query_len, _ = x.shape
+        q = self.q_proj(x).view(batch, query_len, self.query_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(x).view(batch, query_len, self.kv_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(x).view(batch, query_len, self.kv_heads, self.head_dim).transpose(1, 2)
+        if cache is not None:
+            k = torch.cat((cache[0], k), dim=2)
+            v = torch.cat((cache[1], v), dim=2)
+        present = (k, v)  # compact: only kv_heads heads are stored
+        repeats = self.query_heads // self.kv_heads
+        scores = q @ k.repeat_interleave(repeats, dim=1).transpose(-2, -1) / self.head_dim**0.5
+        past = k.size(2) - query_len
+        q_pos = past + torch.arange(query_len)[:, None]
+        k_pos = torch.arange(k.size(2))[None, :]
+        weights = F.softmax(scores.masked_fill(k_pos > q_pos, float("-inf")), dim=-1)
+        out = (weights @ v.repeat_interleave(repeats, dim=1)).transpose(1, 2).reshape(batch, query_len, -1)
+        return self.out_proj(out), present
 ```
 
-This logical expansion explains the semantics, but a production kernel should avoid physically materializing repeated tensors. That requirement matters: an architectural byte reduction that falls onto an unsupported or inefficient kernel can lose its latency advantage. Kernel and hardware support gate adoption even when the algebra is favorable; Chapter 10 owns the kernel-level comparison.
+We turn the dial across the four heads → one head range and read the cache each setting stores. The output shape must never move; only the cached tensor's head axis does.
 
-The dial also makes three tests possible without three implementations. Output shape stays $[B,T,d]$. Stored tensor shape follows $H_{kv}$, not $H_q$. Token-by-token cached output agrees with the full causal pass. Only after all three pass is the smaller cache a valid optimization.
+```{python}
+torch.manual_seed(3)
+x = torch.randn(1, 8, 64)                     # width 64, 8 query heads -> head_dim 8
+for kv_heads, tag in [(8, "MHA"), (2, "GQA-2"), (1, "MQA")]:
+    layer = GroupedQueryAttention(64, query_heads=8, kv_heads=kv_heads)
+    out, (k, v) = layer(x)
+    scalars = k.numel() + v.numel()
+    print(f"{tag:6s} kv_heads={kv_heads}: cache {tuple(k.shape)} x2  "
+          f"= {scalars:4d} scalars   out {tuple(out.shape)}   ratio {kv_heads/8:.3f}")
+```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `GroupedQueryAttention`: one KV-head dial | 61 new lines | MHA, GQA, and MQA preserve output shape; stored scalar counts follow the exact 4:2:1 KV-head ratio; cached chunks match a full pass. |
-:::
+The output stays $[1,8,64]$ throughout while the cache drops from 1024 scalars (MHA) to 128 (MQA) — exactly the ${1/8}$ ratio @eq-ch03-gqaratio predicts. Shrinking the cache is only legal if the cheaper path still computes the same function, so we prove it: feed the sequence one token at a time through the cache and check the incremental outputs against a single full pass.
 
-## Compress the Cache: MLA {#sec-ch03-mla}
+```{python}
+layer = GroupedQueryAttention(64, query_heads=8, kv_heads=2).eval()
+full, _ = layer(x)
+cache, pieces = None, []
+for t in range(x.size(1)):
+    step, cache = layer(x[:, t:t+1], cache)
+    pieces.append(step)
+incremental = torch.cat(pieces, dim=1)
+print("cached == full:", torch.allclose(incremental, full, atol=1e-6),
+      f"  max gap {(incremental - full).abs().max().item():.1e}")
+```
 
-Head sharing chooses fewer full-width KV representations. **Multi-head latent attention** (MLA) attacks a different boundary: store one low-rank latent representation from which content keys and values can be reconstructed.
-
-For residual state $x_t\in\mathbb{R}^{d}$ at token $t$, an MLA-style layer forms
-
-$$
-c_t^{KV}=W^{DKV}x_t,
-\qquad c_t^{KV}\in\mathbb{R}^{r},quad r\ll H_qd_h.
-$$
-
-Head-specific up-projections derive content keys and values from $c_t^{KV}$. A direct implementation would reconstruct every historical key and value at every step, exchanging memory traffic for substantial extra matrix work. MLA's useful implementation property is that linear projection matrices can be absorbed into query and output-side operations, so attention can operate with the compressed latent more directly.
-
-RoPE complicates that absorption. A position-dependent rotation lies between the up-projection and dot product, so the matrices do not commute in the needed way. DeepSeek-V2's solution is **decoupled RoPE**: split each query and key into a content part and a smaller rotary part. The content key comes from the latent. A shared rotary key is projected separately, rotated, and cached alongside the latent. The score for query head $i$ is conceptually
-
-$$
-(q^{C}_{t,i})^\top k^{C}_{j,i}
-+(q^{R}_{t,i})^\top k^{R}_{j}.
-$$
-
-The persistent width per layer and token becomes $r+d_R$, not ${2H_{kv}d_h}$. Its payload therefore uses the canonical outer accounting structure:
-
-$$
-\operatorname{MLABytes}=B\,T\,L\,(r+d_R)\,s.
-$$
-
-This is not “free compression.” Rank $r$ constrains the information shared through the latent; up- and down-projections add parameters and compute; the absorbed execution path changes kernel requirements. Compression helps most when moving KV bytes is the bottleneck and the stack has an efficient MLA path. Later work such as TransMLA formalizes conversions from GQA to an MLA representation and then compresses the stored latent, but the capacity reduction and quality recovery still require a deliberate conversion and adaptation procedure. Renaming projections does not compress an existing checkpoint.
-
-`ToyLatentKVAttention` exposes the boundary instead of implementing the absorbed production algebra. It caches tensors with shapes $[B,T,r]$ and $[B,T,d_R]$, rotates the latter at absolute positions, and explicitly reconstructs content keys and values. For $B=1,T=8,r=8,d_R=4$, the measured cache contains 96 scalars. A same-width four-head MHA cache would contain 768. The toy demonstrates what is retained; it is not a latency claim about MLA.
-
-## Restrict Visibility: Windows, Interleaving, and Sinks {#sec-ch03-patterns}
-
-Sharing and compression preserve full causal visibility. Another strategy changes which keys a query may see.
-
-A **sliding-window** layer lets position $t$ attend only to the most recent $W$ positions. Once the sequence exceeds $W$, its retained KV payload can be bounded by substituting $\min(T,W)$ for $T$ in that layer's term. Its attention-score work is also bounded by $W$ per query. The cost is architectural: information older than the window cannot be reached directly through that layer.
-
-Stacking local layers expands the receptive field because an older token can influence newer summaries across layers, but indirect reachability is not equivalent to one-hop access. Exact copying, cross-file dependency tracing, and evidence attribution can be sensitive to that distinction. A common compromise interleaves local and full layers. Local layers handle nearby syntax and state; periodic global layers restore direct long-range paths. The total cache is then a sum: windowed terms for local layers plus length-$T$ terms for global layers.
+The grouped cache reproduces the full-attention output to float roundoff. @fig-ch03-head-grouping draws what "grouped" means physically: query heads fan into a shrinking set of shared KV heads.
 
 ```{mermaid}
-%%| label: fig-ch03-attention-patterns
-%%| fig-cap: "Which historical tokens can the final query read under full, windowed, interleaved, and sink-preserving attention?"
+%%| echo: false
+%%| label: fig-ch03-head-grouping
+%%| fig-cap: "Which query heads share a KV head? Under MHA every query head keeps its own KV head; GQA-2 routes groups of query heads to shared KV heads; MQA collapses them to one. The cached state follows the KV-head count, so the cache ratio is kv_heads / query_heads."
+flowchart TB
+    subgraph MHA["MHA (8 KV heads, ratio 1)"]
+      direction TB
+      q0["q0..q7"] --> k0["8 KV heads"]
+    end
+    subgraph GQA["GQA-2 (2 KV heads, ratio 1/4)"]
+      direction TB
+      g0["q0..q3"] --> kg0["KV head A"]
+      g1["q4..q7"] --> kg1["KV head B"]
+    end
+    subgraph MQA["MQA (1 KV head, ratio 1/8)"]
+      direction TB
+      m0["q0..q7"] --> km0["1 KV head"]
+    end
+```
+
+One caveat carries into Chapter 10: our layer materializes the repeated heads, but a serving kernel must expand them implicitly, or the byte saving is spent again on memory traffic. Kernel support gates whether an architectural win survives on real hardware.
+
+## Compress the cache: MLA {#sec-ch03-mla}
+
+Sharing heads picks *fewer* full-width key-value representations. A different lever keeps all the heads but stores them *compressed*. **Multi-head latent attention** (MLA), introduced with DeepSeek-V2 [@deepseekv2], projects the residual state down to a small latent from which the per-head keys and values are reconstructed on read.
+
+For residual state $x_t\in\mathbb{R}^{d}$, a down-projection forms the cached latent, and per-head up-projections reconstruct content keys and values:
+
+$$
+c_t = W^{\!D}\,x_t,\qquad c_t\in\mathbb{R}^{r},\quad r\ll 2H_qd_h .
+$$ {#eq-ch03-mla}
+
+Only $c_t$ is cached. There is a subtlety, though, that decides the whole design: RoPE (the next sections' rotation) sits *between* the up-projection and the dot product, and it does not commute with $W^{\!D}$, so a purely latent key cannot also carry rotary position. DeepSeek's fix is **decoupled RoPE** — a form of *partial* RoPE. The content key comes from the latent and carries no rotation; a small, separate rotary key of width $d_R$ is projected, rotated, and cached alongside the latent. The score for query head $i$ is a sum of a content term and a shared rotary term, and the stored width becomes $r+d_R$ rather than ${2H_{kv}d_h}$ — exactly the width the calculator used for DeepSeek's `512 + 64` above. @fig-ch03-mla-flow locates the two cached tensors.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch03-mla-flow
+%%| fig-cap: "What does MLA store versus reconstruct? The latent c_t (down-projected) and a small decoupled rotary key are the only cached tensors; per-head content keys and values are up-projected from the latent at read time and never stored. Stored width r + d_R replaces 2*H_kv*d_h."
 flowchart LR
-    subgraph F["Full layer"]
-      direction LR
-      F1["all history"] --> FQ["final query"]
-    end
-    subgraph W["Windowed layer"]
-      direction LR
-      WO["older tokens"] -. "not visible" .-> WQ["final query"]
-      WR["recent W tokens"] --> WQ
-    end
-    subgraph I["Interleaved stack"]
-      direction LR
-      IL["local layer"] --> IG["periodic global layer"] --> IQ["final query"]
-    end
-    subgraph S["Window plus sinks"]
-      direction LR
-      SS["first sink tokens"] --> SQ["final query"]
-      SR["recent W tokens"] --> SQ
-    end
+    X["residual x_t"] --> D["down-proj W_D"]
+    D --> C["latent c_t  (CACHED)"]
+    X --> R["rotary-key proj"]
+    R --> KR["decoupled rope key  (CACHED)"]
+    C --> UK["up-proj -> per-head K  (recomputed)"]
+    C --> UV["up-proj -> per-head V  (recomputed)"]
 ```
 
-@fig-ch03-attention-patterns separates four masks that are too often called merely “efficient attention.” The decision question is not whether a token is somewhere in the request. It is whether a causal path of the required length and precision connects it to the query.
+We build the down/up latent path as an inspectable toy — deliberately *not* absorbing the projections the way a production kernel would, so the compress-reconstruct boundary stays on the page. The decoupled rotary band is what @fig-ch03-mla-flow adds on top; here we measure the compression the latent buys.
 
-StreamingLLM identified a surprising failure in naive rolling windows: keeping only recent tokens can destabilize language models even when the evicted initial tokens are not semantically important. Attention tends to assign substantial probability to early positions, which act as **attention sinks** for excess probability. Retaining a small prefix of sink tokens alongside the rolling window restored stable streaming behavior in its experiments. Sink retention is therefore a mask and training-compatibility mechanism, not long-term semantic memory. A sink token being visible does not make an evicted tool result recoverable.
+```{python}
+# @save
+class ToyLatentKVAttention(nn.Module):
+    """Didactic MLA-style attention that caches one low-rank latent per token.
+
+    The layer down-projects the residual to a rank-``latent_rank`` latent, caches
+    only that, and up-projects it back to per-head keys and values at read time.
+    Production MLA also absorbs the up-projections into the query and output
+    maps so the per-head tensors are never materialized, and adds a decoupled
+    rotary key of width ``rope_key_dim`` (@fig-ch03-mla-flow); we leave the
+    boundary explicit and measure the latent compression on its own.
+    """
+
+    def __init__(self, d_model: int, query_heads: int, latent_rank: int, rope_key_dim: int = 0) -> None:
+        super().__init__()
+        if d_model % query_heads:
+            raise ValueError("query_heads must divide d_model")
+        self.query_heads = query_heads
+        self.head_dim = d_model // query_heads
+        self.latent_rank, self.rope_key_dim = latent_rank, rope_key_dim
+        self.kv_down = nn.Linear(d_model, latent_rank, bias=False)
+        self.k_up = nn.Linear(latent_rank, d_model, bias=False)
+        self.v_up = nn.Linear(latent_rank, d_model, bias=False)
+        self.q_proj = nn.Linear(d_model, d_model, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+
+    def forward(self, x: Tensor, cache: Tensor | None = None) -> tuple[Tensor, Tensor]:
+        """Run causal attention, caching (and returning) only the latent."""
+        batch, query_len, _ = x.shape
+        latent = self.kv_down(x)
+        if cache is not None:
+            latent = torch.cat((cache, latent), dim=1)
+        key_len = latent.size(1)
+        q = self.q_proj(x).view(batch, query_len, self.query_heads, self.head_dim).transpose(1, 2)
+        k = self.k_up(latent).view(batch, key_len, self.query_heads, self.head_dim).transpose(1, 2)
+        v = self.v_up(latent).view(batch, key_len, self.query_heads, self.head_dim).transpose(1, 2)
+        scores = q @ k.transpose(-2, -1) / self.head_dim**0.5
+        q_pos = (key_len - query_len) + torch.arange(query_len)[:, None]
+        k_pos = torch.arange(key_len)[None, :]
+        weights = F.softmax(scores.masked_fill(k_pos > q_pos, float("-inf")), dim=-1)
+        out = (weights @ v).transpose(1, 2).reshape(batch, query_len, -1)
+        return self.out_proj(out), latent
+
+    def latent_width(self) -> int:
+        """Return the stored width per token, ``r + d_R`` (@eq-ch03-kvbytes)."""
+        return self.latent_rank + self.rope_key_dim
+```
+
+At width 64 with 4 heads, a standard cache stores ${2H_qd_h}=128$ scalars per token. We compress that to a rank-16 latent (plus a 4-wide decoupled rotary band for honest accounting) and measure both the ratio and that attention still works incrementally.
+
+```{python}
+torch.manual_seed(11)
+layer = ToyLatentKVAttention(64, query_heads=4, latent_rank=16, rope_key_dim=4).eval()
+x = torch.randn(1, 8, 64)
+full, latent = layer(x)
+
+mha_width = 2 * 4 * (64 // 4)                  # 2 * H * d_h
+stored = layer.latent_width()
+print(f"standard cache: {mha_width} scalars/token   MLA latent: {stored} scalars/token"
+      f"   ({mha_width / stored:.1f}x smaller)")
+
+cache, pieces = None, []
+for t in range(x.size(1)):
+    step, cache = layer(x[:, t:t+1], cache)
+    pieces.append(step)
+print("cached == full:", torch.allclose(torch.cat(pieces, 1), full, atol=1e-6))
+```
+
+A 6.4× smaller cache, and the incremental path still reproduces the full pass. The saving is real but not free: rank $r$ bounds the information the latent can carry, the up- and down-projections cost parameters and compute, and — because production MLA *absorbs* those up-projections into the surrounding query and output maps so it never materializes per-head keys — the win depends on having a kernel that supports the absorbed path. Renaming projections does not compress an existing checkpoint; conversions such as TransMLA require deliberate uptraining.
+
+## Restrict visibility: windows, interleaving, and sinks {#sec-ch03-patterns}
+
+Sharing and compression keep full causal visibility — every query can still reach every past key. The third lever changes *which* keys a query may see at all. A **sliding-window** layer lets position $t$ attend only to the most recent $W$ positions. Its cached state per layer is bounded by substituting $\min(T,W)$ for $T$ in @eq-ch03-kvbytes, and its attention work per query is bounded by $W$. The price is architectural: anything older than $W$ is unreachable through that layer.
+
+The mask is the mechanism, so we build it directly — a boolean grid where cell $(i,j)$ is true when query $i$ may attend key $j$.
+
+```{python}
+# @save
+def visibility_mask(seq_len: int, window: int | None = None, sinks: int = 0) -> Tensor:
+    """Return the boolean attention-visibility grid for one layer.
+
+    Entry ``[i, j]`` is True when query position ``i`` may attend key position
+    ``j``. With ``window=None`` this is the ordinary causal mask; a finite
+    ``window`` keeps only the last ``W`` keys; ``sinks`` additionally keeps the
+    first few positions always visible, the StreamingLLM pattern.
+
+    Args:
+        seq_len: Sequence length of the square grid.
+        window: Sliding-window width ``W``; ``None`` for full causal.
+        sinks: Number of initial "attention sink" positions kept visible.
+
+    Returns:
+        A ``(seq_len, seq_len)`` boolean tensor.
+    """
+    i = torch.arange(seq_len)[:, None]
+    j = torch.arange(seq_len)[None, :]
+    causal = j <= i
+    if window is None:
+        return causal
+    return causal & (((i - j) < window) | (j < sinks))
+```
+
+We render three visibility patterns for a 12-token sequence: full causal, a width-4 window, and the same window with two sink positions pinned open. @fig-ch03-visibility shows how much of the past each query can still reach.
+
+```{python}
+#| label: fig-ch03-visibility
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Which past keys can each query read? Full causal attention (left) reaches the whole prefix; a width-4 window (center) forgets everything older than four tokens; adding two attention sinks (right) reopens a narrow path to the start. Shaded cells are visible (query row, key column)."
+fig, axes = plt.subplots(1, 3, figsize=(8.4, 3.0))
+panels = [("full causal", visibility_mask(12)),
+          ("window W=4", visibility_mask(12, window=4)),
+          ("window W=4 + 2 sinks", visibility_mask(12, window=4, sinks=2))]
+for ax, (title, mask) in zip(axes, panels):
+    ax.imshow(mask, cmap="Blues", vmin=0, vmax=1)
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel("key")
+axes[0].set_ylabel("query")
+fig.tight_layout()
+plt.show()
+```
+
+Stacking local layers widens the *effective* receptive field — an old token can influence a newer summary across layers — but indirect reach is not direct access, and exact copying or evidence attribution is sensitive to the difference. The common compromise **interleaves** local and full layers: local layers handle nearby structure cheaply, periodic global layers restore long-range paths. The total cache is then a sum, and it is worth computing rather than hand-waving. Take a 32-layer model at 128K tokens with a 4K window and every fourth layer global.
+
+```{python}
+cfg = KVConfig("GQA-8", layers=32, query_heads=32, kv_heads=8, head_dim=128, bytes_per_scalar=2)
+T, W = 131_072, 4_096
+width_bytes = cfg.cached_scalars_per_layer_token() * cfg.bytes_per_scalar
+global_layers, local_layers = 8, 24
+full = kv_bytes(cfg, T)
+interleaved = (global_layers * T + local_layers * min(T, W)) * width_bytes
+print(f"all-global cache:   {full / 2**30:6.2f} GiB")
+print(f"1:4 interleaved:    {interleaved / 2**30:6.2f} GiB   ({full / interleaved:.1f}x smaller)")
+```
+
+Interleaving turns 16 GiB into under 3 GiB by keeping only a quarter of the layers full-range. But windows carry a failure mode discovered by StreamingLLM [@xiao2024streaming]: a *naive* rolling window that simply evicts old tokens can destabilize a trained model, even when the evicted tokens are semantically unimportant. The reason is that softmax must put its weight *somewhere*, and models learn to dump excess probability on the first few positions — **attention sinks**. Evict the sink and that mass has nowhere to go but the content tokens. We show the mechanism on a constructed score row where position 0 is the learned sink.
+
+```{python}
+scores = torch.tensor([9.0, 1.0, 0.5, 1.2, 0.8, 1.1, 0.6, 1.3])   # pos 0 is the sink
+full_attn = scores.softmax(0)
+content = slice(4, 8)                         # the recent tokens a window keeps
+naive = scores[content].softmax(0)            # rolling window: sink evicted, renormalize
+sinked = scores[[0, 4, 5, 6, 7]].softmax(0)   # sink-aware window: keep position 0
+
+def row(v):
+    return f"{v.numpy().round(4)}  (sum {float(v.sum()):.4f})"
+
+print(f"attention on tokens 4..7, full context:  {row(full_attn[content])}")
+print(f"  naive window (sink evicted):           {row(naive)}")
+print(f"  sink-aware window (position 0 kept):   {row(sinked[1:])}")
+```
+
+With full context the four recent tokens together hold about a thousandth of the mass; the sink holds the rest. Drop the sink and that same query pours *all* of its attention onto those four tokens — their summed weight jumps from roughly 0.001 to 1.0, a change in the effective computation that is the instability StreamingLLM observed. Pin the sink open and the recent tokens keep their small, correctly-ordered weights (this is an illustration of the mechanism, not a measurement of a trained model). Sink retention is thus a masking-and-stability trick, not long-term memory: a visible sink token does not make an evicted tool result recoverable. Whether local, hybrid, or full attention wins is empirical — MiniMax's M2 team reported choosing *full* attention in 2026 after hybrid variants degraded on long-context agent tasks, a useful counterexample to treating efficient patterns as free upgrades.
+
+## RoPE encodes relative position by rotation {#sec-ch03-rope}
+
+Attention is permutation-blind: reorder the tokens and, before the causal mask, the outputs merely reorder with them. Chapter 2 patched that with a learned absolute position table. Let us look at what that placeholder actually is, using the model we built there.
+
+```{python}
+import sys
+sys.path.insert(0, "code/ch02")
+import _generated as ch02                       # the model we built in Chapter 2
+
+placeholder = ch02.TinyGPT(ch02.GPTConfig(vocab_size=512))
+table = placeholder.position_embedding
+print(f"learned absolute position table: {tuple(table.weight.shape)}")
+print(f"positions it can represent: 0..{table.num_embeddings - 1}")
+```
+
+A fixed 128-row lookup: it cannot address position 128, and every row is learned independently, so nothing ties "50 and 51 are one apart" to "500 and 501 are one apart." **Rotary position embeddings** (RoPE) replace it with something that encodes *relative* offset directly and extends past any trained length [@su2021roformer]. Take a coordinate pair $(x_{2j},x_{2j+1})$ and, at position $m$, rotate it by angle $m\omega_j$:
+
+$$
+R_j(m)=\begin{bmatrix}\cos(m\omega_j)&-\sin(m\omega_j)\\ \sin(m\omega_j)&\cos(m\omega_j)\end{bmatrix},\qquad \omega_j=b^{-2j/d_R}.
+$$ {#eq-ch03-rope}
+
+Here $d_R$ is the rotary width and $b$ the frequency base. Small $j$ gives a high-frequency band that spins fast; large $j$ gives a low-frequency band that barely moves. RoPE rotates queries and keys (never values) by the block-diagonal collection of these rotations. Because rotation matrices are orthogonal they preserve norm, and — the point of the whole construction —
+
+$$
+(R(m)q)^\top(R(n)k)=q^\top R(m)^\top R(n)k=q^\top R(n-m)k .
+$$ {#eq-ch03-ropeinvariant}
+
+The score depends on $m$ and $n$ only through $n-m$. Shift both positions by the same amount and it is unchanged. We implement the interleaved-pair rotation and keep it as the chapter's rotary operator.
+
+```{python}
+# @save
+def apply_rope(vectors: Tensor, positions: Tensor, frequencies: Tensor, magnitude: float = 1.0) -> Tensor:
+    """Rotate interleaved coordinate pairs by position-dependent angles.
+
+    Implements @eq-ch03-rope: pair ``2j, 2j+1`` at sequence position ``m`` is
+    rotated by ``m * frequencies[j]``. Because the rotation is orthogonal it
+    preserves each vector's norm, and rotating a query at ``m`` and a key at
+    ``n`` makes their dot product depend only on ``n - m``
+    (@eq-ch03-ropeinvariant).
+
+    Args:
+        vectors: Tensor ``[..., sequence, dim]`` of queries or keys.
+        positions: Integer position per sequence element, length ``sequence``.
+        frequencies: The ``dim/2`` band frequencies from ``inverse_frequencies``.
+        magnitude: Optional scalar applied to the result (YaRN's attention
+            temperature; 1.0 leaves the vector's norm unchanged).
+
+    Returns:
+        The rotated tensor, same shape as ``vectors``.
+
+    Raises:
+        ValueError: If the dimension or position count is inconsistent.
+    """
+    if vectors.size(-1) != 2 * frequencies.numel():
+        raise ValueError("frequency count must be half the vector dimension")
+    if vectors.size(-2) != positions.numel():
+        raise ValueError("one position is required per sequence element")
+    angles = positions.to(frequencies.dtype).unsqueeze(-1) * frequencies
+    shape = (1,) * (vectors.ndim - 2) + angles.shape
+    cos, sin = angles.cos().reshape(shape).to(vectors), angles.sin().reshape(shape).to(vectors)
+    even, odd = vectors[..., 0::2], vectors[..., 1::2]
+    rotated = torch.stack((even * cos - odd * sin, even * sin + odd * cos), dim=-1)
+    return rotated.flatten(-2) * magnitude
+```
+
+We need the band frequencies. The plain-RoPE branch of `inverse_frequencies` (built out for scaling in the next section) supplies them; for now we take the unscaled bands and make the invariant concrete. Rotate a fixed query and key at several position pairs and print the scores.
+
+```{python}
+from math import isclose
+
+def rope_frequencies(dim: int, base: float = 10_000.0) -> Tensor:
+    idx = torch.arange(0, dim, 2, dtype=torch.float64)
+    return base ** (-idx / dim)
+
+torch.manual_seed(0)
+freqs = rope_frequencies(16)
+q, k = torch.randn(1, 1, 16), torch.randn(1, 1, 16)
+
+def score(m: int, n: int) -> float:
+    qm = apply_rope(q, torch.tensor([m]), freqs)
+    kn = apply_rope(k, torch.tensor([n]), freqs)
+    return (qm * kn).sum().item()
+
+print(f"offset 5, near start (m=3, n=8):   {score(3, 8):+.5f}")
+print(f"offset 5, far along  (m=103,n=108): {score(103, 108):+.5f}")
+print(f"offset 6, near start (m=3, n=9):    {score(3, 9):+.5f}")
+print("norm preserved:", isclose(apply_rope(q, torch.tensor([50]), freqs).norm().item(), q.norm().item(), rel_tol=1e-6))
+```
+
+The two offset-5 scores agree to five decimals despite one pair sitting a hundred positions later; the offset-6 score differs. That is @eq-ch03-ropeinvariant, live: the model sees *distance*, not absolute position, and the norm is untouched. @fig-ch03-rope-bands shows why different bands cover different distance scales — a fast band and a slow band rotate at wildly different rates as position advances.
+
+```{python}
+#| label: fig-ch03-rope-bands
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why do RoPE bands encode different distance scales? A high-frequency band (left) sweeps most of the way around the circle over eight positions, so it resolves small offsets; a low-frequency band (right) barely turns, so it distinguishes only large ones. The extension methods of the next section reshape exactly these rotation rates."
+import numpy as np
+
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.4), subplot_kw={"aspect": "equal"})
+for ax, (w, title) in zip(axes, [(freqs[0].item(), "fast band (j=0)"), (freqs[-1].item(), "slow band (j=7)")]):
+    for m in range(8):
+        a = m * w
+        ax.plot([0, np.cos(a)], [0, np.sin(a)], color=plt.cm.viridis(m / 7))
+        ax.annotate(f"m={m}", (np.cos(a), np.sin(a)), fontsize=7)
+    ax.set_title(title, fontsize=10)
+    ax.set_xlim(-1.2, 1.2); ax.set_ylim(-1.2, 1.2); ax.axhline(0, color="0.85"); ax.axvline(0, color="0.85")
+fig.tight_layout()
+plt.show()
+```
+
+Relative dependence is not free length generalization, though. During training the model sees a bounded range of distances and phases; a low-frequency band may not complete even one rotation inside that range, so the model quietly uses it like an absolute coordinate. Push the sequence far longer at inference and those bands present phase combinations the projections never learned. Absolute offsets matter operationally too: a chunk that begins after 20,000 cached tokens must use positions starting at 20,000, or its queries rotate in a frame inconsistent with the cache — shapes still pass, retrieval quietly breaks. Position IDs are cache state.
+
+## Stretching RoPE changes the coordinate system {#sec-ch03-scaling}
+
+A model trained through context $T_0$ but evaluated at $T_1=aT_0$ needs its positions to fit the phase range it learned. RoPE extension changes the map from position to phase; it adds no training data. **Position interpolation** (PI) maps $m\mapsto m/a$, equivalently dividing every frequency by $a$, so positions through $T_1$ reuse the original phase range at the cost of compressed local resolution [@chen2023pi]. **NTK-aware** scaling instead changes the base, $b'=b\,a^{d_R/(d_R-2)}$, which leaves the fastest band nearly untouched while stretching the slow ones. **YaRN** interpolates band-by-band — leaving short-wavelength bands alone, interpolating long-wavelength ones, ramping between — and also rescales the query/key magnitude to correct attention entropy [@peng2023yarn]. We build all four band constructions in one function.
+
+```{python}
+# @save
+import math
+
+
+def ntk_base(base: float, factor: float, dim: int) -> float:
+    """Return the NTK-aware adjusted RoPE base for an extension ``factor``.
+
+    NTK-aware scaling stretches low frequencies more than high ones by raising
+    the base, so local resolution survives better than under uniform
+    interpolation.
+
+    Args:
+        base: The original RoPE base ``b``.
+        factor: Context extension factor ``a >= 1``.
+        dim: Rotary dimension ``d_R``.
+
+    Returns:
+        The adjusted base ``b'``.
+
+    Raises:
+        ValueError: If ``dim <= 2`` or ``factor < 1``.
+    """
+    if dim <= 2 or factor < 1:
+        raise ValueError("NTK scaling requires dim > 2 and factor >= 1")
+    return base * factor ** (dim / (dim - 2))
+
+
+def _correction_index(rotations: float, dim: int, base: float, original: int) -> float:
+    return dim * math.log(original / (rotations * 2 * math.pi)) / (2 * math.log(base))
+
+
+def inverse_frequencies(dim: int, *, method: str = "rope", base: float = 10_000.0,
+                        factor: float = 1.0, original_context: int = 2_048,
+                        beta_fast: float = 32.0, beta_slow: float = 1.0) -> tuple[Tensor, float]:
+    """Return RoPE band frequencies under a context-extension method.
+
+    Each method reshapes the ``dim/2`` bands of @eq-ch03-rope differently:
+    ``rope`` is unscaled; ``pi`` divides every band by ``factor``; ``ntk``
+    raises the base so high bands survive; ``yarn`` interpolates band-by-band
+    and also returns a query/key magnitude multiplier (its attention
+    temperature). Only YaRN returns a magnitude other than 1.
+
+    Args:
+        dim: Rotary dimension ``d_R`` (even, >= 4).
+        method: One of ``"rope"``, ``"pi"``, ``"ntk"``, ``"yarn"``.
+        base: Original RoPE base ``b``.
+        factor: Extension factor ``a``.
+        original_context: Trained context ``T_0`` (used by YaRN's ramp).
+        beta_fast, beta_slow: YaRN band boundaries in rotations per ``T_0``.
+
+    Returns:
+        A tuple ``(frequencies, magnitude)``: the ``dim/2`` band frequencies and
+        the scalar applied to rotated queries and keys.
+
+    Raises:
+        ValueError: If ``dim`` is invalid or the method is unknown.
+    """
+    if dim % 2 or dim < 4 or factor < 1:
+        raise ValueError("dim must be even and >= 4; factor must be >= 1")
+    indices = torch.arange(0, dim, 2, dtype=torch.float64)
+    ordinary = base ** (-indices / dim)
+    method = method.casefold()
+    if method == "rope":
+        return ordinary, 1.0
+    if method == "pi":
+        return ordinary / factor, 1.0
+    if method == "ntk":
+        return ntk_base(base, factor, dim) ** (-indices / dim), 1.0
+    if method != "yarn":
+        raise ValueError(f"unknown RoPE method: {method}")
+    interpolated = ordinary / factor
+    low = max(math.floor(_correction_index(beta_fast, dim, base, original_context)), 0)
+    high = min(math.ceil(_correction_index(beta_slow, dim, base, original_context)), dim // 2 - 1)
+    high = high + 1e-3 if low == high else high
+    ramp = ((torch.arange(dim // 2, dtype=torch.float64) - low) / (high - low)).clamp(0, 1)
+    frequencies = interpolated * ramp + ordinary * (1 - ramp)
+    magnitude = 0.1 * math.log(factor) + 1.0 if factor > 1 else 1.0
+    return frequencies, magnitude
+```
+
+We build the four band vectors for a fourfold extension and read the distinctions the tests will pin: PI divides uniformly, NTK holds the top band fixed while shrinking the rest, and YaRN sits between the two.
+
+```{python}
+rope, _ = inverse_frequencies(16)
+pi, _ = inverse_frequencies(16, method="pi", factor=4)
+ntk, _ = inverse_frequencies(16, method="ntk", factor=4)
+yarn, mag = inverse_frequencies(16, method="yarn", factor=4, original_context=32)
+print(f"top band  RoPE {rope[0]:.4f} | PI {pi[0]:.4f} | NTK {ntk[0]:.4f} | YaRN {yarn[0]:.4f}")
+print(f"low band  RoPE {rope[-1]:.4f} | PI {pi[-1]:.4f} | NTK {ntk[-1]:.4f} | YaRN {yarn[-1]:.4f}")
+print(f"PI == RoPE/4: {torch.allclose(pi, rope / 4)}   YaRN between PI and RoPE: "
+      f"{bool((yarn >= pi).all() and (yarn <= rope).all())}   YaRN magnitude: {mag:.3f}")
+```
+
+PI shifts the whole spectrum down by four; NTK pins the top band (0.7071) and only bends the tail; YaRN's magnitude exceeds one, its temperature correction. @fig-ch03-freq-reshaping plots the wavelength each band covers under the four methods, which is the shape these numbers describe.
+
+```{python}
+#| label: fig-ch03-freq-reshaping
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How do PI, NTK, and YaRN reshape the frequency bands? Each curve is a band's wavelength (2*pi / frequency) by dimension index for a 4x extension. PI lifts every band uniformly; NTK pins the fastest band and lifts the slow ones most; YaRN tracks NTK at the top and PI at the bottom. Higher wavelength means a band that turns more slowly."
+fig, ax = plt.subplots(figsize=(6.6, 3.7))
+idx = range(8)
+for freq, name, style in [(rope, "RoPE", "k-"), (pi, "PI", "--"), (ntk, "NTK", "-."), (yarn, "YaRN", ":")]:
+    ax.semilogy(idx, [2 * math.pi / f for f in freq.tolist()], style, label=name, marker="o", ms=3)
+ax.set_xlabel("rotary dimension index j")
+ax.set_ylabel("band wavelength (log)")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
+
+Three engineering rules follow. The extension factor is part of the model config and must match training or adaptation. A method can raise far-position quality while blurring local order, so short-context regression is a required check. And dynamic schemes whose scale tracks the current length can leave earlier and later cache entries on different maps unless keys are stored pre-rotation — cache semantics, again. ABF (a larger fixed base) and LongRoPE (searched per-band factors) extend the same idea with more tuning surface.
+
+## No position, dropped position, and distributed context {#sec-ch03-alternatives}
+
+RoPE extension is not the only response to length. **NoPE** removes explicit position encodings entirely; the causal mask still imposes an order (position $t$ sees $t$ prefix states, an earlier one sees fewer), and causal Transformers without position encodings have been shown to infer usable relative signals and extrapolate surprisingly well on some tasks [@kazemnejad2023nope]. The absence of an *explicit* encoding is not the absence of order, nor a guaranteed quality win. **DroPE** treats explicit position as a training scaffold: start from a RoPE model, remove the embeddings, and briefly recalibrate — an inductive bias that eased training becomes an extrapolation constraint later, so it is removed after the fact rather than never added.
+
+Long context can also be a *systems* property. **Ring Attention** partitions one long sequence across devices, circulating key-value blocks around a ring while overlapping communication with blockwise attention; the global pattern stays dense, and the logical KV state is unchanged — merely divided so a sequence longer than one device's memory fits. That is worth seeing as a number: partitioning does not shrink the cache, it spreads it.
+
+```{python}
+seq = KVConfig("GQA-8", layers=32, query_heads=32, kv_heads=8, head_dim=128, bytes_per_scalar=2)
+total = kv_bytes(seq, 131_072)
+for devices in (1, 4, 8):
+    print(f"{devices} device(s): {total / 2**30:.1f} GiB total, {total / devices / 2**30:.2f} GiB each")
+```
+
+**Dual Chunk Attention** takes a different route, redefining rotary relations within, across, and between chunks so large global offsets stay representable without a sliding window — distant chunks remain attendable. This chapter's decision boundary is clean: if the problem is *state bytes*, change head sharing, compression, or visibility; if it is *position extrapolation*, change or remove the coordinate mechanism with adaptation; if it is *single-device capacity*, partition the sequence. Chapters 6 and 10 own the distributed-training and distributed-serving mechanics.
+
+## Advertised context is not effective context {#sec-ch03-effective}
+
+"Context window" hides three different quantities: **accepted** context (the largest request the runtime admits), **trained** context (the length distribution seen during optimization), and **effective** context (the positions and lengths over which a task stays above a quality bar). Only the third is a capability claim, and it is task-specific — a model can accept a huge tensor, keep finite perplexity, recover a literal passkey, and still fail to combine two facts buried in the middle. The "Lost in the Middle" study found exactly this U-shape: information near the start or end of a long context was used better than information in the middle [@liu2024lostmiddle], and the broader phenomenon of quality decaying as more context is added is now called *context rot*. There is no universal "useful fraction"; it must be measured on the deployed model and prompt.
+
+We can isolate one cause of the shape — rotary phase — without a language model at all, using a probe that is honest about what it does and does not show. Each trial plants a content "needle" at a chosen depth among random distractor keys, rotates everything with a chosen RoPE method at a fourfold extension, and asks whether the needle wins the dot product against the end-position query.
+
+```{python}
+# @save
+def retrieval_probe(method: str, *, seed: int = 1_700, trials: int = 256, context: int = 128,
+                    original_context: int = 32, dim: int = 32) -> list[dict[str, float]]:
+    """Measure rotary retrieval versus needle depth, without a trained model.
+
+    At each of 21 depths, ``trials`` independent trials place one content needle
+    among random distractor keys, rotate keys and the end-position query with
+    ``method`` at ``context / original_context`` extension, and record whether
+    the needle receives the top dot product. This isolates RoPE phase effects;
+    it has no learned weights, instruction hierarchy, or attention sinks, so its
+    curve is a mechanism illustration, not a language-model benchmark.
+
+    Args:
+        method: A RoPE method understood by ``inverse_frequencies``.
+        seed: Base seed; depth ``i`` uses ``seed + i`` for reproducibility.
+        trials: Independent trials averaged per depth.
+        context: Sequence length swept.
+        original_context: Trained length ``T_0``; the extension factor is
+            ``context / original_context``.
+        dim: Rotary dimension of the probe vectors.
+
+    Returns:
+        One dict per depth with ``depth_percent``, ``accuracy``, and
+        ``standard_error``.
+    """
+    factor = context / original_context
+    freqs, magnitude = inverse_frequencies(dim, method=method, factor=factor, original_context=original_context)
+    rows: list[dict[str, float]] = []
+    for i, depth in enumerate(torch.linspace(0, 1, 21)):
+        g = torch.Generator().manual_seed(seed + i)
+        content = torch.randn(trials, dim, generator=g)
+        query = content + 0.15 * torch.randn(trials, dim, generator=g)
+        needle = content + 0.15 * torch.randn(trials, dim, generator=g)
+        keys = torch.randn(trials, context, dim, generator=g)
+        pos = round(float(depth) * (context - 2))
+        keys[:, pos] = needle
+        q_rot = apply_rope(query[:, None], torch.tensor([context - 1]), freqs, magnitude)[:, 0]
+        k_rot = apply_rope(keys, torch.arange(context), freqs, magnitude)
+        scores = torch.einsum("btd,bd->bt", k_rot, q_rot) / dim**0.5
+        hits = int((scores.argmax(1) == pos).sum())
+        p = hits / trials
+        rows.append({"depth_percent": round(float(depth) * 100),
+                     "accuracy": p, "standard_error": math.sqrt(p * (1 - p) / trials)})
+    return rows
+```
+
+We run the probe under unscaled RoPE, NTK, and YaRN and print the mean top-1 rate for each.
+
+```{python}
+runs = {m: retrieval_probe(m) for m in ("rope", "ntk", "yarn")}
+for m, rows in runs.items():
+    mean = sum(r["accuracy"] for r in rows) / len(rows)
+    print(f"{m:5s}: mean top-1 retrieval {mean:.3f}")
+```
+
+Unscaled RoPE recovers the needle 60% of the time on average, NTK 70%, YaRN 83% — changing only the coordinate map changes retrieval, with nothing else different. @fig-ch03-rope-retrieval plots the full depth curves with binomial confidence bands.
+
+```{python}
+#| label: fig-ch03-rope-retrieval
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Does RoPE scaling fix position-dependent retrieval? In this synthetic fourfold-extension probe, unscaled RoPE is oscillatory and weakest at many depths; NTK lifts its mean; YaRN is highest but still not flat. Bands are 95% binomial intervals over 256 trials per depth. This isolates rotary phase, not trained-model behavior."
+fig, ax = plt.subplots(figsize=(6.6, 3.7))
+for (m, rows), (color, ls) in zip(runs.items(), [("#7356a8", "-"), ("#2a7f9e", "--"), ("#b13f3f", ":")]):
+    xs = [r["depth_percent"] for r in rows]
+    ys = [r["accuracy"] for r in rows]
+    lo = [max(0, r["accuracy"] - 1.96 * r["standard_error"]) for r in rows]
+    hi = [min(1, r["accuracy"] + 1.96 * r["standard_error"]) for r in rows]
+    ax.plot(xs, ys, ls, color=color, label={"rope": "RoPE", "ntk": "NTK", "yarn": "YaRN"}[m])
+    ax.fill_between(xs, lo, hi, color=color, alpha=0.12)
+ax.set_xlabel("needle depth from start of context (%)")
+ax.set_ylabel("top-1 retrieval rate")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
+
+The curve isolates one mechanism; it has no trained weights and cannot show semantic lost-in-the-middle. Its value is causal: it proves the coordinate map alone moves retrieval, which is why an "effective context" claim must be measured, not inherited from a spec.
+
+::: {.callout-note title="In the interview"}
+**Q. A model advertises a 1M-token window and a PM asks whether we can drop retrieval and just paste everything in. What do you check?**
+Separate accepted from effective context: the 1M is an interface limit, not a capability guarantee. Measure effective context on *your* task with a length-by-depth grid (retrieval, multi-hop, aggregation), watch for context rot as distractors grow, and price the KV cache and decode latency at that length. The trap is treating the advertised number as proof of accurate use everywhere; the strong answer names the measurement — task quality stratified by length and depth — that would settle it.
+:::
+
+## Benchmark the failure you care about {#sec-ch03-benchmarks}
+
+A long-context benchmark is useful only when its failure mode matches your application, and the field's suites climb a ladder of difficulty for exactly that reason. Our own probe is a **Needle-in-a-Haystack** (NIAH) test in miniature: a literal key planted at a controlled depth, recovered by direct match. NIAH is a great smoke test — cheap, position-controlled, and quick to expose truncation or position-ID bugs — but it saturates first, because exact lexical cues let attention match the needle directly. That is precisely the weakness the next rung removes. **RULER** varies length and adds multi-hop tracing and aggregation, so effective length is comparable across models [@hsieh2024ruler]. **NoLiMa** strips the literal overlap: the query and needle connect only through latent knowledge, so keyword matching no longer solves it [@modarressi2025nolima]. **LongBench v2** moves to realistic long-document QA, code, and structured-data reasoning.
+
+Seen this way, the probe's `content = needle + noise` construction is what makes it a *literal-match* task; making the needle recoverable only through an alias chain (entity → alias → value, with no shared surface tokens) is exactly the step from NIAH to NoLiMa, and it demands abilities the probe has no weights for. A serious evaluation therefore records tokenizer length (not characters), evidence depth and span, distractor count, task type (literal, associative, aggregation, reasoning), an original-window regression baseline, accuracy with confidence intervals, and prefill/decode/memory cost — and does *not* average them into one number, because a single score hides a dead middle or a cliff just past the trained length. Chapter 22 turns this grid into a full evaluation system; Chapter 13 owns the context engineering — selection, ordering, compaction — that decides what goes into the window in the first place.
 
 ::: {.callout-note .landscape-2026}
-### Landscape 2026 — Efficient patterns remain empirical choices
+### Landscape 2026 — a maximum-window claim is a hypothesis
 
-The official MiniMax M2 architecture note reports choosing full attention after its hybrid alternatives degraded on long-context agent tasks. That result is a useful counterexample to treating local, linear, or hybrid attention as a universal upgrade; another workload or training recipe can reach a different conclusion.
+Meta's Llama 4 announcement and Scout model card advertise a 10-million-token context window. That is a valid interface and architecture claim to *test*, not evidence that every task stays accurate at every depth through 10M tokens.
 
-**Verify live:** review the current official [MiniMax M2 design note](https://platform.minimax.io/docs/guides/text-m2-full-attention) and the released configuration before carrying this example into an architecture decision. **Verified:** 2026-07-19.
+**Verify live:** inspect the current [Llama 4 announcement](https://ai.meta.com/blog/llama-4-multimodal-intelligence/) and [Scout model card](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct), then run your target task at stratified lengths and depths before turning the number into a requirement. **Verified:** 2026-07-19.
 :::
 
-## RoPE Encodes Relative Position by Rotation {#sec-ch03-rope}
+## Summary
 
-Attention without positional information is permutation-equivariant before the causal mask: the same token representations in a different order do not carry an explicit coordinate. Rotary position embeddings (RoPE) inject position into queries and keys while making their dot product depend on relative displacement.
+Persistent attention state is $B\,T\,L\,(2H_{kv}d_h)\,s$ — a formula we ran to turn 128K tokens into 64 GiB, then shrank three ways: sharing KV heads (GQA/MQA) cuts the ratio $H_{kv}/H_q$; a latent cache (MLA) compresses the stored width to $r+d_R$; sliding windows and interleaving bound it by $\min(T,W)$, with attention sinks keeping windows stable. RoPE replaces absolute positions with rotations whose dot product depends only on relative offset, and PI, NTK, and YaRN reshape its frequency bands to reach past the trained length. Our own probe showed scaling moving retrieval — proof that accepted context is not effective context. Chapter 10 makes this arithmetic operational in a serving stack.
 
-Take two coordinates $(x_{2j},x_{2j+1})$ in an even-dimensional rotary subspace. At position $m$, rotate the pair by angle $m\omega_j$:
+## Exercises
 
-$$
-R_j(m)=
-\begin{bmatrix}
-\cos(m\omega_j)&-\sin(m\omega_j)\\
-\sin(m\omega_j)& \cos(m\omega_j)
-\end{bmatrix},
-\qquad
-\omega_j=b^{-2j/d_R}.
-$$
-
-$d_R$ is the rotary dimension and $b$ is the frequency base. Small $j$ gives a high-frequency band that rotates quickly; large $j$ gives a low-frequency band that changes slowly. RoPE applies the block-diagonal collection of these rotations to $q_m$ and $k_n$, but not to the value.
-
-Rotation matrices are orthogonal, so they preserve vector norm. More importantly,
-
-$$
-(R(m)q)^\top(R(n)k)
-=q^\top R(m)^\top R(n)k
-=q^\top R(n-m)k.
-$$
-
-Shift both positions by the same offset $c$ and the score is unchanged, because $(n+c)-(m+c)=n-m$. The tests verify this numerically across a 100-position shift. This is the central RoPE invariant: the attention score exposes relative offset through multiple frequency bands without adding a learned absolute position vector to the residual stream.
-
-The implementation rotates interleaved pairs:
-
-```python
-angles = positions[:, None] * frequencies[None, :]
-even, odd = vectors[..., 0::2], vectors[..., 1::2]
-rotated_even = even * angles.cos() - odd * angles.sin()
-rotated_odd = even * angles.sin() + odd * angles.cos()
-```
-
-Relative dependence does not guarantee unlimited length generalization. During training, the network sees only a bounded distribution of distances and phases. Some low-frequency dimensions may not complete one rotation inside that range, allowing the model to use them like near-absolute coordinates. At inference, a much longer sequence presents phase combinations and relative distances the learned projections did not experience.
-
-Absolute offsets also matter in implementation. During chunked prefill or cached decoding, a new chunk beginning after 20,000 cached tokens must use positions starting at 20,000. Restarting its local position counter at zero rotates new queries in a coordinate system inconsistent with cached keys. Tensor shapes still pass; retrieval and cached/full equivalence fail. Position IDs are cache state even though they consume far fewer bytes than keys and values.
-
-ALiBi is a useful contrast, not this chapter's second derivation. It adds a head-specific linear penalty proportional to query-key distance directly to attention logits. It avoids a rotation table and has different extrapolation behavior, but still imposes a positional inductive bias and does not turn training at one length into a guarantee at every length.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `rope.py`: frequency bands plus pairwise rotation | 42 lines | Norm is preserved and equal relative offsets produce equal query-key dot products after a shared shift. |
-:::
-
-## Stretching RoPE Changes the Coordinate System {#sec-ch03-scaling}
-
-Suppose a model trained through context $T_0$ must be evaluated at $T_1=aT_0$. A RoPE extension changes how positions map into phases. It does not add evidence to training data or teach the model a long-document task.
-
-**Position interpolation** (PI) maps position $m$ to $m/a$. Equivalently, it divides every frequency by $a$. Positions through $T_1$ then occupy the original phase range. The cost is compressed local resolution: high-frequency bands that formerly distinguished nearby offsets now move $a$ times more slowly.
-
-**NTK-aware scaling** changes the base rather than dividing all bands equally. The common base rule implemented here is
-
-$$
-b'=b\,a^{d_R/(d_R-2)}.
-$$
-
-Because the first frequency remains one while later frequencies shrink increasingly, high-frequency local information is preserved more than under PI and low-frequency bands absorb more extension. The “NTK-aware” name describes the motivation, not a theorem that a particular checkpoint will preserve quality.
-
-**YaRN** combines two mechanisms. Its NTK-by-parts rule leaves short-wavelength dimensions unscaled, interpolates long-wavelength dimensions, and ramps between them according to how many rotations each band completed within $T_0$. It also changes attention temperature. The reference implementation multiplies both rotated queries and keys by
-
-$$
-m(a)=0.1\ln(a)+1\quad\text{for }a>1,
-$$
-
-which scales their dot product by $m(a)^2$ before softmax. These parts address different failures: frequency interpolation manages phase extrapolation, while magnitude scaling adjusts attention entropy. Treating YaRN as only a `rope_scaling` label omits half the method.
-
-| Method | What changes | Main tradeoff |
-|---|---|---|
-| Position interpolation | all positions or frequencies uniformly | stays in the old phase range but compresses local resolution |
-| NTK-aware | frequency base, nonuniformly across bands | preserves the highest band but depends on an empirical base rule |
-| YaRN | wavelength-dependent interpolation plus attention magnitude | adds tunable boundaries and is strongest as a training recipe, not a magic inference flag |
-| Adjusted base frequency (ABF) | manually chosen larger base | simple, but the base and training length remain model-specific |
-| LongRoPE | searched nonuniform rescaling factors, often with progressive extension | more flexible, with search and adaptation cost |
-
-Three engineering rules follow. First, extension factor is part of the model configuration and must match training or adaptation. Second, short-context regression matters: a method can improve far positions while blurring local order or changing attention entropy. Third, cache semantics matter. Dynamic schemes whose scale changes with current sequence length may require keys before rotation or a consistent rerotation strategy; otherwise earlier and later cache entries use different maps.
-
-The build implements fixed-scale NTK-aware and YaRN maps because their distinctions are educational and testable. It surveys PI, ABF, and LongRoPE without presenting five drop-in implementations. A production adoption still depends on fine-tuning data, target lengths, precision, attention kernel support, and evaluations at both original and extended lengths.
-
-## No Position, Dropped Position, and Distributed Context {#sec-ch03-alternatives}
-
-RoPE extension is not the only possible response to length generalization.
-
-**NoPE** removes explicit positional embeddings. A causal mask still gives computation an order: position $t$ has access to $t+1$ prefix states while an earlier position has fewer. Experiments on length generalization have found that causal Transformers without explicit position encodings can infer useful relative and absolute signals and can extrapolate surprisingly well on some tasks. The absence of an explicit encoding is not the absence of order, nor is it a universal quality win. Position-sensitive tasks, optimization, and architecture details decide the result.
-
-**DroPE** treats explicit position as a training scaffold. The published method starts from a model trained with positional embeddings, removes them, and performs a short recalibration at the original context length. Its reported experiments motivate a useful distinction: an inductive bias can make training easier yet become an extrapolation constraint later. It is an emerging conversion method, not permission to delete RoPE from an arbitrary production checkpoint without recovery evaluation.
-
-Long context can also be a systems property rather than a new positional formula. **Ring Attention** partitions a long sequence across devices. Each device holds a query block while KV blocks circulate around a ring; blockwise attention overlaps communication with computation and uses online softmax accumulation. The global semantic pattern remains dense. The total logical KV state and dense arithmetic have not vanished; they are partitioned so a sequence longer than one device's memory can be trained or evaluated. Chapter 6 owns distributed training details, and Chapter 10 owns distributed serving.
-
-**Dual Chunk Attention** partitions positions into chunks and defines different rotary relations for tokens within the same chunk, in earlier chunks, and in adjacent chunks. It is a context-extension transformation aimed at keeping local relations familiar while representing much larger global offsets. Like RoPE scaling, it changes the coordinate map and needs evaluation against the model and task. It is not the same as a sliding visibility window: tokens in distant chunks can remain attendable.
-
-This survey sets a decision boundary. If the problem is **state bytes**, change head sharing, compression, or visibility. If it is **position extrapolation**, change or remove the coordinate mechanism with adaptation. If it is **single-device capacity**, partition sequence state and compute. A method can address more than one boundary, but its paper headline should not substitute for tracing which term actually changed.
-
-## Advertised Context Is Not Effective Context {#sec-ch03-effective}
-
-“Context window” hides at least three quantities:
-
-- **Accepted context:** the largest request the interface and runtime admit.
-- **trained or adapted context:** the length distribution represented during optimization.
-- **effective context:** the positions and lengths over which a specified task remains above a specified quality threshold.
-
-Only the third is a capability statement, and it is task-specific. A model can accept a large tensor, maintain finite perplexity, recover a literal passkey, and still fail to combine two indirect facts in the middle of a repository. Effective context is a measured surface over length, position, distractor structure, and task—not one scalar copied from a model card.
-
-The “Lost in the Middle” experiments demonstrated position sensitivity in long-context language models: on their multi-document question answering and key-value retrieval settings, relevant information was often used better near the beginning or end than in the middle. That U-shaped result is evidence about tested models and tasks, not a law derived from RoPE. Primacy can arise from attention and instruction patterns; recency from causal proximity and training distribution; distractors and task format alter both.
-
-The broader term **context rot** describes quality degrading as more nominally relevant or distracting context is added. Chroma's controlled study reports degradation across multiple task families and models, including cases where every added token belongs to the task. This warns against a fixed folklore threshold such as “the useful window is 30–40 percent of advertised.” There is no universal fraction. Measure the deployed model, prompt format, evidence distribution, and success criterion.
-
-The local probe isolates one mechanism. Each of 256 seeded trials creates a noisy 32-dimensional query, a matching key, and 127 random distractor keys. The query is at the last position; the needle moves from the start to near the end. The probe applies unscaled RoPE, NTK-aware scaling, or YaRN for a fourfold extension, then asks whether the matching key receives the highest dot product. It is an attention diagnostic, not a language model or a reproduction of Lost in the Middle.
-
-![In a seeded synthetic fourfold-extension probe, RoPE phase changes make retrieval position-sensitive; NTK-aware and YaRN scaling improve mean top-1 retrieval but do not make it uniform. Shaded bands are 95 percent binomial intervals over 256 trials per position.](../code/ch03/generated/rope-retrieval.svg){#fig-ch03-rope-retrieval fig-alt="Directly labeled retrieval-rate plot over needle depth. Circle-solid unscaled RoPE is oscillatory and weakest for many distant positions, square-dashed NTK-aware scaling improves its mean, and triangle-dotted YaRN has the highest mean but remains imperfect. Shading shows 95 percent binomial intervals."}
-
-Across the 21 depths, mean top-1 retrieval is 0.600 for unscaled RoPE, 0.696 for NTK-aware scaling, and 0.832 for YaRN. Near the query, all methods benefit from small relative displacement. Farther away, frequency phase and aliasing create an oscillatory rather than smooth decay. YaRN flattens much of the failure but leaves position-dependent errors. Because the fixture has no language training, instruction hierarchy, or attention sinks, its curve must not be used as evidence that a production model has the same shape. Its value is causal: changing only the coordinate map changes retrieval.
-
-::: {.callout-note .landscape-2026}
-### Landscape 2026 — A maximum-window claim is a hypothesis
-
-Meta's official Llama 4 announcement and Scout model card advertise support for a 10-million-token context window. That is a valid interface and architecture claim to test, not evidence that every task remains accurate at every depth through 10 million tokens. Record the exact checkpoint, runtime, prompt, and evaluation surface before translating the number into a product requirement.
-
-**Verify live:** inspect the current official [Llama 4 announcement](https://ai.meta.com/blog/llama-4-multimodal-intelligence/) and [Scout model card](https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct), then run the target task at stratified lengths and positions. **Verified:** 2026-07-19.
-:::
-
-For agents, context quality is also state quality. A transcript mixes policy, user requests, tool schemas, observations, failed plans, code, and summaries. Even perfect literal retrieval may select a superseded instruction or confuse observation with authority. Chapter 13 owns the context-engineering response—selection, ordering, compression, and provenance. This chapter establishes why “send everything” is neither a capacity plan nor an evaluation plan.
-
-## Benchmark the Failure You Actually Care About {#sec-ch03-benchmarks}
-
-A benchmark is useful when its failure mode matches the application. Long-context evaluation evolved because easy retrieval tests saturated before realistic understanding did.
-
-| Benchmark family | What it adds | What a pass does not prove |
-|---|---|---|
-| Needle-in-a-Haystack (NIAH) | place a literal key or passkey at controlled depths and lengths | indirect association, distractor resistance, synthesis, or reasoning |
-| RULER | combines retrieval with multi-hop tracing, aggregation, and question answering across controlled lengths | performance on natural repositories, conversations, or domain evidence |
-| NoLiMa | removes literal lexical overlap and requires one- or two-hop association using model knowledge | general long-document reasoning or agent-state correctness |
-| LongBench v2 | realistic long single- and multi-document QA, dialogue, code, structured data, and in-context learning tasks | the deployed prompt, tool protocol, latency target, or private data distribution |
-
-NIAH remains a good smoke test. It is cheap, position-controlled, and catches truncation, position-ID, and gross retrieval failures. It saturates first because exact lexical cues let attention match the query and needle directly. Passing it should trigger harder tests, not a “long context solved” declaration.
-
-RULER varies sequence length and includes several synthetic task structures, making effective length easier to compare than with one passkey. NoLiMa deliberately removes surface-form overlap: the query and needle connect through latent knowledge, so simple keyword matching no longer solves the task. LongBench v2 moves toward realistic, reasoning-heavy tasks, including repository and structured-data understanding. As realism rises, attribution becomes harder; preserve synthetic diagnostics alongside end-to-end tasks so a regression can be localized.
-
-A serious evaluation grid records at least:
-
-1. exact tokenizer length, not character count;
-2. relevant-evidence depth and span width;
-3. total length and number of distractors;
-4. literal, associative, aggregation, and reasoning task types;
-5. original-window baselines and short-context regression;
-6. accuracy or task utility with confidence intervals;
-7. prefill latency, decode latency, peak memory, and failure category.
-
-Do not average the grid immediately. A single score can hide a dead middle, a sharp cliff after the trained length, or success only when the needle is adjacent to the query. Plot length by depth, stratify by task, and inspect incorrect outputs. For agent workloads, add temporal validity: whether the selected fact is current or superseded, whether tool output is confused with instruction, and whether two separated observations are joined correctly. Chapter 22 turns these cases into a broader evaluation system.
-
-The benchmark should also test the chosen mechanism. GQA and MLA require quality comparisons at the same context and decoding policy. Windowed attention requires evidence beyond the window and across the interleaving schedule. RoPE extension requires original-length and extended-length tests. Distributed attention requires numerical agreement with an undistributed reference. Capacity, computation, and capability return as three separate acceptance gates.
-
-## Build {#sec-ch03-build}
-
-Run the deterministic artifact from the `newbook` directory:
-
-```powershell
-python code/ch03/run_build.py
-python -m pytest tests/test_ch03_long_context.py -q
-```
-
-The build writes five generated files under `code/ch03/generated/`:
-
-- `kv-footprints.csv` contains exact bytes and GiB for every configuration and context;
-- `rope-retrieval.csv` contains successes, trials, accuracy, and standard error at every depth;
-- `metrics.json` records both tables, attention shape checks, mean retrieval rates, seed, dimensions, and the diagnostic's claim boundary;
-- `kv-footprints.svg` renders the cache slopes used in @fig-ch03-kv-footprints;
-- `rope-retrieval.svg` renders the position sweep and binomial intervals used in @fig-ch03-rope-retrieval.
-
-Read the artifact in dependency order. First inspect the three `config.json` excerpts for [Llama 2](../code/ch03/fixtures/llama2-7b/config.json), [Llama 3.1](../code/ch03/fixtures/llama31-8b/config.json), and [DeepSeek-V2-Lite](../code/ch03/fixtures/deepseek-v2-lite/config.json). Recompute their cached scalar width from the architecture: ${2H_{kv}d_h}$ for MHA or GQA, and $r+d_R$ for the MLA-style case. Multiply by layers and scalar bytes. `kv-footprints.csv` should then be predictable before opening it.
-
-Second, change only `kv_heads` in `GroupedQueryAttention`. The tests use four query heads and KV-head settings four, two, and one. Their cached scalar counts are 640, 320, and 160 for the two-sequence, five-token fixture. Output shape remains unchanged. The incremental-cache test then compares all token outputs against a full causal pass.
-
-Third, inspect the latent layer. Its explicit up-projections make it slower than an absorbed implementation may be, but the cache contains only the latent and shared rotary key. Confirm the 96-scalar build measurement from ${1\cdot8\cdot(8+4)}$.
-
-Fourth, run the RoPE invariant tests before reading retrieval accuracy. Pair rotation must preserve norm. Shifting both query and key positions by 100 must preserve their dot product when relative offset is unchanged. PI must divide all frequencies uniformly; NTK-aware scaling must retain the highest frequency and reduce lower bands; YaRN bands must lie between unscaled and fully interpolated frequencies for this fixture.
-
-Finally, inspect the retrieval CSV rather than only the plot. Predict which positions are hardest under an end-position query, rerun with another registered seed family, and report uncertainty. If a scaling change improves the mean but damages near positions, that is a tradeoff to investigate rather than a plotting nuisance.
-
-**Honesty note.** The calculator reports tensor payload, not allocated serving memory. The model configurations are dated excerpts, not downloaded live. The grouped layer uses logical head repetition rather than a fused production kernel. The MLA layer demonstrates stored state but omits projection absorption. The retrieval probe has no trained language model and cannot exhibit semantic lost-in-the-middle behavior; it isolates rotary phase effects. No result here proves a provider's maximum window, production latency, or model quality. Those claims require model- and hardware-specific adapters and the benchmark grid above.
-
-## What Endures, What Changes {#sec-ch03-endures}
-
-**What endures.** Persistent attention state is the product of represented sequences, tokens, layers, cached width, and scalar bytes. MHA, GQA, MQA, and MLA differ chiefly in what width must persist. Caching avoids old projections but leaves dense decode attention linear in retained length. Visibility masks determine causal paths, not merely storage. RoPE rotates query-key coordinate pairs so scores expose relative displacement; length extension changes that coordinate map. Accepted, trained, and effective context are different quantities. Every long-context claim needs capacity, computation, and capability measurements.
-
-**What changes.** Head ratios, latent ranks, rotary dimensions, frequency bases, scaling recipes, training lengths, cache formats, attention patterns, kernels, benchmark saturation, model-card limits, and hardware balance change. NoPE and post-training position removal may mature; distributed and sparse attention implementations will move; today's difficult retrieval suite may become tomorrow's smoke test. Keep dated configuration facts in the landscape blocks and rerun them. Preserve the equations, tensor-shape checks, relative-position invariant, and evaluation grid.
-
-## Exercises {#sec-ch03-exercises}
-
-1. **Audit a new configuration.** Choose a published gpt-oss-class configuration and record $L,H_q,H_{kv},d_h,$ and cache dtype from its primary config. Compute batch-one payload at 32K and 128K tokens by hand, then add a dated fixture without changing `kv_bytes()`. Which factor dominates, and which facts require live verification?
-2. **Reach MQA by configuration.** Set `kv_heads=1` in `GroupedQueryAttention` while holding width and query heads fixed. Predict cache shape and scalar ratio before running. Add a cached/full equivalence test and explain why the output shape alone cannot prove correctness.
-3. **Break the rotary offset.** Modify the toy latent layer so every appended chunk restarts positions at zero. Construct a two-chunk comparison against a full pass, plot error by position, and identify why tensor shapes and cache bytes remain valid while attention changes.
-4. **Make retrieval associative.** Replace the direct matching needle with two separated records: entity-to-alias and alias-to-value. Require the query to recover the value without shared surface tokens. Report length-by-depth results and explain which part moves the probe toward NoLiMa and which language-model abilities it still lacks.
-5. **Defend a 40 GiB capacity estimate.** Given a model-weight allocation, workspace reserve, and one configuration from the build, derive the maximum batch at 32K and 128K tokens. Round down, state binary versus decimal units, and list runtime overheads that make the result an upper bound.
-6. **Review a “1M context” roadmap.** Write a one-page design defense that separates accepted, trained, and effective context. Specify a length-by-depth benchmark grid, short-context regression gate, KV budget, latency gate, and residual risk. Use the build's plot only for its synthetic mechanism claim.
-
-## Notes and Sources {#sec-ch03-notes}
-
-- Shazeer, [“Fast Transformer Decoding: One Write-Head Is All You Need”](https://arxiv.org/abs/1911.02150), introduces multi-query attention. Ainslie et al., [“GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints”](https://arxiv.org/abs/2305.13245), develops grouped-query attention and MHA-checkpoint uptraining.
-- DeepSeek-AI, [“DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model”](https://arxiv.org/abs/2405.04434), is the primary source for MLA, the compressed KV latent, decoupled RoPE, and matrix absorption. Meng, Yao, and Zhang, [“TransMLA: Multi-Head Latent Attention Is All You Need”](https://arxiv.org/abs/2502.07864), studies conversion from GQA models.
-- Xiao et al., [“Efficient Streaming Language Models with Attention Sinks”](https://arxiv.org/abs/2309.17453), identifies sink behavior and the prefix-plus-window streaming pattern.
-- Su et al., [“RoFormer: Enhanced Transformer with Rotary Position Embedding”](https://arxiv.org/abs/2104.09864), introduces RoPE and derives its relative-position property.
-- Chen et al., [“Extending Context Window of Large Language Models via Positional Interpolation”](https://arxiv.org/abs/2306.15595), introduces position interpolation. Peng et al., [“YaRN: Efficient Context Window Extension of Large Language Models”](https://arxiv.org/abs/2309.00071), specifies NTK-by-parts interpolation and attention-temperature scaling; the authors' [reference repository](https://github.com/jquesnelle/yarn) is the implementation source used here.
-- Ding et al., [“LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens”](https://arxiv.org/abs/2402.13753), studies searched nonuniform interpolation and progressive extension.
-- Kazemnejad et al., [“The Impact of Positional Encoding on Length Generalization in Transformers”](https://arxiv.org/abs/2305.19466), compares positional mechanisms and analyzes NoPE. Gelberg et al., [“Extending the Context of Pretrained LLMs by Dropping Their Positional Embeddings”](https://arxiv.org/abs/2512.12167), introduces DroPE.
-- Liu et al., [“Ring Attention with Blockwise Transformers for Near-Infinite Context”](https://arxiv.org/abs/2310.01889), distributes blockwise attention over a device ring. An et al., [“Training-Free Long-Context Scaling of Large Language Models”](https://arxiv.org/abs/2402.17463), introduces Dual Chunk Attention.
-- Liu et al., [“Lost in the Middle: How Language Models Use Long Contexts”](https://arxiv.org/abs/2307.03172), measures position-dependent long-context use. Chroma's [Context Rot report](https://www.trychroma.com/research/context-rot) broadens the empirical study across models and task structures; it is a direct research report rather than a peer-reviewed primary paper.
-- Hsieh et al., [“RULER: What's the Real Context Size of Your Long-Context Language Models?”](https://arxiv.org/abs/2404.06654), builds a controlled multi-task synthetic suite. Modarressi et al., [“NoLiMa: Long-Context Evaluation Beyond Literal Matching”](https://arxiv.org/abs/2502.05167), removes literal query-needle overlap. Bai et al., [“LongBench v2”](https://arxiv.org/abs/2412.15204), evaluates realistic long-context understanding and reasoning tasks.
+1. **Audit a new configuration.** Pick a current open-weight model, read $L$, $H_q$, $H_{kv}$, $d_h$, and cache dtype from its `config.json`, and build a `KVConfig` for it. (a) Compute batch-one KV bytes at 32K and 128K by hand, then check against `kv_bytes`. (b) Which single field would you change to halve the cache, and what would you have to re-validate before trusting it?
+2. **Reach MQA by the dial.** Set `kv_heads=1` in `GroupedQueryAttention` while holding width and query heads fixed. Predict the cache shape and the ratio from @eq-ch03-gqaratio before running, then verify. Explain why matching output *shape* does not prove correctness, and which check in this chapter does.
+3. **Price a window schedule.** Using the interleaving computation in @sec-ch03-patterns, sweep the window $W$ and the local:global ratio for a 128K-token GQA model. Plot cache GiB against $W$, and find the schedule that fits a 12 GiB budget. What long-range capability did you trade away, and which benchmark rung would catch it?
+4. **Break the rotary frame.** Modify `ToyLatentKVAttention` (or `GroupedQueryAttention`) so that each appended chunk restarts its position counter at zero. Construct a two-chunk sequence, compare the cached output to a full pass, and plot the error by position. Explain why tensor shapes and cache bytes stay valid while attention silently degrades.
+5. **Reshape the bands yourself.** Using `inverse_frequencies`, extend the retrieval probe with a fifth method that divides only the *slowest half* of the bands. Predict where on the depth curve it should help or hurt relative to YaRN, run it, and report the mean and the depth profile. Which real method does your hand-made one most resemble?
+6. **Make the probe associative.** Replace the probe's direct `content = needle + noise` with a two-record alias chain (entity→alias, alias→value) that shares no surface tokens with the query. Report retrieval by depth, explain which part of the change pushes the probe toward NoLiMa, and name the model ability the probe still cannot exercise.

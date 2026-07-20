@@ -477,6 +477,7 @@ $$ {#eq-ch02-residual}
 The plus signs carry the meaning. Gradients flow through the identity path untouched, which is what lets deep stacks train; and semantically, the stream becomes a shared bus into which every sublayer writes and from which every later sublayer reads. Chapter 25 builds its interpretability toolkit on exactly this picture — asking what each component reads from the stream and what direction it writes back. @fig-ch02-residual-stream draws one block.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch02-residual-stream
 %%| fig-cap: "How does one block update the residual stream? Both sublayers read a normalized copy and add their update back; attention is the only place positions communicate, and the FFN transforms each position independently."
 flowchart LR
@@ -567,6 +568,7 @@ print(f"mean |update| = {update_size:.4f} vs mean |stream| = {stream_in.abs().me
 Four stages remain to turn token IDs into next-token distributions: an **embedding table** that maps each of the $V$ token IDs to a learned width-$d$ vector; a **position embedding** that lets the model distinguish the same token at different offsets (attention alone is permutation-blind); the stack of $L$ blocks; and a final norm followed by the **language-model head**, a $d\times V$ linear map from the last residual state to one logit per vocabulary item. We use a learned absolute position table here because it is the simplest thing that works at one fixed block size; Chapter 3 replaces it with rotary embeddings and treats context extension properly. @fig-ch02-forward-path locates all four stages.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch02-forward-path
 %%| fig-cap: "What happens between token IDs and a next-token distribution? Embeddings and positions initialize the residual stream, the blocks refine it under the causal mask, and the tied head reads logits out of the final state."
 flowchart LR
@@ -856,6 +858,8 @@ Raw FLOPs, however, do not predict speed, because a processor can starve for dat
 
 ```{python}
 #| label: fig-ch02-roofline
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "Why is generating one token so much slower per FLOP than processing a prompt? On a machine with a 50 FLOP/byte balance point, single-token decode (intensity about 1) sits deep in the bandwidth-bound region at about 2% of peak, while a 512-token prefill reuses each loaded weight 512 times and reaches the compute ceiling."
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1013,6 +1017,8 @@ The train loss has collapsed; the held-out loss has not. @fig-ch02-loss shows bo
 
 ```{python}
 #| label: fig-ch02-loss
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "What does this training run actually demonstrate? Training loss falls from the ln(512) uniform baseline toward zero, but held-out loss bottoms out inside the first hundred steps and then climbs: a 140K-parameter model is memorizing a 3.9K-token corpus, not learning English."
 fig, ax = plt.subplots(figsize=(6.6, 3.6))
 ax.plot(range(1, total_steps + 1), train_losses, color="#2a7f9e", label="training batch loss")
@@ -1045,6 +1051,8 @@ An honest summary of the artifact: mechanism demonstrated, competence absent. Ev
 
 ```{python}
 #| label: fig-ch02-attention
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "What did training do to attention? Before training (left), a layer-0 head spreads its weight broadly over the visible prefix; after training (right), the same head commits — many rows place half or more of their mass on one informative earlier token (the 'abb' of 'rabbit' collects much of it) instead of averaging everything."
 weights_after = attention_weights(model, probe_ids)
 head = 0
@@ -1128,6 +1136,8 @@ print(f"full forward:  {full_ms[0]:.2f} ms at prefix {prefix_lengths[0]}, "
 
 ```{python}
 #| label: fig-ch02-decode-latency
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "What work does the cache actually avoid? The full-recomputation cost climbs steadily with prefix length — every step re-pays for the entire past — while the cached step stays flat: constant projection work, plus an O(t) attention term too small to register at this width."
 fig, ax = plt.subplots(figsize=(6.6, 3.4))
 ax.plot(prefix_lengths, full_ms, color="#b13f3f", label="no cache: full recomputation")
@@ -1150,6 +1160,8 @@ print(f"measured growth: {slope} bytes/token   "
 
 ```{python}
 #| label: fig-ch02-kv-growth
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "Does cache storage follow the formula? Measured bytes climb by exactly 2BLds = 1,024 bytes per cached token — memory per generation step is O(n) even though projection compute is O(1)."
 fig, ax = plt.subplots(figsize=(6.6, 3.2))
 ax.plot(prefix_lengths, [size / 1024 for size in cache_sizes], color="#7356a8")

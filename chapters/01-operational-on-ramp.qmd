@@ -19,6 +19,7 @@ $$ {#eq-ch01-autoregressive}
 At each output position the network emits one logit per vocabulary token; a decoding policy turns those logits into a choice; the chosen token is appended and the loop repeats until a stop token, a length cap, or a serving rule ends it. "Generate an answer" is therefore a chain of conditional next-token decisions, not a database lookup. The caller never touches the raw tensor. It sends an envelope — messages, decoding controls, output limits, maybe a schema or tool declarations — and receives text plus optional measurements. @fig-ch01-call-contract draws that boundary.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch01-call-contract
 %%| fig-cap: "What does the caller control, and what does the server return? The caller owns context and permissions; the server owns how the distribution is decoded and scheduled."
 sequenceDiagram
@@ -283,6 +284,8 @@ At $T=0.5$ the correct-ish `not` holds about three-quarters of the mass; at $T=2
 
 ```{python}
 #| label: fig-ch01-temperature
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "How does temperature reshape one next-token distribution? Low T concentrates mass on the top token; high T levels the field and lets 'always' compete."
 import matplotlib.pyplot as plt
 
@@ -349,6 +352,8 @@ As temperature rises the top token's share of the samples falls from about three
 
 ```{python}
 #| label: fig-ch01-diversity
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "How does output entropy grow with temperature? Sampled diversity rises toward the log2(4)=2-bit ceiling as the distribution flattens."
 temps = [0.2 * s for s in range(1, 12)]
 entropies = [-sum(q * math.log2(q) for q in softmax(logits, t) if q > 0) for t in temps]
@@ -387,6 +392,8 @@ A mean per-token confidence near 0.97 sits directly beside a claim that is false
 
 ```{python}
 #| label: fig-ch01-confidence
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "Why does a high log probability not mean the claim is true? Per-token model confidence stays near 0.97 across a fabricated answer; factual correctness is not derivable from these numbers."
 fig, ax = plt.subplots(figsize=(6.4, 3.0))
 ax.bar(range(len(per_token)), per_token, color="#b13f3f")
@@ -547,6 +554,8 @@ print(f"total  = {total:6.1f} ms")
 
 ```{python}
 #| label: fig-ch01-timeline
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "Where does the time go? A single prefill segment reaches the first token (TTFT); decode then emits tokens at roughly steady intervals (TPOT)."
 fig, ax = plt.subplots(figsize=(6.6, 1.8))
 ax.barh(0, ttft, color="#2a7f9e", label="prefill -> first token (TTFT)")
@@ -581,6 +590,7 @@ Dropping the success rate from 0.95 to 0.6 raises the effective cost by more tha
 With the component understood, the refund proposal becomes a design question, not a capability question. An agent is one option in a large space, and the discipline is to start from the shape of the problem rather than the wish to use a model. Ask what determines the desired output: stable rules, authoritative data, an explicit objective, or judgment over unstructured evidence. @fig-ch01-least-autonomous walks that question to the least autonomous mechanism that can verify its own part.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch01-least-autonomous
 %%| fig-cap: "Which mechanism earns the first implementation attempt? Walk down to the least autonomous option whose output can be checked."
 flowchart TD
@@ -672,6 +682,8 @@ The jump from a fixed workflow to a bounded agent roughly triples the per-task c
 
 ```{python}
 #| label: fig-ch01-autonomy-cost
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
 #| fig-cap: "What does each autonomy increment cost per task? The cumulative operating cost climbs steeply once a human is kept in the loop, long before the model bill dominates."
 rows = autonomy_costs(ladder)
 fig, ax = plt.subplots(figsize=(6.6, 3.2))

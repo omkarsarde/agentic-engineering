@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
-CH03 = Path(__file__).resolve().parents[1] / "ch03"
-sys.path.insert(0, str(CH03))
-try:
-    from kv_math import KVConfig, kv_bytes  # noqa: E402
-finally:
-    sys.path.remove(str(CH03))
+# Chapter 3's KV arithmetic now lives in its tangled teaching module.  Load it
+# by path under a unique name so this legacy reader keeps working without a
+# sys.path insert that could collide with another chapter's ``_generated``.  The
+# module must be registered before ``exec_module`` so its dataclass can resolve.
+_KV_SPEC = importlib.util.spec_from_file_location(
+    "ch03_kv_generated", Path(__file__).resolve().parents[1] / "ch03" / "_generated.py"
+)
+assert _KV_SPEC is not None and _KV_SPEC.loader is not None
+_KV = importlib.util.module_from_spec(_KV_SPEC)
+sys.modules.setdefault("ch03_kv_generated", _KV)
+_KV_SPEC.loader.exec_module(_KV)
+KVConfig, kv_bytes = _KV.KVConfig, _KV.kv_bytes
 
 
 @dataclass(frozen=True)

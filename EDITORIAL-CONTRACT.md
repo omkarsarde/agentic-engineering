@@ -66,6 +66,12 @@ alternatives, locating a component in a larger system, or tracing a flow prose c
 carry. Every figure is numbered, captioned with the question it answers, referenced from
 prose, and legible in grayscale. Diagram source is version-controlled.
 
+The reader sees figures, not figure boilerplate. Diagram cells suppress their source
+(`%%| echo: false` for mermaid, `//| echo: false` for dot). A python cell whose only job
+is drawing a figure carries `#| code-fold: true` and
+`#| code-summary: "Show the code that draws this figure"` so the code is one click away
+but off the page. Cells whose computation *is* the teaching stay fully visible.
+
 ## Voice
 
 First-person plural "we", present tense, intuition before rigor, short declaratives to
