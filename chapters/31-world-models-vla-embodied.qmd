@@ -1,446 +1,1020 @@
 ---
-description: "Connect language, perception, learned dynamics, simulation, and physical safety, then grade a closed-loop VLA episode by what happened in the environment."
+description: "Build an embodied agent on a gridworld we fully control: a learned dynamics model, a receding-horizon planner, and a language-conditioned policy that emits actions as tokens — then show that impressive one-step prediction is not decision-grade dynamics."
 ---
 
-# World Models, VLA, and Embodied Agents [S] {#sec-ch31}
+# World Models, VLA, and Embodied Agents {#sec-ch31}
 
-## What you need going in {#sec-ch31-prerequisites}
+A warehouse robot sees a box near the edge of a table and receives "place the box on pallet three." It predicts a grasp, the arm moves, and the box shifts under first contact. The next camera frame is no longer an independent query: it is evidence about a world the robot just changed. If the gripper closes two centimeters early, every later observation begins from the wrong state, and a fluent apology cannot un-crush the package. Acting in the physical world couples perception to consequence in a way a chatbot never faces.
 
-> **Assumed:** neural-network fundamentals, probability, basic Python and NumPy, and production-backend concepts such as latency, tests, and typed interfaces.
->
-> **From earlier chapters:** [Chapter 17](17-tool-harness-engineering.qmd#sec-ch17-approval) owns approval mechanics; [Chapter 22](22-evaluation.qmd#sec-ch22-graders) owns statistical evaluation and graders; [Chapter 23](23-training-agents-rl.qmd#sec-ch23) owns reinforcement-learning machinery; [Chapter 24](24-agent-security.qmd#sec-ch24-policy) owns protocol-neutral action security; [Chapter 29](29-multimodal-vlm-documents-gui.qmd#sec-ch29-grounding) explains vision-language perception and pixel grounding. Appendix A supplies search and planning algorithms such as MCTS, MPC, PDDL, and behavior trees.
->
-> **Not required:** robotics coursework, camera calibration, control-theory derivations, a GPU, a robot, or experience with a robotics simulator. The default build is deterministic and CPU-only. The live adapter is optional and preserves the same policy and grader contracts.
+We are now ready to build an embodied agent end to end on a toy we fully control, so that every claim is a number we can print: (i) a **gridworld** with a known nonlinear current, standing in for physical dynamics; (ii) a **learned dynamics model** — a small network trained from trajectories, whose one-step predictions are excellent; (iii) a **planner** that uses that model to choose actions, revealing that excellent one-step prediction is *not* the same as a model you can plan through; (iv) a **vision-language-action policy** that emits actions as discrete tokens, trained on demonstrations and executed in the loop; and (v) the safety seam — a reversibility gate that decides which proposals get physical authority. Along the way we place the 3D-representation bridge, the world-model landscape, simulators as infrastructure, and grounded skill selection where they belong. The reinforcement-learning machinery we lean on is @sec-ch23's; the approval loop is @sec-ch16's; @sec-ch24 owns adversarial perception.
 
-## Contents {#sec-ch31-contents}
+One honesty note before we start. Our environment is a two-dimensional box and our models train in seconds on a CPU, so every prediction, plan, and token is inspectable. A real robot swaps the box for contact-rich physics and the small networks for large ones, but the mechanisms on these pages — action tokens, compounding model error, receding-horizon feedback, the grader that reads state instead of the transcript — are exactly the mechanisms that survive the scale-up.
 
-- [Acting is different: the closed physical loop](#sec-ch31-loop)
-- [What you will build](#sec-ch31-artifact)
-- [Spatial representations in brief: the demoted bridge](#sec-ch31-spatial)
-- [VLA I: actions as tokens](#sec-ch31-vla-actions)
-- [VLA II: data engines and the 2026 frontier](#sec-ch31-vla-data)
-- [World models and interactive generation](#sec-ch31-world-models)
-- [The decision-grade criterion](#sec-ch31-decision-grade)
-- [Simulators as infrastructure](#sec-ch31-simulators)
-- [Embodied agents in simulation](#sec-ch31-agents)
-- [Embodied and physical-world safety](#sec-ch31-safety)
-- [Open problems](#sec-ch31-open)
-- [Build](#sec-ch31-build)
-- [What endures, what changes](#sec-ch31-endures)
-- [Exercises](#sec-ch31-exercises)
-- [Notes and sources](#sec-ch31-sources)
+## Acting closes a physical loop {#sec-ch31-loop}
 
-## Acting is different: the closed physical loop {#sec-ch31-loop}
-
-A warehouse agent sees a box near the edge of a table and receives “place the box on pallet three.” It predicts a grasp, the controller moves the arm, and the box shifts under first contact. The next camera frame is no longer an independent query: it is evidence about a world the agent just changed. If the gripper closes two centimeters early, every later observation begins from the wrong state. A fluent recovery message cannot put a crushed package back together.
-
-An **embodied agent** closes a computational policy around a physical or simulated environment. Its actions have geometry, timing, dynamics, and consequences. A GUI agent also observes after acting, but software state usually offers stronger schemas, transactional boundaries, and rollback. Physical state is only partially observed, contact can be discontinuous, sensor readings arrive late, and many effects are not reversible. Embodiment is therefore not “computer use with a robot tool.” It is agency inside a feedback system.
-
-Let $x_t$ be the unobserved physical state at time $t$, $o_t$ the sensor observation, $a_t$ the commanded action, and $w_t$ process noise. A compact closed-loop model is
+An **embodied agent** wraps a policy around an environment whose state its actions change. Let $x_t$ be the physical state, $o_t$ the sensor observation, $a_t$ the commanded action, and $g$ the goal expressed in language. A compact closed-loop model is
 
 $$
-x_{t+1}=f(x_t,a_t,w_t),
+x_{t+1}=f(x_t,a_t),
 \qquad
 o_t=h(x_t)+v_t,
 \qquad
 a_t=\pi(o_{\le t},g),
-$$
+$$ {#eq-ch31-loop}
 
-where $f$ is the environment dynamics, $h$ is the observation process, $v_t$ is sensor noise, $pi$ is the policy, and $g$ is the goal expressed in language or a structured task. The policy sees observations, not $x_t$. Its action changes the distribution of the next observation. That coupling is the central fact of the chapter.
-
-Control frequency turns model latency into part of behavior. If a controller must produce an action every $T_c$ seconds, then a useful latency budget is
-
-$$
-T_{\text{sense}}+T_{\text{policy}}+T_{\text{gate}}+T_{\text{transport}}
-\le T_c-T_{\text{control}},
-$$
-
-where the terms cover observation acquisition, policy inference, deterministic authorization, communication, and low-level control. A two-second forward pass cannot directly sustain a five-hertz loop, even when its predictions are accurate. Practical systems respond with action chunks, asynchronous inference, a fast local policy beneath a slow semantic planner, or a narrower model. Each choice changes how long the system runs without fresh semantic feedback.
-
-@fig-ch31-loop separates probabilistic proposals from authority and actuation.
+where $f$ is the dynamics, $h$ the observation process, $v_t$ sensor noise, and $\pi$ the policy. The policy sees observations, not $x_t$, and its action changes the distribution of the next observation. That coupling — the action is inside the loop that generates the next input — is the whole subject. @fig-ch31-loop separates the probabilistic proposal from the authority that executes it.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch31-loop
-%%| fig-cap: "What changes when an agent action moves mass? The policy proposes; deterministic software and the low-level controller retain authority across the actuation boundary."
-%%| fig-alt: "A language goal and sensor observations enter a probabilistic policy. Its proposed action passes through a deterministic safety governor and low-level controller before reaching the physical world. The changed world returns sensor observations and an independent final-state grader reads simulator or environment state."
+%%| fig-cap: "What changes when an agent's action moves mass? The policy only *proposes*; deterministic software and a low-level controller keep authority across the actuation boundary, and an independent grader reads the resulting state."
+%%| fig-alt: "A language goal and sensor observations feed a probabilistic policy. Its proposed action passes through a deterministic safety gate and a low-level controller before reaching the physical world. The changed world returns observations to the policy, and separately a grader reads environment state."
 flowchart LR
-    GOAL["Language goal"] -->|task| POLICY(["VLA / policy<br/>probabilistic proposal"])
-    SENSOR["Sensors<br/>image · depth · proprioception"] -->|observation| POLICY
-    POLICY -->|proposed action| GATE{"Deterministic<br/>safety governor"}
-    GATE -->|authorized target| CTRL["Low-level controller<br/>limits · tracking · reflexes"]
-    GATE -->|deny / request approval| STOP["Hold safe state"]
-    CTRL -->|torque / velocity / position| WORLD["Physical world<br/>irreversible effects"]
+    GOAL["Language goal"] -->|task| POLICY(["Policy / VLA<br/>probabilistic proposal"])
+    SENSOR["Sensors"] -->|observation| POLICY
+    POLICY -->|proposed action| GATE{"Safety gate<br/>deterministic"}
+    GATE -->|authorized| CTRL["Low-level controller"]
+    GATE -->|deny| STOP["Hold safe state"]
+    CTRL -->|torque / velocity| WORLD["Physical world<br/>irreversible effects"]
     WORLD -->|changed state| SENSOR
     WORLD -.->|state predicate| GRADE["Independent grader"]
 ```
 
-The invariant is that model output never acquires actuator authority merely by being well formed. A typed proposal passes through limits, freshness checks, a safety governor, and a controller that can reject or override it. The grader observes the resulting state independently of the policy’s explanation.
+We need a concrete environment to make @eq-ch31-loop run. Our gridworld is a bounded box in which an action nudges the agent, but a state-dependent **current** — a smooth, invisible field — pushes it as well, the way friction, compliance, or a real draft would. The current is what makes the dynamics nonlinear and therefore worth *learning*: a model that ignores it is wrong in a way that matters.
 
-The new engineering burden is not only prediction quality. It includes reference frames, action normalization, stale observations, contact limits, watchdogs, control rate, and a safe state when any component disappears. A useful embodied architecture makes those boundaries explicit before choosing a larger model.
+```{python}
+# @save
+import math
 
-## What you will build {#sec-ch31-artifact}
+import numpy as np
+import torch
+import torch.nn as nn
 
-::: {.callout-tip}
-### The chapter artifact
+torch.set_num_threads(4)
 
-You will build [`embodied_eval.py`](../code/ch31/embodied_eval.py), one progressive evaluation harness. It first quantizes a seven-dimensional robot action and verifies its round trip. It then injects a controlled dynamics error, compares an open-loop plan with observe-and-replan control, and generates the chapter’s quantitative figure. A reversibility gate intercepts large displacement or predicted-contact-force proposals. Finally, one runner drives ten language-conditioned episodes and trusts only the environment’s final-state predicate.
+SIZE, MOVE, AMP = 6.0, 0.7, 0.40  # box side, action gain, current strength
 
-The default `MiniTabletopEnv` and `ScriptedPolicy` are an offline **harness test**, not evidence about VLA capability. An optional `SimplerEnvAdapter` and OpenVLA-compatible policy exercise the same protocol with rendered observations and a real checkpoint. The separation lets CPU-only readers test grading, latency, termination, and gates without presenting a scripted solution as learned intelligence.
-:::
 
-## Spatial representations in brief: the demoted bridge {#sec-ch31-spatial}
+def current(state: np.ndarray) -> np.ndarray:
+    """Return the state-dependent drift at each position.
 
-An image supplies appearance from one viewpoint. Manipulation also needs spatial questions: where is the object relative to the gripper, which surfaces are free, what blocks a path, and what changed after contact? A **spatial representation** stores enough geometry or relational structure to answer some of those questions. No single representation is best for rendering, collision checking, semantics, editing, and learning at once.
+    The current is a smooth, bounded, nonlinear field — the "physics" a
+    learned model must capture. Because it depends on *where* the agent is,
+    a model that predicts only the average effect of an action (a straight
+    nudge) is systematically wrong, and that error is what compounds when
+    the model is rolled forward.
 
-A **point cloud** is a set of sampled 3D positions, often carrying color or learned features. Depth cameras and lidar produce point-like measurements directly. A policy can query local neighborhoods, segment objects, estimate poses, and find candidate surfaces, but raw point sets do not define watertight surfaces or free space. Point-based encoders such as PointNet made unordered sets usable by neural networks; production stacks still have to manage frames, density, occlusion, and calibration.
+    Args:
+        state: Positions with shape ``(..., 2)`` in the box ``[0, SIZE]``.
 
-A **mesh** joins vertices with faces to approximate surfaces. Meshes support rendering, collision checking, signed-distance fields, and conventional motion-planning geometry. They are explicit and editable, but reconstructing clean topology from noisy observations can be expensive. A **voxel grid** discretizes space into cells and makes occupancy queries direct; its memory grows cubically with resolution unless sparse structures are used.
+    Returns:
+        Drift vectors with the same shape as ``state``.
+    """
+    x, y = state[..., 0], state[..., 1]
+    return np.stack([AMP * np.sin(1.1 * y + 0.5),
+                     AMP * np.sin(1.1 * x + 1.3)], axis=-1)
 
-A **neural radiance field** (NeRF) learns a continuous function that maps 3D position and viewing direction to density and color. It is optimized for novel-view synthesis, not for declaring collision-free space. **3D Gaussian splatting** represents a scene with anisotropic Gaussian primitives whose projected contributions render efficiently. Splats can preserve appearance and support fast view synthesis, but a visually convincing primitive cloud is not automatically a contact surface. “Renders well” and “safe to plan through” are different contracts.
 
-Learned **spatial tokens** compress image, depth, pose, or scene features into vectors that a transformer can attend to. A **scene graph** instead exposes entities and relations such as `mug ON table`, `drawer PART_OF cabinet`, or `gripper NEAR handle`. Tokens preserve flexible learned information; graphs provide queryable symbolic handles. Both depend on the evidence used to create them and can retain stale or incorrect relations after the world changes.
+def true_step(state: np.ndarray, action: np.ndarray) -> np.ndarray:
+    """Advance the true dynamics one step: nudge, drift, clip to the box.
 
-| Representation | Stores | Natural query | Strength for an agent | Residual limitation |
-|---|---|---|---|---|
-| point cloud | sampled 3D positions and features | neighbors, clusters, pose | direct sensor geometry; flexible learned encoders | incomplete surfaces, variable density, frame errors |
-| mesh or signed-distance field | explicit surface or distance-to-surface | collision, clearance, contact | geometric planning and physics interfaces | reconstruction and topology maintenance |
-| sparse voxels | occupancy or features in cells | occupied/free region | simple spatial lookup and fusion | resolution–memory tradeoff |
-| NeRF / radiance field | view-conditioned density and color | render a novel camera view | view synthesis and appearance completion | geometry is indirect; dynamics absent |
-| 3D Gaussian splats | position, covariance, opacity, appearance | fast differentiable rendering | rapid scene reconstruction and view synthesis | no inherent collision or rigid-body semantics |
-| spatial tokens | learned compressed scene features | attention or similarity | end-to-end policy input | hard to audit; metric geometry may be implicit |
-| scene graph | entities, attributes, relations | symbolic relation and task query | planning handles and persistent identity | depends on perception updates; weak for contact geometry |
+    This is ``f`` from @eq-ch31-loop — the ground truth no policy sees
+    directly. An action in ``[-1, 1]^2`` is scaled by ``MOVE``; the current
+    adds a position-dependent push; the box clips the result.
 
-Multi-view geometry triangulates structure from camera motion or multiple calibrated cameras. Depth estimation predicts distance from one or more images. Both are observation mechanisms, not guarantees of object permanence or dynamics. A robot usually combines visual features with proprioception—its own joint positions and velocities—and may add force, tactile, audio, or language signals.
+    Args:
+        state: Current positions, shape ``(..., 2)``.
+        action: Commanded velocities in ``[-1, 1]``, shape ``(..., 2)``.
 
-This bridge is intentionally short. Building NeRFs, deriving camera models, and optimizing meshes are separate subjects. The decision needed here is narrower: identify what a representation makes queryable, what transformations bind it to the action frame, and which safety-critical facts remain outside it. Splats do not replace meshes any more than a photograph replaces a collision model.
+    Returns:
+        Next positions, clipped into ``[0, SIZE]``.
+    """
+    action = np.clip(action, -1.0, 1.0)
+    return np.clip(state + MOVE * action + current(state), 0.0, SIZE)
+```
 
-## VLA I: actions as tokens {#sec-ch31-vla-actions}
+One worked step shows the current at work. From the center, commanding a pure rightward move does not travel a clean `MOVE` units in $x$: the current bends the path.
 
-A **vision-language-action model** (VLA) maps visual observations and a language instruction to robot actions. The simplest transformer-compatible interface converts each action dimension into discrete symbols. Instead of ending its sequence with words, the model emits values that a caller decodes into translation, rotation, and gripper commands.
+```{python}
+s0 = np.array([3.0, 3.0])
+s1 = true_step(s0, np.array([1.0, 0.0]))
+print("start   ", s0.round(3))
+print("action  ", [1.0, 0.0], " commanded move +0.70 in x")
+print("next    ", s1.round(3), " drift =", current(s0).round(3))
+```
 
-Suppose action coordinate $a_j$ is normalized to $[-1,1]$ and divided into $K$ bins. One tokenizer is
+The commanded step was purely horizontal, yet the agent also slid in $y$, because the current at that position has a vertical component. A controller that models only "action moves me right" will mispredict every step by that drift. The engineering burden of embodiment is exactly this list of things below the model — reference frames, the current, contact limits, control rate — and the discipline that the model's output never *becomes* an actuator command without passing the gate in @fig-ch31-loop. We build up to that gate; first we must give the policy something to see and something to say.
+
+## Spatial grounding for action {#sec-ch31-spatial}
+
+Our gridworld hands the policy a clean position vector. A real robot must first *build* that state from pixels and depth, and the representation it chooses decides which questions it can answer. This bridge from 2D perception to action is a field of its own; we keep it to the one decision that matters for an agent, which is what a representation makes queryable and what it leaves out.
+
+A **point cloud** is a set of sampled 3D positions, often carrying color or learned features; depth sensors produce them directly, and point encoders such as PointNet make unordered sets usable by a network [@qi2017pointnet]. It answers "where is the nearest surface," but raw points define neither watertight surfaces nor free space. A **mesh** joins points into faces and supports collision checking and clearance queries, at the cost of reconstructing clean topology from noisy scans. A **neural radiance field** learns a function from position and view direction to color and density, optimized for photorealistic novel views [@mildenhall2020nerf], and **3D Gaussian splatting** renders a cloud of anisotropic blobs fast and beautifully [@kerbl2023gaussian] — but a scene that renders well is not certified free of collisions. A **scene graph** takes the opposite tack, exposing entities and relations like `mug ON table` or `gripper NEAR handle` that a planner can query symbolically [@armeni2019scenegraph]. @fig-ch31-spatial renders one small scene four ways and labels the query each serves and the safety fact each drops.
+
+```{python}
+#| label: fig-ch31-spatial
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "One scene, four representations. Each answers a different query and misses a different fact: appearance-first representations (point cloud, splats) render well but do not declare free space; geometry-first ones (mesh, scene graph) support planning but are only as current as the last perception update."
+import matplotlib.pyplot as plt
+
+rng = np.random.default_rng(0)
+fig, ax = plt.subplots(1, 4, figsize=(9.6, 2.7))
+# table rectangle + a mug + gripper, shared layout
+table = np.array([[0.5, 1.0], [3.5, 1.0], [3.5, 1.3], [0.5, 1.3]])
+mug, grip = np.array([2.6, 1.55]), np.array([1.2, 2.4])
+
+pts = np.vstack([rng.uniform([0.5, 1.0], [3.5, 1.3], (60, 2)),
+                 rng.normal(mug, 0.12, (25, 2))])
+ax[0].scatter(pts[:, 0], pts[:, 1], s=4, color="0.25")
+ax[0].set_title("point cloud", fontsize=9)
+ax[0].text(0.5, 0.05, "nearest surface / pose\nmisses: free space",
+           transform=ax[0].transAxes, ha="center", fontsize=7)
+
+ax[1].fill(table[:, 0], table[:, 1], color="0.7")
+ax[1].add_patch(plt.Circle(mug, 0.22, color="0.4"))
+ax[1].set_title("mesh / SDF", fontsize=9)
+ax[1].text(0.5, 0.05, "collision / clearance\nmisses: appearance",
+           transform=ax[1].transAxes, ha="center", fontsize=7)
+
+occ = np.zeros((8, 10))
+occ[2, 1:8] = 1
+occ[3, 5] = 1
+ax[2].imshow(occ, cmap="Greys", origin="lower", extent=(0, 4, 0, 3.2))
+ax[2].set_title("occupancy voxels", fontsize=9)
+ax[2].text(0.5, 0.05, "free vs occupied\nmisses: object identity",
+           transform=ax[2].transAxes, ha="center", fontsize=7)
+
+nodes = {"table": (1.8, 1.15), "mug": (2.6, 1.9), "gripper": (1.0, 2.4)}
+for a_, b_ in [("mug", "table"), ("gripper", "mug")]:
+    ax[3].plot(*zip(nodes[a_], nodes[b_]), color="0.5", lw=1)
+for name, (x, y) in nodes.items():
+    ax[3].scatter([x], [y], s=220, color="0.85", edgecolor="0.2", zorder=3)
+    ax[3].text(x, y, name, ha="center", va="center", fontsize=6.5, zorder=4)
+ax[3].set_title("scene graph", fontsize=9)
+ax[3].text(0.5, 0.05, "symbolic relations\nmisses: contact geometry",
+           transform=ax[3].transAxes, ha="center", fontsize=7)
+
+for a in ax:
+    a.set_xticks([]); a.set_yticks([]); a.set_xlim(0, 4); a.set_ylim(0, 3.4)
+fig.tight_layout()
+plt.show()
+```
+
+The lesson is not that one representation wins. It is that "renders well" and "safe to plan through" are different contracts, and a production stack usually fuses several — depth for geometry, a scene graph for task-level identity, learned features for the policy — plus the robot's own **proprioception**, its joint positions and velocities. Our gridworld collapses all of this into a position because we want the *rest* of the loop under a microscope. With state in hand, the policy must produce an action, and the interesting question is what shape that action takes.
+
+## Actions as tokens {#sec-ch31-actions}
+
+A transformer already knows how to emit tokens. The core idea behind the **vision-language-action** (VLA) family is to make robot actions look like tokens too, so that a model pretrained on web text and images can be fine-tuned to end its sequence with control commands instead of words [@brohan2022rt1; @brohan2023rt2]. Concretely, normalize each action coordinate to $[-1,1]$, split that range into $K$ bins, and emit the bin index.
 
 $$
 q_j=\operatorname{round}\!\left(\frac{a_j+1}{2}(K-1)\right),
 \qquad
-\hat a_j=2\frac{q_j}{K-1}-1.
-$$
+\hat a_j=\frac{2 q_j}{K-1}-1 .
+$$ {#eq-ch31-codec}
 
-Here $q_j\in\{0,\ldots,K-1\}$ is the token and $\hat a_j$ is its decoded value. Rounding gives a worst-case scalar error of at most $(K-1)^{-1}$, provided the input was normalized correctly. With 256 bins, that bound is about 0.00392. It is only a codec bound. A mismatched action convention—meters versus normalized deltas, quaternion versus Euler rotation, open-positive versus close-positive gripper—can be orders of magnitude worse while still producing valid tokens.
+Here $q_j\in\{0,\dots,K-1\}$ is the token and $\hat a_j$ the value it decodes to. Rounding to the nearest bin center costs at most half a bin, so the worst-case per-coordinate error is ${(K-1)}^{-1}$ — with $K=256$, about 0.0039.
 
-The artifact starts with the codec:
-
-```python
-# artifact: embodied_eval.py — §31.3 adds: seven-dimensional action codec
-ACTION_DIM = 7
-
+```{python}
+# @save
 def tokenize_action(action: np.ndarray, bins: int = 256) -> np.ndarray:
-    action = np.asarray(action, dtype=float)
-    if action.shape != (ACTION_DIM,) or bins < 2 or np.any(np.abs(action) > 1):
-        raise ValueError("expected seven values in [-1, 1] and at least two bins")
-    return np.rint((action + 1.0) * (bins - 1) / 2.0).astype(int)
+    """Quantize a normalized action into per-dimension integer tokens.
+
+    Implements @eq-ch31-codec: each coordinate, assumed already normalized
+    to ``[-1, 1]``, is mapped to its nearest of ``bins`` bin indices. The
+    codec is dimension-agnostic — a 2-D gridworld velocity or a 7-DoF arm
+    command tokenizes the same way.
+
+    Args:
+        action: Coordinates in ``[-1, 1]``, any length.
+        bins: Vocabulary size per coordinate (at least 2).
+
+    Returns:
+        Integer tokens in ``[0, bins)``, one per coordinate.
+
+    Raises:
+        ValueError: If ``bins < 2`` or any coordinate leaves ``[-1, 1]``.
+    """
+    a = np.asarray(action, dtype=float)
+    if bins < 2 or np.any(np.abs(a) > 1.0 + 1e-9):
+        raise ValueError("need bins >= 2 and coordinates normalized to [-1, 1]")
+    return np.rint((a + 1.0) * (bins - 1) / 2.0).astype(int)
+
 
 def detokenize_action(tokens: np.ndarray, bins: int = 256) -> np.ndarray:
-    tokens = np.asarray(tokens, dtype=int)
-    if tokens.shape != (ACTION_DIM,) or bins < 2 or np.any(
-        (tokens < 0) | (tokens >= bins)
-    ):
-        raise ValueError("tokens must be seven integers inside the vocabulary")
-    return 2.0 * tokens / (bins - 1) - 1.0
+    """Map action tokens back to bin-center values in ``[-1, 1]``.
+
+    The inverse of :func:`tokenize_action`, up to the half-bin rounding the
+    forward map cannot undo.
+
+    Args:
+        tokens: Integer tokens in ``[0, bins)``.
+        bins: Vocabulary size per coordinate.
+
+    Returns:
+        Decoded coordinates in ``[-1, 1]``.
+    """
+    return 2.0 * np.asarray(tokens, dtype=float) / (bins - 1) - 1.0
+
+
+def roundtrip_error(action: np.ndarray, bins: int = 256) -> float:
+    """Return the worst-coordinate error from one tokenize/detokenize pass."""
+    a = np.asarray(action, dtype=float)
+    return float(np.max(np.abs(a - detokenize_action(tokenize_action(a, bins), bins))))
 ```
 
-Run the supplied tests and the sample vector `[-0.9, ..., 0.9]` produces tokens `[13, 51, 89, 127, 166, 204, 242]` with maximum round-trip error `0.0039215686`. That assertion detects a broken codec. It does not test whether a learned policy selected the right action.
+A robot action is usually seven numbers — three for translation, three for rotation, one for the gripper. Tokenizing a sample 7-DoF command and reading it back shows the codec and its bound in one line:
 
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `embodied_eval.py` after the action codec | 22 lines | seven normalized coordinates round-trip within half a bin |
+```{python}
+sample = np.array([0.30, -0.55, 0.80, -0.10, 0.05, -0.95, 1.0])  # 3 xyz, 3 rot, 1 grip
+print("tokens        ", tokenize_action(sample).tolist())
+print("max round-trip", round(roundtrip_error(sample), 5), " bound 1/255 =", round(1 / 255, 5))
+```
 
-Action representations create a systems tradeoff. Per-dimension discrete tokens reuse language-model machinery and yield an ordinary next-token loss. They also lengthen the output and can impose sequential decoding latency. An **action chunk** predicts several future control targets at once, amortizing the slow model call, but runs longer without observation feedback. A continuous action expert can generate a whole chunk jointly. Frequency-domain tokenization compresses smooth trajectories by transforming a chunk, retaining important coefficients, and tokenizing those coefficients rather than every raw timestep.
+The round-trip error sits exactly at the ${(K-1)}^{-1}$ bound. But that bound is only about the *codec*. A mismatched convention — meters versus normalized deltas, open-positive versus close-positive gripper — produces perfectly valid tokens that command the wrong motion by orders of magnitude. The durable rule is to version the action contract with the checkpoint: coordinate order, frame, units, bounds, normalization statistics, chunk length, control rate, gripper sign. A VLA whose weights load but whose normalizer is lost is not deployable.
 
-| Action interface | Model output | Main benefit | Main engineering risk |
-|---|---|---|---|
-| per-dimension discrete tokens | one token per coordinate or timestep | simple shared vocabulary and likelihood training | quantization and autoregressive latency |
-| chunked action tokens | several future actions | amortized inference | stale open-loop execution inside the chunk |
-| continuous action head or expert | joint real-valued trajectory | smooth high-rate chunks | separate objective, sampler, and normalization contract |
-| hierarchical skills | named skill plus parameters | long-horizon abstraction and inspectability | skill coverage and handoff failures |
+Per-dimension tokens are simple but verbose: a smooth trajectory of many timesteps becomes a long token string that is slow to decode. **FAST** observed that smooth action chunks compress well in the frequency domain — run a discrete cosine transform, keep the low-order coefficients, and tokenize *those* [@pertsch2025fast]. @fig-ch31-quant makes both ideas visible: the quantization grid for one coordinate, and a 16-step chunk reconstructed from a handful of cosine coefficients.
 
-RT-1 demonstrated tokenized robot actions at scale, and RT-2 placed action symbols in a vision-language model’s output vocabulary so web-scale semantic learning could transfer into control. FAST later showed why tokenizing raw high-frequency trajectories is inefficient and compressed action sequences in a frequency basis. These papers establish interface families, not a universal choice. A mobile base, a dexterous hand, and a bimanual arm have different bandwidth and error tolerance.
+```{python}
+# @save
+def dct_ii(x: np.ndarray) -> np.ndarray:
+    """Return the DCT-II frequency coefficients of a 1-D signal.
 
-The durable rule is to version the action contract with the checkpoint. Log coordinate order, frame, units, bounds, normalization statistics, chunk length, execution rate, and gripper convention. A VLA whose model card is detached from its action normalizer is not deployable, even if its weights load.
+    A smooth action chunk concentrates its energy in the first few
+    coefficients, which is exactly why frequency-domain action tokenization
+    can represent a long chunk with a short token string.
 
-## VLA II: data engines and the 2026 frontier {#sec-ch31-vla-data}
+    Args:
+        x: The signal (an action chunk), shape ``(n,)``.
 
-Robot data is expensive because a useful example couples perception, instruction, embodiment state, action, and outcome over time. A web image can be copied; a manipulation trajectory requires hardware or simulation, calibration, an operator or policy, and recovery after failure. The central scaling problem is therefore a **data engine**: a repeatable process for collecting, filtering, labeling, replaying, and improving trajectories.
+    Returns:
+        Coefficients ordered low to high frequency, shape ``(n,)``.
+    """
+    n = len(x)
+    basis = np.cos(np.pi * (2 * np.arange(n)[:, None] + 1) * np.arange(n)[None, :] / (2 * n))
+    return basis.T @ x
 
-Teleoperation records human actions through joysticks, motion capture, bilateral devices, or other interfaces. It supplies competent behavior but imports operator delay, embodiment-specific conventions, and coverage bias. Autonomous collection can target uncertainty or failures, yet unsafe exploration is unacceptable on real hardware. Simulation supplies parallelism and exact state but introduces a reality gap. Production programs mix demonstrations, scripted or planned data, simulation, autonomous rollouts, intervention corrections, and post-deployment hard cases.
 
-Cross-embodiment data attempts to learn shared structure from robots with different cameras, arms, action spaces, and datasets. Open X-Embodiment assembled many such datasets and paired them with a transformer model to study transfer. The hard part is not concatenation. Each record needs a common semantic layer while preserving embodiment-specific action adapters and calibration. Language can name the task; it does not automatically align coordinate frames or gripper dynamics.
+def idct_ii(coef: np.ndarray) -> np.ndarray:
+    """Reconstruct a signal from DCT-II coefficients (inverse of :func:`dct_ii`).
 
-Let dataset $D_e$ come from embodiment $e$ with native action $u_t^{(e)}$. A shared policy can emit a latent or canonical action $z_t$, then use adapter $A_e$:
+    Zeroing the high-frequency tail before calling this is the lossy
+    compression step FAST exploits.
 
-$$
-z_t\sim\pi_\theta(o_{\le t},g,e),
-\qquad
-u_t^{(e)}=A_e(z_t;\phi_e).
-$$
+    Args:
+        coef: Coefficients, shape ``(n,)``; zero the tail to compress.
 
-The parameters $\phi_e$ encode embodiment calibration or learned translation. Transfer succeeds only if $z_t$ preserves task-relevant behavior and $A_e$ is valid on the new platform. Dataset scale does not erase this interface.
+    Returns:
+        The reconstructed signal, shape ``(n,)``.
+    """
+    n = len(coef)
+    basis = np.cos(np.pi * (2 * np.arange(n)[:, None] + 1) * np.arange(n)[None, :] / (2 * n))
+    weight = np.full(n, 2.0)
+    weight[0] = 1.0
+    return (basis * (weight * coef)[None, :]).sum(1) / n
+```
 
-OpenVLA provided an open-weight reference that couples a visual encoder, language backbone, and tokenized action output. Its value to an engineering curriculum is inspectability: processor, prompt, action prediction call, and normalization key are visible. The chapter’s optional adapter uses that shape. It does not promise that the default checkpoint matches every simulator task; checkpoint, task, camera transform, and action statistics must be compatible.
+```{python}
+steps = np.linspace(0, 1, 16)
+chunk = 0.8 * np.sin(2 * np.pi * steps) + 0.1 * steps  # a smooth 16-step action chunk
+coef = dct_ii(chunk)
+for keep in (2, 4, 6):
+    trimmed = coef.copy()
+    trimmed[keep:] = 0.0
+    rmse = float(np.sqrt(np.mean((idct_ii(trimmed) - chunk) ** 2)))
+    print(f"keep {keep:>1} of 16 coeffs -> {16 / keep:.1f}x fewer tokens, reconstruction RMSE {rmse:.4f}")
+```
 
-Large programs increasingly separate a slow semantic model from a fast action expert. The slower path interprets language and scene context; the faster path emits a temporally dense control chunk. This resembles a hierarchical controller, with learned components at both levels. It reduces the rate demanded of the largest model but creates a handoff contract: the fast path must know when its condition is stale, and the slow path must not assume a chunk completed as imagined.
+Four coefficients reproduce the sixteen-step chunk with root-mean-square error `0.081` — a four-fold shorter token string for a small, controllable loss.
+
+```{python}
+#| label: fig-ch31-quant
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Left: one coordinate quantized into K=13 bins; the value 0.31 snaps to the nearest bin center, an error at most half a bin. Right: a smooth 16-step action chunk (dots) and its reconstruction from four DCT coefficients (line) — the basis of frequency-domain action tokenization."
+fig, ax = plt.subplots(1, 2, figsize=(8.4, 3.0))
+K = 13
+centers = detokenize_action(np.arange(K), K)
+ax[0].vlines(centers, 0, 1, color="0.8")
+ax[0].plot([0.31], [0.5], "o", color="0.1")
+snapped = detokenize_action(tokenize_action(np.array([0.31]), K), K)[0]
+ax[0].plot([snapped], [0.5], "s", color="0.45")
+ax[0].annotate(f"0.31 -> bin {int(tokenize_action(np.array([0.31]), K)[0])} ({snapped:.2f})",
+               (0.31, 0.5), (0.0, 0.75), fontsize=8, ha="center")
+ax[0].set(xlim=(-1.05, 1.05), ylim=(0, 1), yticks=[], xlabel="normalized coordinate")
+ax[0].set_title(f"quantization ({K} bins)", fontsize=9)
+
+trimmed = coef.copy(); trimmed[4:] = 0.0
+ax[1].plot(steps, chunk, "o", color="0.2", ms=4, label="raw chunk (16 tokens)")
+ax[1].plot(steps, idct_ii(trimmed), "-", color="0.45", label="4 DCT coeffs")
+ax[1].set(xlabel="step in chunk", ylabel="action value")
+ax[1].legend(fontsize=8)
+ax[1].set_title("FAST-style compression", fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+RT-2 placed action tokens in a vision-language model's own vocabulary so web-scale semantics could transfer into control; OpenVLA released an open-weight model of that shape whose processor, prompt, and action call are inspectable [@kim2024openvla]; the $\pi$-series added a continuous action expert beneath the language model for high-rate control [@black2024pi0]. On real hardware the call looks like the sketch below — we show it but do not run it, because it needs a checkpoint and a GPU.
+
+```{python}
+#| eval: false
+# Illustrative: the real OpenVLA-style call (needs a checkpoint + GPU; not run here).
+from transformers import AutoModelForVision2Seq, AutoProcessor
+from PIL import Image
+
+processor = AutoProcessor.from_pretrained("openvla/openvla-7b", trust_remote_code=True)
+model = AutoModelForVision2Seq.from_pretrained("openvla/openvla-7b").to("cuda:0")
+
+prompt = "In: What action should the robot take to put the eggplant in the basket?\nOut:"
+inputs = processor(prompt, Image.fromarray(agentview_image)).to("cuda:0")
+action = model.predict_action(**inputs, unnorm_key="bridge_orig", do_sample=False)  # 7 numbers
+```
+
+The shape is identical to ours: an image and an instruction go in, tokens come out, and a decoder turns those tokens into a 7-DoF command. We now build the small version and *run* it.
+
+## A language-conditioned policy in the gridworld {#sec-ch31-vla}
+
+Our policy consumes an observation — the agent position and the goal position, standing in for fused vision-language features — and emits a two-token action, one bin per coordinate. To have demonstrations to imitate, we need an expert. Because our current is *known* to us (though not to any learned model), we can write a clean feedback-linearizing controller: to land at the goal, command the move that cancels the drift and covers the gap.
+
+```{python}
+# @save
+def expert_action(state: np.ndarray, goal: np.ndarray) -> np.ndarray:
+    """Return the demonstration controller's action toward ``goal``.
+
+    Because the true current is known here, the expert inverts it: it asks
+    for the nudge that, added to the drift, lands on the goal, then clips to
+    the actuator range. This produces clean, near-optimal demonstrations for
+    the policy to imitate — the toy stand-in for a teleoperator or a scripted
+    oracle on a real robot.
+
+    Args:
+        state: Current position, shape ``(2,)``.
+        goal: Target position, shape ``(2,)``.
+
+    Returns:
+        A demonstration action in ``[-1, 1]^2``.
+    """
+    state, goal = np.asarray(state, float), np.asarray(goal, float)
+    return np.clip((goal - state - current(state)) / MOVE, -1.0, 1.0)
+
+
+def collect_demos(n_pairs: int, seed: int, horizon: int = 30, tol: float = 0.25):
+    """Roll the expert through random start/goal pairs and log (obs, action).
+
+    Each observation is ``[x, y, goal_x, goal_y]``; each label is the
+    expert's continuous action there. The dataset is exactly the states the
+    *expert* visits — a coverage property that matters for imitation, as
+    @sec-ch23 showed.
+
+    Args:
+        n_pairs: Number of start/goal episodes to demonstrate.
+        seed: Seed for the start/goal sampler.
+        horizon: Maximum steps per demonstration.
+        tol: Distance at which the goal counts as reached.
+
+    Returns:
+        ``(obs, acts)`` float arrays of shape ``(N, 4)`` and ``(N, 2)``.
+    """
+    rng = np.random.default_rng(seed)
+    obs, acts = [], []
+    made = 0
+    while made < n_pairs:
+        s = rng.uniform(0.5, SIZE - 0.5, size=2)
+        g = rng.uniform(0.5, SIZE - 0.5, size=2)
+        if np.linalg.norm(s - g) < 2.0:
+            continue
+        for _ in range(horizon):
+            a = expert_action(s, g)
+            obs.append([s[0], s[1], g[0], g[1]])
+            acts.append(a)
+            s = true_step(s, a)
+            if np.linalg.norm(s - g) <= tol:
+                break
+        made += 1
+    return np.asarray(obs, np.float32), np.asarray(acts, np.float32)
+```
+
+The policy is autoregressive over the two action tokens: it predicts the first coordinate's bin from the observation, then the second coordinate's bin from the observation *and* the first token. This is the same factorization RT-2 places inside a transformer, $p(a\mid o)=p(q_0\mid o)\,p(q_1\mid o,q_0)$, shrunk to a network that trains in a few seconds.
+
+```{python}
+# @save
+ACTION_BINS = 21  # bins per action coordinate for the policy
+
+
+class ActionTokenPolicy(nn.Module):
+    """A tiny autoregressive vision-language-action policy.
+
+    An observation encoder produces a feature vector (the stand-in for a
+    VLA's fused image-and-language embedding); action coordinates are then
+    decoded one token at a time, each conditioned on the observation and the
+    tokens already emitted. This is the actions-as-tokens mechanism of
+    RT-2/OpenVLA at teaching scale: a real VLA replaces the encoder with a
+    vision-language transformer and predicts more tokens, but the
+    autoregressive action factorization is the same.
+    """
+
+    def __init__(self, dim: int = 64, bins: int = ACTION_BINS):
+        super().__init__()
+        self.bins = bins
+        self.enc = nn.Sequential(nn.Linear(4, dim), nn.GELU(),
+                                 nn.Linear(dim, dim), nn.GELU(), nn.Linear(dim, dim))
+        self.pos = nn.Parameter(torch.zeros(2, dim))
+        self.tok = nn.Embedding(bins, dim)
+        self.head = nn.Sequential(nn.GELU(), nn.Linear(dim, bins))
+
+    def logits(self, obs: torch.Tensor, prev: torch.Tensor | None, pos: int) -> torch.Tensor:
+        """Return next-token logits at action position ``pos`` (0 or 1).
+
+        Args:
+            obs: Observations ``[x, y, goal_x, goal_y]``, shape ``(B, 4)``.
+            prev: The previous action token, or ``None`` at position 0.
+            pos: Which action coordinate is being decoded.
+
+        Returns:
+            Logits over the ``bins`` action tokens, shape ``(B, bins)``.
+        """
+        h = self.enc(obs / SIZE) + self.pos[pos]
+        if prev is not None:
+            h = h + self.tok(prev)
+        return self.head(h)
+
+    @torch.no_grad()
+    def act(self, obs_np) -> np.ndarray:
+        """Greedily decode both action tokens and return a continuous action."""
+        obs = torch.as_tensor(np.atleast_2d(obs_np), dtype=torch.float32)
+        t0 = self.logits(obs, None, 0).argmax(-1)
+        t1 = self.logits(obs, t0, 1).argmax(-1)
+        toks = torch.stack([t0, t1], -1).numpy()[0]
+        return detokenize_action(toks, self.bins)
+
+
+def train_policy(seed: int = 0, steps: int = 1500):
+    """Behavior-clone the action-token policy from expert demonstrations.
+
+    The loss is cross-entropy on both action tokens with teacher forcing —
+    the second token is trained against the *true* first token, exactly the
+    next-token objective from @sec-ch02, now over action bins.
+
+    Args:
+        seed: Seeds demonstrations, initialization, and batching.
+        steps: Number of gradient steps.
+
+    Returns:
+        ``(policy, obs, acts)``: the trained policy and its training data.
+    """
+    torch.manual_seed(seed)
+    obs, acts = collect_demos(260, seed)
+    obs_t = torch.as_tensor(obs)
+    tokens = torch.as_tensor(tokenize_action(acts, ACTION_BINS), dtype=torch.long)
+    policy = ActionTokenPolicy()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-3)
+    ce = nn.CrossEntropyLoss()
+    gen = torch.Generator().manual_seed(seed)
+    for _ in range(steps):
+        idx = torch.randint(0, obs_t.shape[0], (256,), generator=gen)
+        o, tk = obs_t[idx], tokens[idx]
+        opt.zero_grad()
+        loss = ce(policy.logits(o, None, 0), tk[:, 0]) + ce(policy.logits(o, tk[:, 0], 1), tk[:, 1])
+        loss.backward()
+        opt.step()
+    return policy, obs, acts
+```
+
+Training is a behavior-cloning loop; we then check how faithfully it reproduces the expert's *tokens*, and — separately — a single decoded action.
+
+```{python}
+policy, demo_obs, demo_acts = train_policy()
+targets = tokenize_action(demo_acts, ACTION_BINS)
+with torch.no_grad():
+    p0 = policy.logits(torch.as_tensor(demo_obs), None, 0).argmax(-1).numpy()
+    p1 = policy.logits(torch.as_tensor(demo_obs), torch.as_tensor(targets[:, 0]), 1).argmax(-1).numpy()
+print("demonstrations       ", len(demo_obs))
+print("within-1-bin accuracy", round(float((np.abs(p0 - targets[:, 0]) <= 1).mean()), 2),
+      round(float((np.abs(p1 - targets[:, 1]) <= 1).mean()), 2))
+obs_demo = [3.0, 3.0, 3.2, 2.9]
+print("obs", obs_demo, "-> policy", policy.act(obs_demo).round(3).tolist(),
+      " expert", expert_action(obs_demo[:2], obs_demo[2:]).round(3).tolist())
+```
+
+The policy matches the expert to within one action bin about `0.97` of the time on both coordinates, and the single decoded action tracks its target closely. But the tokens are quantized to a tenth of the range, so every commanded action is still slightly off. The honest question is whether that per-step slack drives the robot to the goal or accumulates into failure. We run it closed-loop: at each step, tokenize the observation, decode an action, take a true step, repeat.
+
+```{python}
+# @save
+def run_vla_episode(policy, start, goal, horizon: int = 30, tol: float = 0.6):
+    """Drive one closed-loop episode with the token policy; grade final state.
+
+    Args:
+        policy: An object with ``act(obs) -> action``.
+        start: Start position, shape ``(2,)``.
+        goal: Goal position, shape ``(2,)``.
+        horizon: Step budget.
+        tol: Success distance to the goal.
+
+    Returns:
+        ``(reached, path)``: whether the goal was reached and the trajectory.
+    """
+    s = np.asarray(start, float)
+    path = [s.copy()]
+    for _ in range(horizon):
+        s = true_step(s, policy.act([s[0], s[1], goal[0], goal[1]]))
+        path.append(s.copy())
+        if np.linalg.norm(s - goal) <= tol:
+            return True, np.asarray(path)
+    return False, np.asarray(path)
+
+
+def vla_success(policy, n: int = 40, seed: int = 5):
+    """Fraction of random start/goal episodes the policy solves closed-loop.
+
+    Args:
+        policy: A policy with an ``act(obs) -> action`` method.
+        n: Number of random start/goal episodes to evaluate.
+        seed: Seed for the start/goal sampler.
+
+    Returns:
+        ``(rate, paths)``: the success fraction and each episode's trajectory.
+    """
+    rng = np.random.default_rng(seed)
+    wins, paths = 0, []
+    for _ in range(n):
+        s = rng.uniform(0.5, SIZE - 0.5, size=2)
+        g = rng.uniform(0.5, SIZE - 0.5, size=2)
+        if np.linalg.norm(s - g) < 2.0:
+            g = np.clip(g + 2.5, 0.5, SIZE - 0.5)
+        reached, path = run_vla_episode(policy, s, g)
+        wins += reached
+        paths.append((path, g, reached))
+    return wins / n, paths
+```
+
+```{python}
+rate, paths = vla_success(policy)
+print("closed-loop success rate:", rate)
+```
+
+Every episode reaches its goal, even though each per-step action is quantized and slightly off the expert's. The slack does not matter because the loop is *closed*: a small error this step is corrected by the next observation. @fig-ch31-vla shows a handful of these trajectories curving toward their goals — and that same forgiveness is about to become the central lesson of the chapter, in a setting where it does *not* save us.
+
+```{python}
+#| label: fig-ch31-vla
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "The token policy driven closed-loop from several starts (circles) to goals (stars). Paths bend because the policy must fight the current; every run reaches its goal despite per-step action tokens that are only approximately right."
+fig, ax = plt.subplots(figsize=(4.6, 4.4))
+for path, goal, reached in paths[:8]:
+    ax.plot(path[:, 0], path[:, 1], "-", lw=1.3, alpha=0.8)
+    ax.plot(path[0, 0], path[0, 1], "o", color="0.3", ms=6)
+    ax.plot(goal[0], goal[1], "*", color="0.1", ms=12)
+ax.set(xlim=(0, SIZE), ylim=(0, SIZE), xlabel="x", ylabel="y")
+ax.set_title("action-token policy, closed loop", fontsize=10)
+fig.tight_layout()
+plt.show()
+```
+
+Two extensions matter at scale and both are contracts, not model sizes. **Cross-embodiment** training pools data from robots with different arms and action spaces; a shared policy emits a canonical action $z_t$ and a per-robot adapter maps it to that robot's command, $u_t^{(e)}=A_e(z_t)$ — language names the task but does not align frames or gripper dynamics [@oxe2024]. And the **slow-semantic/fast-action split** of recent systems runs a large model at low rate to interpret the scene while a small expert emits dense control, which demands a handoff contract: the fast path must know when its instruction is stale.
 
 ::: {.callout-note .landscape-2026}
 ### Landscape 2026 (dated)
 
-**Verify live: 2026-07-19. Appendix C owns the version roster and deployment profiles.** The current Physical Intelligence research index lists **π0.7**, announced 2026-04-16, superseding earlier roster entries; its [official research site](https://www.pi.website/) is the source to recheck. NVIDIA’s official [GR00T page](https://developer.nvidia.com/isaac/gr00t) currently describes GR00T N1.7 as early access. DeepMind’s current robotics line includes [Gemini Robotics 1.5](https://deepmind.google/blog/gemini-robotics-15-brings-ai-agents-into-the-physical-world/), while Figure describes [Helix](https://www.figure.ai/news/helix) as a vision-language-action system.
-
-The world-model roster is moving just as quickly. Official or primary pages describe [Genie 3](https://deepmind.google/blog/genie-3-a-new-frontier-for-world-models/), [Dreamer 4](https://arxiv.org/abs/2509.24527), [V-JEPA 2](https://ai.meta.com/research/publications/v-jepa-2-self-supervised-video-models-enable-understanding-prediction-and-planning/), and NVIDIA’s [Cosmos world foundation models](https://developer.nvidia.com/blog/?p=94577). These names do not define the mechanism and may age out.
-
-A [2026 audit of robot-policy benchmarks](https://arxiv.org/abs/2606.04233) reports that fixed scores can fail diagnostics for shortcuts, statistical significance, overfitting, and dependence on the chosen dataset. Treat that as a current warning, not a timeless ranking: recheck the paper and active benchmark repositories before making a deployment claim. Videos, benchmark leaders, checkpoint availability, licenses, action rates, and hardware requirements are volatile.
+**Verify live: 2026-07-20.** Appendix C owns the version roster. On the VLA side, Physical Intelligence's $\pi$-series, NVIDIA's GR00T, Figure's Helix, and Google DeepMind's Gemini Robotics are the frequently-cited families; on the world-model side, DeepMind's [Genie 3](https://deepmind.google/blog/genie-3-a-new-frontier-for-world-models/), Dreamer 4, Meta's V-JEPA 2, and NVIDIA's [Cosmos](https://www.nvidia.com/en-us/ai/cosmos/) foundation models. These names, their action rates, licenses, and hardware requirements move quarterly; recheck the primary research pages and active benchmark repositories before making any deployment claim. The mechanisms in this chapter — action tokens, compounding error, receding feedback, independent grading — outlast every name in this box.
 :::
 
-The stable lesson survives deletion of that box. A VLA program needs a data flywheel tied to failures, a versioned observation/action contract, cross-embodiment adapters, and evaluation outside the collection distribution. A frontier name is not a substitute for any of them.
+## Learning a world model {#sec-ch31-worldmodel}
 
-## World models and interactive generation {#sec-ch31-world-models}
-
-A VLA can map observation directly to action. A **world model** instead learns how the environment changes, optionally including how actions influence that change. The distinction matters because prediction and control impose different tests. A model may generate plausible futures without preserving the small state differences that reverse the best action.
-
-A useful learned model has at least a state representation, transition, and observation relation. With encoder $E$, latent state $z_t=E(o_{\le t})$, learned transition $p_\theta$, and decoder or predictor $p_\theta(o_{t+1}\mid z_{t+1})$,
+Our token policy maps observation straight to action. A **world model** instead learns how the environment itself changes — the transition $f$ — optionally conditioned on the action. Written with a learned latent state $z_t=E(o_{\le t})$,
 
 $$
 z_{t+1}\sim p_\theta(z_{t+1}\mid z_t,a_t),
 \qquad
-\hat o_{t+1}\sim p_\theta(o_{t+1}\mid z_{t+1}).
-$$
+\hat o_{t+1}\sim p_\theta(o_{t+1}\mid z_{t+1}),
+$$ {#eq-ch31-wm}
 
-For control, the first relation is load-bearing: it must be action-conditioned. A video predictor trained only to extrapolate likely footage can learn that a hand usually moves toward a cup, yet fail to answer what happens if the gripper approaches from an unusual direction. A world model used for planning needs counterfactual action coverage, not merely temporal continuity.
+and for planning the first relation is load-bearing: it must be **action-conditioned**. A video predictor trained only to extrapolate likely footage learns that a gripper usually moves toward a cup, yet cannot answer what happens if it approaches from an unusual angle. In our gridworld the state is already the observation, so we learn the transition directly: a small network that predicts the *delta* $s_{t+1}-s_t$ from the state and action.
 
-Predicting pixels forces the model to spend capacity on texture, lighting, and camera details. Predicting in a learned representation can ignore nuisance variation and preserve objects, motion, and task state. That is the motivation behind joint-embedding predictive approaches. The tradeoff is observability: a photorealistic error is visible to a human, while a latent error requires probes tied to decisions. Latent prediction is not automatically more causal because its images are absent.
+```{python}
+# @save
+def collect_transitions(n: int, seed: int):
+    """Sample random (state, action, delta) transitions from the true dynamics.
 
-World models serve several roles:
+    Random exploration is the simplest data engine: uniform states, uniform
+    actions, and the resulting state change. Predicting the *delta* rather
+    than the next state lets the model focus on the effect of the action and
+    the current, which is where all the nonlinearity lives.
 
-- **representation learning:** predicting future structure can train features useful to a policy;
-- **imagination:** a policy or planner can evaluate candidate action sequences without executing each one in the real environment;
-- **data generation:** interactive generation can create trajectories, initial states, and rare variations for training or testing;
-- **state estimation:** temporal prediction can combine incomplete observations into a belief about hidden state;
-- **failure rehearsal:** a simulator or learned model can expose a controller to unsafe or expensive scenarios before hardware trials.
+    Args:
+        n: Number of transitions.
+        seed: Seed for states and actions.
 
-The Dreamer line learns a compact dynamics model and improves a policy using imagined latent trajectories. Genie-class work treats videos as data for action-controllable interactive environments. Physics-oriented foundation-model programs train large generative models on videos and simulations. These lines can converge technically, but their evidence should stay separate: an environment that is fun to interact with, a latent model that improves a policy, and a dynamics model suitable for safety decisions are three claims.
+    Returns:
+        ``(states, actions, deltas)`` float32 arrays.
+    """
+    rng = np.random.default_rng(seed)
+    s = rng.uniform(0, SIZE, size=(n, 2))
+    a = rng.uniform(-1, 1, size=(n, 2))
+    return s.astype(np.float32), a.astype(np.float32), (true_step(s, a) - s).astype(np.float32)
 
-Long futures are not single answers. If a block can slide left or right after contact, averaging the alternatives can predict a physically impossible blur. A probabilistic model should represent several plausible outcomes and expose uncertainty. Planning then needs a risk rule: expected reward, worst credible outcome, a chance constraint, or escalation. Sampling many sharp videos does not help when their probabilities are uncalibrated or when every sample misses the real failure mode.
 
-A learned world model also differs from a conventional simulator. A simulator encodes explicit integration, collision, material, and sensor assumptions; a learned model estimates regularities from data. Both are models and both can be wrong. The simulator often offers exact hidden state and deterministic replay, while the learned model may cover messy appearance more easily. Hybrid systems can render learned variations around explicit physics, fit residual dynamics, or learn observation models while keeping contact and limits deterministic.
+class Dynamics(nn.Module):
+    """A tiny action-conditioned dynamics model: (state, action) -> delta.
 
-Photorealism is therefore a weak proxy. Ask which state variables survive, which interventions were present in training, how uncertainty changes off distribution, and whether plans selected through the model succeed in an independent environment. Those questions lead to the chapter’s main criterion.
+    This is $p_\\theta$ from @eq-ch31-wm made deterministic and small. It is
+    the object we will plan through — and the object whose one-step accuracy
+    turns out not to guarantee that plans through it succeed.
+    """
 
-## The decision-grade criterion {#sec-ch31-decision-grade}
+    def __init__(self, hidden: int = 96):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(4, hidden), nn.Tanh(),
+                                 nn.Linear(hidden, hidden), nn.Tanh(),
+                                 nn.Linear(hidden, 2))
 
-A learned model is **decision-grade for a task distribution** when using it to choose actions produces acceptably reliable decisions under the deployment horizon, feedback rate, cost asymmetry, and shift—not when its predictions look convincing. Decision-grade is a property of model, planner, task, operating envelope, and fallback together. It is never a permanent badge on a checkpoint.
+    def forward(self, s: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+        """Predict the state delta for states ``s`` and actions ``a``."""
+        return self.net(torch.cat([s / SIZE, a], dim=-1))
 
-One-step accuracy can compound. Suppose the true deterministic transition is $x_{t+1}=f(x_t,a_t)$ and the learned transition is $\hat x_{t+1}=\hat f(\hat x_t,a_t)$. Assume the model’s one-step error is bounded by $\epsilon$ on relevant state-action pairs,
+    @torch.no_grad()
+    def step(self, s: np.ndarray, a: np.ndarray) -> np.ndarray:
+        """Advance one step under the model, clipping to the box like reality."""
+        st = torch.as_tensor(np.atleast_2d(s), dtype=torch.float32)
+        at = torch.as_tensor(np.atleast_2d(a), dtype=torch.float32)
+        nxt = np.clip(np.atleast_2d(s) + self.forward(st, at).numpy(), 0.0, SIZE)
+        return nxt.reshape(np.shape(s))
 
-$$
-\|f(x,a)-\hat f(x,a)\|\le\epsilon,
-$$
 
-and $f$ is $L$-Lipschitz in state, meaning changing the state by $e$ changes the next state by at most $Le$. For the same open-loop action sequence, the state error satisfies
+def train_dynamics(n_trans: int, seed: int, steps: int) -> Dynamics:
+    """Fit a :class:`Dynamics` model by MSE on sampled transitions.
 
-$$
-e_{t+1}\le Le_t+\epsilon.
-$$
+    Args:
+        n_trans: Size of the transition dataset (the data budget).
+        seed: Seeds data, initialization, and batching.
+        steps: Gradient steps.
 
-Starting at $e_0=0$, the horizon-$H$ bound is
-
-$$
-e_H\le\epsilon\sum_{i=0}^{H-1}L^i
-=
-\begin{cases}
-H\epsilon, & L=1,\\
-\epsilon\dfrac{L^H-1}{L-1}, & L\ne1.
-\end{cases}
-$$
-
-When $L>1$, small errors can grow geometrically. Contact transitions can be even less forgiving because a millimeter changes whether contact occurred at all. The bound is conservative, but it explains why a low average next-frame error says little about a long open-loop plan.
-
-The decision itself supplies a sharper test. Let a planner compare candidate actions with true returns $Q(a)$ and model-estimated returns $\hat Q(a)$. Let $a^*$ be the best true action and $a^{(2)}$ the runner-up, with decision margin
-
-$$
-m=Q(a^*)-Q(a^{(2)}).
-$$
-
-If $|\hat Q(a)-Q(a)|<m/2$ for every candidate, the model preserves the winner. If the margin is tiny, a visually minor error can flip the action. If the margin is large, a rough model may be sufficient. Evaluation should therefore include action-ranking regret and downstream success, not only reconstruction loss.
-
-**Receding-horizon control** limits how long prediction error runs unchecked. At each observation, optimize a length-$H$ action sequence under the model, execute only the first action or short prefix, observe again, and repeat. In model-predictive-control notation,
-
-$$
-a_{t:t+H-1}^{*}
-=\arg\max_{a_{t:t+H-1}}
-\mathbb{E}_{\hat f}\!\left[
-\sum_{k=0}^{H-1}\gamma^k r(\hat x_{t+k},a_{t+k})
-+\gamma^H V(\hat x_{t+H})
-\right],
-$$
-
-where $r$ is reward, $V$ is a terminal value estimate, and $\gamma$ discounts distant outcomes. Appendix A owns MPC and search algorithms; this chapter uses only the feedback principle. Replanning replaces accumulated prediction with a real observation, but it cannot fix an observation that hides the relevant state, a model wrong on every local transition, or latency longer than the correction window.
-
-The artifact deliberately breaks an open-loop controller with an episode-constant dynamics bias. Its smallest experiment is:
-
-```python
-# artifact: embodied_eval.py — §31.6 adds: biased-dynamics horizon experiment
-def endpoint_success(horizon: int, model_error: float, replan: bool,
-                     *, trials: int = 512, tolerance: float = 0.10,
-                     seed: int = 7) -> float:
-    biases = np.random.default_rng(seed).normal(
-        0.0, model_error, size=(trials, 2)
-    )
-    goal = np.array([1.0, 0.5])
-    successes = 0
-    for bias in biases:
-        state = np.zeros(2)
-        fixed_action = goal / horizon
-        for step in range(horizon):
-            remaining = horizon - step
-            action = ((goal - state) / remaining
-                      if replan else fixed_action)
-            state = state + action + bias
-        successes += np.linalg.norm(state - goal) <= tolerance
-    return round(successes / trials, 4)
+    Returns:
+        The trained model.
+    """
+    torch.manual_seed(seed)
+    s, a, d = collect_transitions(n_trans, seed)
+    s, a, d = map(torch.as_tensor, (s, a, d))
+    model = Dynamics()
+    opt = torch.optim.Adam(model.parameters(), lr=3e-3)
+    loss_fn = nn.MSELoss()
+    gen = torch.Generator().manual_seed(seed)
+    for _ in range(steps):
+        idx = torch.randint(0, s.shape[0], (256,), generator=gen)
+        opt.zero_grad()
+        loss_fn(model(s[idx], a[idx]), d[idx]).backward()
+        opt.step()
+    return model
 ```
 
-Each of 512 trials samples a two-dimensional bias with standard deviation `0.012`; success means ending within `0.10` of the goal. The open-loop policy divides the planned displacement evenly, so the same unmodeled bias accumulates at every step. The replanning policy observes state and recomputes the remaining displacement. The plotted values are generated by the same file used in the tests.
+We train two models on purpose: a **well-fit** one from 8,000 transitions, and a deliberately **under-fit** one from just 40. Their one-step accuracy on held-out transitions is the number a demo would show off.
 
-![Open-loop final-state success falls from 100 percent at two steps to 9 percent at twenty-four steps, while observe-and-replan remains at 100 percent for this small constant-bias experiment.](../assets/figures/ch31-horizon.svg){#fig-ch31-horizon fig-cap="What does fresh feedback buy against a small repeated model error? Synthetic 2D dynamics, 512 seeded trials per point, error standard deviation 0.012 and goal tolerance 0.10."}
+```{python}
+good = train_dynamics(8000, seed=0, steps=2500)
+weak = train_dynamics(40, seed=1, steps=150)
 
-At 24 steps the trace is concrete: plan-once success is `0.0898`; observe-and-replan success is `1.0000`. The deliberate negative test raises model error to `0.20`; even replanning then succeeds in fewer than 20 percent of trials. Replanning removed accumulation in this constructed error model. It did not make an inadequate local model adequate.
+s_te, a_te, d_te = collect_transitions(3000, seed=99)
+with torch.no_grad():
+    err_good = np.sqrt(((good(torch.as_tensor(s_te), torch.as_tensor(a_te)).numpy() - d_te) ** 2).sum(-1))
+    err_weak = np.sqrt(((weak(torch.as_tensor(s_te), torch.as_tensor(a_te)).numpy() - d_te) ** 2).sum(-1))
+print(f"one-step RMSE  good {err_good.mean():.4f}  ({err_good.mean()/SIZE:.1%} of the box)")
+print(f"one-step RMSE  weak {err_weak.mean():.4f}  ({err_weak.mean()/SIZE:.1%} of the box)")
+```
 
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `embodied_eval.py` after dynamics experiment | 38 lines | the plotted horizon curve is seeded, final-state graded, and reproducible |
+The well-fit model predicts the next position to within about one percent of the box — a demo would call it excellent, and for one step it is. Whether that makes it a model we can *plan* through is a different question, and answering it is the point of the chapter.
 
-The toy has no inertia, obstacles, partial observation, action delay, or contact. Its purpose is to isolate horizon. In production, construct tests across policy-induced state distributions and measure calibration of rollout uncertainty, action-ranking regret, constraint violation, and task success. Hold out object layouts, visual textures, dynamics parameters, camera poses, instructions, and perturbations rather than splitting nearby frames from the same trajectory.
+## The decision-grade criterion {#sec-ch31-decision}
 
-Two failures deserve names. **Causal confusion** occurs when a policy or predictor relies on a correlated cue rather than the cause needed under intervention—for example, braking because brake lights appear in demonstrations instead of because the obstacle demands it. **Sim-to-real shift** occurs when observations or dynamics differ between simulation and hardware. Domain randomization varies textures, lighting, masses, friction, delays, and other parameters during training, forcing robustness across a broader distribution. It is a blunt instrument: randomizing the wrong factors can waste capacity, while omitting one consequential factor leaves a brittle policy.
+Here is the trap. A model with tiny one-step error can be useless for planning, because a planner feeds the model its *own* predictions, so errors accumulate. Suppose the true transition is $f$ and the learned one $\hat f$, with one-step error bounded by $\epsilon$, and $f$ is $L$-Lipschitz in state — changing the state by $e$ changes the next state by at most $Le$. Rolling the same action sequence open-loop, the state error $e_t$ obeys $e_{t+1}\le L e_t+\epsilon$, and starting from $e_0=0$,
 
-A decision-grade review asks five questions:
+$$
+e_H\le\epsilon\sum_{i=0}^{H-1}L^{i}
+=\begin{cases}H\epsilon, & L=1,\\[2pt]\epsilon\,\dfrac{L^{H}-1}{L-1}, & L\ne1.\end{cases}
+$$ {#eq-ch31-compound}
 
-1. What action decision and operating envelope does the model support?
-2. Over what open-loop horizon and control latency is its error acceptable?
-3. Does uncertainty rise on held-out interventions and shifted scenes?
-4. Does an independent environment confirm action ranking, constraints, and final-state success?
-5. What deterministic limit or safe fallback catches states outside the evidence?
+When $L>1$ the error grows geometrically; even at $L=1$ it grows linearly in the horizon. We can watch this happen. The measurement below rolls the well-fit model two ways from the same start and actions: **teacher-forced**, feeding it the true state each step (this isolates one-step error), and **free-running**, feeding it its own predictions (this is what a planner does).
 
-“Beautiful rollouts” answers none of them. The criterion is earned by intervention and downstream decision evidence.
+```{python}
+# @save
+def rollout_error(model, horizon: int, n_traj: int, seed: int):
+    """Compare teacher-forced vs free-running model error over a horizon.
 
-## Simulators as infrastructure {#sec-ch31-simulators}
+    For each trajectory, roll the true dynamics for ground truth, then
+    measure two model errors at each step: teacher-forced (the model is fed
+    the *true* state, isolating one-step error) and free-running (the model
+    is fed its *own* prediction, the way a planner uses it). The gap between
+    the two curves is compounding error — the subject of @eq-ch31-compound.
 
-A robotics simulator is not merely a visualization. It is a controlled environment with reset, step, observation, action, and state-query interfaces. Used well, it is simultaneously a data generator, an evaluation instrument, and a rare-event factory. Those jobs demand different configuration and governance.
+    Args:
+        model: A dynamics model with a ``step`` method.
+        horizon: Number of steps to roll.
+        n_traj: Trajectories to average over.
+        seed: Seed for starts and action sequences.
 
-For training, simulation offers parallel trajectories, procedural layouts, privileged labels, and failures without hardware damage. For evaluation, deterministic seeds and resettable initial states make policy comparisons repeatable. For rare events, an experiment can deliberately over-sample slippery surfaces, occlusions, dropped frames, collisions, or near-limit states. The resulting training distribution need not match production prevalence; the evaluator must restore deployment weights when reporting an expected product metric.
+    Returns:
+        ``(one_step, free_running)`` arrays of mean error per step.
+    """
+    rng = np.random.default_rng(seed)
+    one, free = np.zeros(horizon), np.zeros(horizon)
+    for _ in range(n_traj):
+        s0 = rng.uniform(1, SIZE - 1, size=2)
+        acts = rng.uniform(-1, 1, size=(horizon, 2))
+        true = [s0.copy()]
+        for t in range(horizon):
+            true.append(true_step(true[-1], acts[t]))
+        true = np.asarray(true)
+        rolled = s0.copy()
+        for t in range(horizon):
+            rolled = model.step(rolled, acts[t])
+            free[t] += np.linalg.norm(rolled - true[t + 1])
+            one[t] += np.linalg.norm(model.step(true[t], acts[t]) - true[t + 1])
+    return one / n_traj, free / n_traj
+```
 
-@fig-ch31-simulator shows where truth and policy beliefs diverge.
+```{python}
+one_step, free_run = rollout_error(good, horizon=20, n_traj=200, seed=7)
+print("one-step error  @1 %.3f  @20 %.3f" % (one_step[0], one_step[-1]))
+print("free-run error  @1 %.3f  @10 %.3f  @20 %.3f" % (free_run[0], free_run[9], free_run[-1]))
+```
+
+The one-step error stays flat near `0.04` the whole way. The free-running error starts at that same value and climbs past `0.7` by twenty steps — more than a tenth of the box, from a model that looked excellent one step at a time. @fig-ch31-compound is the figure this chapter exists to produce.
+
+```{python}
+#| label: fig-ch31-compound
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why a low one-step error can still be untrustworthy. Teacher-forced (one-step) error stays flat; free-running error, where the model is fed its own predictions, compounds. The dashed line is the linear worst case epsilon*H from @eq-ch31-compound, a conservative envelope the measured error stays under."
+fig, ax = plt.subplots(figsize=(6.2, 3.6))
+h = np.arange(1, 21)
+ax.plot(h, one_step, "s-", color="0.2", label="teacher-forced (one-step)")
+ax.plot(h, free_run, "o-", color="0.45", label="free-running (rolled out)")
+ax.plot(h, one_step.mean() * h, "--", color="0.7", label=r"linear bound $\epsilon H$")
+ax.set(xlabel="rollout horizon (steps)", ylabel="state error", xlim=(1, 20))
+ax.legend(fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+A model is **decision-grade** for a task not when its predictions look convincing but when *using it to choose actions* produces reliable decisions under the deployment horizon and feedback rate. The decision, not the reconstruction, is the test. If a planner compares actions by their true returns $Q(a)$ and model returns $\hat Q(a)$, and $a^{*}$ beats the runner-up $a^{(2)}$ by a margin $m=Q(a^{*})-Q(a^{(2)})$, then the model preserves the winner as long as its return error stays below $m/2$ everywhere. A large margin tolerates a rough model; a thin margin flips the choice on a tiny error. So we should measure downstream success, not next-frame loss — which is exactly what the planner lets us do.
+
+**Receding-horizon control** — model-predictive control, the practical cousin of the tree search in Appendix A — limits how long error runs unchecked. At each step, search action sequences under the model, execute only the first (or a short prefix), observe, and replan. Our planner is the simplest such search, **random shooting**: sample many action sequences, roll each through the model, and keep the one whose imagined trajectory stays closest to the goal [@williams2017mppi].
+
+```{python}
+# @save
+def shooting_plan(model, state, goal, horizon: int, n_samples: int, rng) -> np.ndarray:
+    """Pick an action sequence by random-shooting model-predictive control.
+
+    Sample ``n_samples`` random action sequences, roll each through the
+    model, and score by *running* distance to the goal (summed over the
+    horizon, not just the endpoint) so the first action is a genuine step
+    toward the goal. This is the sampling-based MPC used across robotics,
+    stripped to its core.
+
+    Args:
+        model: A dynamics model with a batched ``step`` method.
+        state: Current state, shape ``(2,)``.
+        goal: Goal state, shape ``(2,)``.
+        horizon: Planning lookahead.
+        n_samples: Candidate sequences to sample.
+        rng: A NumPy generator.
+
+    Returns:
+        The best action sequence, shape ``(horizon, 2)``.
+    """
+    seqs = rng.uniform(-1, 1, size=(n_samples, horizon, 2)).astype(np.float32)
+    states = np.tile(np.asarray(state, np.float32), (n_samples, 1))
+    cost = np.zeros(n_samples)
+    for t in range(horizon):
+        states = model.step(states, seqs[:, t, :])
+        cost += np.linalg.norm(states - goal, axis=-1)
+    return seqs[int(np.argmin(cost))]
+
+
+def planning_success(model, horizon: int, replan: bool, n_starts: int = 40,
+                     seed: int = 3, budget: int = 30, tol: float = 0.25) -> float:
+    """Measure goal-reaching success for open-loop vs receding-horizon control.
+
+    With ``replan=False`` the planner commits the whole ``horizon``-step plan
+    before looking again (open loop); with ``replan=True`` it executes one
+    step and replans (receding horizon). Everything else is held fixed, so
+    the two differ only in how long they trust the model between observations.
+
+    Args:
+        model: The dynamics model to plan through.
+        horizon: Planning lookahead and open-loop commitment length.
+        replan: Whether to replan after every executed step.
+        n_starts: Random start/goal pairs to average over.
+        seed: Seed for the start/goal sampler.
+        budget: Total environment steps allowed per episode.
+        tol: Success distance to the goal.
+
+    Returns:
+        Fraction of start/goal pairs solved.
+    """
+    rng = np.random.default_rng(seed)
+    starts = rng.uniform(0.5, SIZE - 0.5, size=(n_starts, 2))
+    goals = rng.uniform(0.5, SIZE - 0.5, size=(n_starts, 2))
+    wins = 0
+    for start, goal in zip(starts, goals):
+        if np.linalg.norm(start - goal) < 2.0:
+            goal = np.clip(goal + 2.5, 0.5, SIZE - 0.5)
+        s, steps, commit = start.astype(float), 0, (1 if replan else horizon)
+        while steps < budget:
+            plan = shooting_plan(model, s, goal, horizon, 256, rng)
+            for t in range(commit):
+                s = true_step(s, plan[t])
+                steps += 1
+                if np.linalg.norm(s - goal) <= tol:
+                    wins += 1
+                    break
+                if steps >= budget:
+                    break
+            else:
+                continue
+            break
+    return round(wins / n_starts, 3)
+```
+
+Now sweep the horizon. For each planning horizon $H$ we run the well-fit model two ways: **open-loop**, committing the whole $H$-step plan before observing, and **observe-and-replan**, executing one step then replanning.
+
+```{python}
+horizons = [1, 2, 4, 8, 12, 16, 20]
+open_loop = [planning_success(good, h, replan=False) for h in horizons]
+replan = [planning_success(good, h, replan=True) for h in horizons]
+print("horizon   ", horizons)
+print("open-loop ", open_loop)
+print("replan    ", replan)
+```
+
+At short horizons the two agree — with little compounding, planning ahead and replanning are the same. As the horizon grows they separate: open-loop success falls from `1.0` toward `0.48`, because the plan is chosen to make the *imagined* trajectory reach the goal and the real one has drifted away by the end. Observe-and-replan holds far higher through the mid-range — the gap peaks near `0.3` around horizon 12 — because each executed step suffers only one step of model error before a real observation corrects the course. At the very longest horizons even replanning slips, since the planner must still reason through a long, compounding imagined rollout to choose even its first action. @fig-ch31-horizon plots the split.
+
+```{python}
+#| label: fig-ch31-horizon
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does fresh feedback buy against a small, repeated model error? Open-loop planning success collapses as the horizon grows and compounding error corrupts the imagined trajectory; observe-and-replan spends the same model at one-step accuracy and holds. Well-fit model, 40 seeded start/goal pairs per point."
+fig, ax = plt.subplots(figsize=(6.2, 3.6))
+ax.plot(horizons, open_loop, "o--", color="0.5", label="plan once (open loop)")
+ax.plot(horizons, replan, "s-", color="0.15", label="observe and replan")
+ax.set(xlabel="planning horizon (steps)", ylabel="goal-reaching success",
+       ylim=(0, 1.05))
+ax.legend(fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+Does replanning simply rescue any model? No — and this is the sharp edge of "decision-grade." Run the *under-fit* model, whose one-step error is more than six times larger, with replanning at every step:
+
+```{python}
+print("weak model, replan every step, H=1:", planning_success(weak, 1, replan=True))
+print("weak model, replan every step, H=8:", planning_success(weak, 8, replan=True))
+```
+
+Even correcting at every single step, the under-fit model reaches the goal only half the time, against the well-fit model's `1.0`. Feedback corrects *execution* drift; it cannot correct a model that is wrong about the local dynamics in the first place. Impressive one-step numbers, and even frequent feedback, are not substitutes for a model whose errors are small where the decision is made.
+
+::: {.callout-note title="In the interview"}
+**Q. A vendor demos a world model with photorealistic rollouts and pitches it for planning warehouse picks. What do you ask for?**
+Not the rollouts — the decisions. Ask for one-step *and* free-running error over the deployment horizon (the @fig-ch31-compound split), action-ranking regret and downstream task success under a held-out layout, whether uncertainty rises on interventions absent from training, and the control latency the loop can actually sustain. The trap is grading the video: a model can look flawless and still flip the action at a thin decision margin, and "beautiful rollout" answers none of the five questions decision-grade requires.
+:::
+
+Two named failures round this out. **Causal confusion** is a policy leaning on a correlated cue instead of the cause — braking because brake lights appear in demonstrations, not because the obstacle demands it — and it hides until an intervention breaks the correlation [@dehaan2019causal]. **Sim-to-real shift** is dynamics or appearance differing between training and deployment; **domain randomization** fights it by varying textures, masses, frictions, and delays during training, a blunt instrument that helps only for the factors it happens to randomize [@tobin2017domainrand]. Both are reasons to hold out interventions and shifted scenes, not nearby frames of the same trajectory, when you decide whether a model is decision-grade.
+
+## Simulators, grounded skills, and rare events {#sec-ch31-simulators}
+
+Everything we just did — reset to a known state, roll trajectories, grade the outcome — is what a **simulator** is *for*. A robotics simulator is not a renderer; it is a controlled environment with reset, step, observation, and privileged-state-query interfaces, and used well it is three instruments at once: a data generator, an evaluation harness, and a rare-event factory. Its defining property is that the *grader* reads state the policy cannot touch. A policy can announce "done," emit a fluent explanation, or collect a shaped reward while the object sits outside the target; only privileged state settles it. For $N$ episodes with a versioned final-state predicate $G_i$, the suite score is
+
+$$
+\widehat S=\frac{1}{N}\sum_{i=1}^{N}\mathbf 1\!\left[G_i(s_T)=\text{true}\right],
+$$ {#eq-ch31-suite}
+
+exactly the environment-graded rate our `vla_success` and `planning_success` already compute. @fig-ch31-simulator locates where ground truth lives.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch31-simulator
-%%| fig-cap: "Where does ground truth live in a simulator-backed data and evaluation system? The policy sees observations; generators and graders read privileged state through separate interfaces."
-%%| fig-alt: "A versioned task specification and scenario distribution configure a simulator. Its privileged state feeds a trajectory generator, a final-state grader, and a rare-event sampler. A sensor renderer alone feeds the policy, whose actions return through an action adapter. Reports combine grader results with scenario and version identifiers."
+%%| fig-cap: "Where does ground truth live in a simulator-backed system? The policy sees only rendered observations; a rare-event sampler shapes initial states, and generators and graders read privileged state through separate interfaces the policy cannot reach."
+%%| fig-alt: "A versioned task spec and a rare-event sampler configure simulator state. The simulator renders observations to the policy under test, which returns actions through an adapter. Privileged state feeds a data generator and a deterministic grader, whose results plus versions form an evaluation report."
 flowchart TB
-    SPEC["Versioned task spec<br/>goal · initial-state distribution"] -->|configure| SIM[("Simulator state<br/>physics · objects · contacts")]
+    SPEC["Versioned task spec<br/>goal + initial-state distribution"] -->|configure| SIM[("Simulator state<br/>physics, contacts")]
     RARE["Rare-event sampler<br/>shift parameters"] -->|scenario seed| SIM
-    SIM -->|rendered observation only| POLICY(["Policy under test"])
-    POLICY -->|normalized action| ADAPTER["Action adapter<br/>frame · units · limits"]
-    ADAPTER -->|simulator command| SIM
-    SIM -->|privileged trajectory| DATA["Training data generator"]
-    SIM -->|final state| GRADER["Deterministic task predicate"]
-    GRADER -->|success · violations| REPORT[("Evaluation report<br/>versions · seeds · latency")]
-    RARE -->|scenario identity| REPORT
+    SIM -->|rendered observation| POLICY(["Policy under test"])
+    POLICY -->|action| ADAPTER["Action adapter<br/>frame, units, limits"]
+    ADAPTER --> SIM
+    SIM -->|privileged state| DATA["Training-data generator"]
+    SIM -->|final state| GRADER["Deterministic predicate"]
+    GRADER --> REPORT[("Report<br/>versions, seeds, latency")]
 ```
 
-The grader, not the policy, owns success. A policy can say “done,” emit a plausible explanation, or receive a shaped reward while the object remains outside the target. Simulator state can test the actual predicate. For task $i$ with terminal state $s_T$, a simple suite score is
+The **rare-event** role is why a simulator beats collecting logs: an experiment can over-sample slippery contacts, occlusions, or near-limit states that a fleet might see once a month, then restore deployment weights when reporting the expected product metric. This is the same seam @sec-ch23 built its refund gym on and the same digital-twin grading @sec-ch22 uses for statistics — a training distribution deliberately unlike production, with a grader that reads state. Fidelity is a budget, not a virtue: detailed contact physics earns its cost for insertion tasks and wastes it for open-floor navigation, so tie every simulator feature to a specific failure it is meant to predict. Simulators such as LIBERO and SimplerEnv for manipulation, and Habitat for navigation, differ in task vocabulary but share this contract [@liu2023libero; @li2024simplerenv; @szot2021habitat].
+
+An hour-long task is rarely one monolithic policy. It composes **grounded skills** — navigate, grasp, open, place — each a closed-loop behavior with preconditions. SayCan makes the composition explicit: a language model scores how well each skill advances the instruction, and an affordance model scores whether the robot can do it *now*, and the two multiply [@ahn2022saycan]:
 
 $$
-\widehat S=\frac{1}{N}\sum_{i=1}^{N}\mathbf{1}[G_i(s_T)=\text{true}],
-$$
+k^{*}=\arg\max_k\; p_{\text{lang}}(k\mid g)\;p_{\text{aff}}(\text{success}\mid o,k).
+$$ {#eq-ch31-saycan}
 
-where $G_i$ is a versioned final-state predicate and $N$ is the number of episodes. A robust report also records timeouts, safety violations, steps, latency, and scenario slices. Chapter 22 owns confidence intervals, sample sizing, judge calibration, and trajectory-aware grading; this chapter owns the environment seam.
+The affordance factor is grounding, not prompting, and it is what stops the plan from proposing something sensible-sounding but impossible. A worked example: the instruction is "wipe up the spill."
 
-Final-state grading is often stronger than watching a video. It can measure containment, pose tolerance, drawer state, spill amount, contacts, and forbidden-region entry exactly. It can also be gamed: a policy may knock an object into a tray and satisfy the terminal predicate while violating the intended method. Add trajectory constraints only when they express a real requirement, and report them separately from task completion.
+```{python}
+# @save
+def saycan_select(skills, p_lang, p_aff):
+    """Pick a skill by SayCan's language-times-affordance product (@eq-ch31-saycan).
 
-Fidelity is a budget, not a monotonic virtue. High-resolution rendering helps visual transfer but reduces throughput. Detailed contact can matter for insertion while adding little to room navigation. A digital twin may mirror a particular facility but drift as equipment, camera calibration, or material changes. For every simulator feature, connect cost to a failure it is intended to predict.
+    Args:
+        skills: Candidate skill names.
+        p_lang: Language relevance of each skill to the instruction.
+        p_aff: Grounded probability each skill can succeed right now.
 
-A useful environment contract includes observation schema and transforms, action schema and control rate, reset semantics, termination versus truncation, success predicate, privileged-state boundary, deterministic seed behavior, scenario/version identifiers, and resource cleanup. Tests should reset twice with the same seed, replay a known action sequence, perturb one named parameter, and confirm that policy outputs cannot mutate grader state except through `step`.
-
-Simulation does not certify hardware behavior. Before transfer, replay recorded sensor streams, use shadow mode where proposals are logged but not executed, validate low-level limits, stage speed and workspace, and compare simulator residuals with hardware telemetry. The simulator earns trust by predicting specific failures within an envelope, not by looking like the lab.
-
-## Embodied agents in simulation {#sec-ch31-agents}
-
-An embodied agent rarely asks one monolithic policy to solve an hour-long task. It composes semantic planning with grounded skills. A **skill** is a closed-loop behavior such as navigate, grasp, open, or place, with typed preconditions and outcomes. The language model can propose a sequence; an affordance or value model estimates whether each skill is feasible in the observed state.
-
-SayCan made this split explicit. In a simplified form, choose skill $k$ by combining a language relevance score with a grounded success score:
-
-$$
-k^*=\arg\max_k
-p_{\text{language}}(k\mid g,h_t)
-\;p_{\text{affordance}}(\text{success}\mid o_t,k),
-$$
-
-where $g$ is the instruction and $h_t$ is execution history. The first factor asks whether a skill advances the request; the second asks whether the robot can perform it now. The affordance model is trained grounding, not decorative prompting. After execution, the system observes again and updates the available skills.
-
-Code as Policies exposed robot capabilities as a programming interface and asked a language model to compose policy code. This can express geometry, loops, and reusable subroutines more compactly than selecting one tool call at a time. It also crosses a code-execution boundary: generated code needs an allowlisted API, resource limits, static checks, sandboxing, and the same effect policy as any other agent-written program. Chapter 17 owns that execution and approval machinery.
-
-Habitat-class simulators emphasize embodied navigation and rearrangement. Manipulation suites emphasize tabletop objects, contact, and continual-learning task families. Their task vocabularies differ, but the agent loop should not: obtain the language instruction and typed observation, propose through a policy interface, apply a deterministic gate, step the environment, and grade state independently.
-
-Multiple embodied agents add assignment, communication, collision avoidance, and shared-world consistency. Chapter 20’s coordination economics still apply. A second robot is useful only if parallel progress exceeds communication and interference costs; “multi-agent” is not a remedy for one policy that cannot ground a grasp.
-
-The production implication is to keep semantic planning, skill feasibility, action generation, and low-level control separately observable. A successful episode should reveal which layer selected each action and which layer stopped it. Without that trace, an aggregate score cannot distinguish perception failure from an infeasible plan or a controller limit.
-
-## Embodied and physical-world safety {#sec-ch31-safety}
-
-Physical safety starts below the model. Certified controllers, workspace limits, collision monitors, speed and force limits, watchdogs, and emergency stops must continue to function when inference stalls or emits nonsense. The model supplies intent or targets inside that envelope. It does not replace the envelope.
-
-The chapter artifact adds one narrow **reversibility gate**. It computes proposed Cartesian displacement and a synthetic predicted contact force. If either exceeds its configured envelope, execution requires a callback. With no callback or a denial, the episode stops before calling `env.step`.
-
-```python
-# artifact: embodied_eval.py — §31.9 adds: reversible-action authorization seam
-class ReversibilityGate:
-    def __init__(self, max_displacement: float = 0.18,
-                 max_force_n: float = 8.0):
-        self.max_displacement = max_displacement
-        self.max_force_n = max_force_n
-        self.hits = 0
-
-    def authorize(self, action, approve=None) -> bool:
-        displacement = float(np.linalg.norm(action[:3]))
-        predicted_force = float(max(0.0, -action[6]) * 12.0)
-        reasons = tuple(name for name, failed in (
-            ("displacement", displacement > self.max_displacement),
-            ("predicted contact force", predicted_force > self.max_force_n),
-        ) if failed)
-        if not reasons:
-            return True
-        self.hits += 1
-        proposal = {"action": tuple(map(float, action)),
-                    "displacement": displacement,
-                    "predicted_force_n": predicted_force,
-                    "reasons": reasons}
-        return bool(approve and approve(proposal))
+    Returns:
+        ``(best_skill, products)``: the winner and the per-skill products.
+    """
+    products = [l * a for l, a in zip(p_lang, p_aff)]
+    return skills[int(np.argmax(products))], products
 ```
 
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `embodied_eval.py` after the reversibility gate | 25 lines | a gated action cannot reach the environment without an explicit approval result |
+```{python}
+skills = ["pick up sponge", "wipe table", "pick up mug", "open drawer"]
+p_lang = [0.35, 0.45, 0.05, 0.15]   # relevance to "wipe up the spill"
+p_aff = [0.95, 0.15, 0.90, 0.85]    # feasible now (the spill is out of reach)
+best, products = saycan_select(skills, p_lang, p_aff)
+print("language alone would pick:", skills[int(np.argmax(p_lang))])
+print("SayCan picks:            ", best)
+print("products:", [round(p, 3) for p in products])
+```
 
-The state machine matters more than the threshold values.
+Language alone would try to wipe immediately — the most relevant verb. Grounding vetoes it, because the spill is out of reach, and the product picks up the sponge first, the feasible step that makes wiping possible. @fig-ch31-saycan shows the flip.
+
+```{python}
+#| label: fig-ch31-saycan
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How language and affordance combine to pick a skill. Language most prefers 'wipe table'; affordance says the spill is out of reach; their product picks 'pick up sponge' — the feasible step that makes wiping possible. Grounding flips the winner."
+import numpy as np
+x = np.arange(len(skills))
+fig, ax = plt.subplots(figsize=(6.4, 3.2))
+ax.bar(x - 0.25, p_lang, 0.25, label="p(language)", color="0.7")
+ax.bar(x, p_aff, 0.25, label="p(affordance)", color="0.45")
+ax.bar(x + 0.25, products, 0.25, label="product", color="0.15")
+ax.set_xticks(x)
+ax.set_xticklabels(skills, rotation=15, fontsize=8)
+ax.legend(fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+Code as Policies pushes the same idea further, letting the language model write policy *code* against an allowlisted robot API — expressive, but it crosses a code-execution boundary that needs the sandboxing and approval machinery of @sec-ch17 [@liang2023codeaspolicies]. And more robots are not automatically better: multi-agent embodiment adds assignment, collision avoidance, and shared-world consistency, and @sec-ch20's coordination economics decide whether a second robot's parallel progress beats its interference cost.
+
+## Physical-world safety and open problems {#sec-ch31-safety}
+
+Physical safety starts below the model. Certified controllers, workspace and force limits, watchdogs, and an emergency stop must keep working when inference stalls or emits nonsense; the model supplies intent inside that envelope, it does not replace it. Above that floor sits the one seam this chapter owns: deciding which proposals get physical authority. @sec-ch16 built the agent loop as propose → gate → execute, where a gate returns allow-or-deny before any tool runs. The embodied version asks a **reversibility** question — is this action large or forceful enough that a mistake cannot be undone?
+
+```{python}
+# @save
+def reversibility_gate(action, approve=None, max_disp: float = 0.9, max_force: float = 8.0) -> bool:
+    """Authorize an action, escalating irreversible ones for confirmation.
+
+    The same propose-gate-execute seam as @sec-ch16, specialized to physical
+    consequence: small, low-force actions pass automatically; a large
+    displacement or a hard predicted contact force requires an explicit
+    approval callback, and with none the action is denied. A real gate reads
+    validated force and geometry, not this toy heuristic — but the control
+    point is the placement, not the threshold.
+
+    Args:
+        action: Proposed action; first coords are displacement, last is grip.
+        approve: Callback that returns True to authorize an escalated action.
+        max_disp: Displacement magnitude allowed without approval.
+        max_force: Predicted contact force (N) allowed without approval.
+
+    Returns:
+        True if the action may execute, False if it is held.
+    """
+    disp = float(np.linalg.norm(action[:2]))
+    force = float(max(0.0, -action[-1]) * 12.0)  # a firm grasp implies contact force
+    if disp <= max_disp and force <= max_force:
+        return True
+    return bool(approve and approve({"displacement": disp, "predicted_force_n": force}))
+```
+
+```{python}
+gentle = np.array([0.3, 0.2, 0.0])
+lunge = np.array([1.0, 0.9, -1.0])   # large move + hard grasp
+print("gentle move          ->", reversibility_gate(gentle))
+print("lunging grasp, no ok ->", reversibility_gate(lunge))
+print("lunging grasp, approved ->", reversibility_gate(lunge, approve=lambda p: True))
+```
+
+The gentle action passes; the lunging grasp is denied until an approver signs off on the exact proposal. @fig-ch31-safety is the state machine behind those three lines: authority is granted only to fresh, in-envelope actions, and any denial, stale observation, or watchdog event falls to a safe hold.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch31-safety
-%%| fig-cap: "Which transitions may give a model proposal physical authority? Only fresh, in-envelope actions execute directly; gated actions require approval, and any denial, timeout, stale observation, or watchdog event leads to a safe hold."
-%%| fig-alt: "A state diagram begins at observed, moves to proposed, then either executes if fresh and within limits, waits for approval if gated, or enters safe hold on denial, timeout, stale input, or watchdog. Executed actions return to observed."
+%%| fig-cap: "Which transitions may give a model proposal physical authority? Only fresh, in-envelope actions execute directly; escalated actions wait for approval that binds the exact proposal, and any denial, stale observation, or watchdog event routes to a safe hold."
+%%| fig-alt: "A state machine: from Observed to Proposed; a fresh in-envelope action goes to Executing, an escalated one to AwaitingApproval, and stale or invalid input to SafeHold. Approval binds the exact proposal and moves to Executing; denial or timeout moves to SafeHold. Executing returns to Observed or, on fault, to SafeHold."
 stateDiagram-v2
     [*] --> Observed
-    Observed --> Proposed: policy output + observation ID
-    Proposed --> Executing: fresh and inside envelope
-    Proposed --> AwaitingApproval: gated action class
+    Observed --> Proposed: policy output + observation id
+    Proposed --> Executing: fresh and in-envelope
+    Proposed --> AwaitingApproval: escalated action
     Proposed --> SafeHold: stale / invalid / watchdog
     AwaitingApproval --> Executing: approval binds exact proposal
     AwaitingApproval --> SafeHold: deny / timeout / changed state
@@ -449,94 +1023,30 @@ stateDiagram-v2
     SafeHold --> Observed: authorized reset
 ```
 
-Approval binds the exact action, observation identity, and expiry. A fresh camera frame invalidates an old approval because the world may have changed between review and execution; Chapter 17 owns this time-of-check/time-of-use mechanic. Chapter 24 owns hostile perception and policy enforcement. Textures, signs, projected patterns, or compromised sensors can influence a vision policy, so the gate must consume independently checked state where possible. Chapter 27 owns alerts, incident response, and human queues; a physical emergency stop is the last local interruption path, not an observability feature.
+Approval binds the exact action and the observation identity, because a fresh frame can invalidate an old approval — the world may have moved between review and execution, the time-of-check/time-of-use hazard @sec-ch17 owns. And the perception feeding the gate is itself attackable: a texture patch, a projected pattern, or a compromised camera can steer a vision policy, so the gate should consume independently validated state where it can — @sec-ch24 owns adversarial perception and policy enforcement. Human approval is one control nested inside hard physical limits, not a substitute for them; a reviewer without depth or contact information cannot make an unsafe trajectory safe.
 
-The gate in this artifact is not a certified force predictor. Its gripper-coordinate heuristic demonstrates placement of the seam and produces a deliberate negative test. Real limits come from robot-specific dynamics, tool geometry, payload, safety-rated sensing, and validated controllers. Human approval also does not make an unsafe trajectory safe: reviewers may lack depth, timing, or contact information. Approval is one control for consequential intent, nested inside hard physical constraints.
+The open problems are where these threads fray. Data diversity, hardware time, and expensive failure recovery still bound embodied learning; contact-rich and deformable tasks amplify the small state errors @fig-ch31-compound made visible; evaluation has no universal task set, and a final-state average can hide a catastrophic slice. World models and direct policies may even converge — a policy carries implicit predictive state, a world model can share its representation with a policy — so the label matters less than the evidence. Does the system represent counterfactual consequences, notice when it is outside its envelope, correct with feedback, and reduce real decision regret? Those are the questions our gridworld answered with numbers, and they are the questions a real deployment must answer at scale.
 
-## Open problems {#sec-ch31-open}
+## Summary
 
-Embodied learning remains constrained by data diversity, hardware time, and expensive failure recovery. Cross-embodiment datasets help, but action semantics and camera geometry still differ. Dexterous and contact-rich tasks amplify small state errors. Tactile sensing, deformable objects, liquids, tool use, and long-horizon recovery expose variables poorly represented in image-heavy datasets.
+We built an embodied agent on a gridworld with a known current, reducing every claim to a printed number. Actions became tokens through a codec bounded by ${(K-1)}^{-1}$, and a tiny autoregressive policy reached every goal despite imperfect tokens, because the loop was closed. A learned dynamics model predicted one step to within a percent of the box, yet its free-running error compounded past a tenth of the box in twenty steps: open-loop planning collapsed while observe-and-replan held, and feedback did not rescue an under-fit model. Decision-grade is a property of model, planner, horizon, and feedback together — earned by evidence about decisions, not rollouts. @sec-ch32 assembles these seams.
 
-Evaluation has no single universal task set. Fixed suites invite overfitting, and a final-state average can hide catastrophic slices. Better evaluation needs procedural tasks, held-out interventions, hardware correlation, trajectory constraints, uncertainty checks, and versioned distributions. The statistical tools belong to Chapter 22; the frontier problem is obtaining environments whose grades predict deployment.
+## Exercises
 
-World models and direct VLA policies may converge: a policy can contain implicit predictive state, while a world model can share its representation and action expert with a policy. The architectural label matters less than the evidence. Does the system represent counterfactual consequences, detect when it is outside its envelope, correct with feedback, and reduce real decision regret?
+1. **Compounding and the Lipschitz bound.** Using `rollout_error` on the well-fit model, estimate the empirical growth rate of the free-running error and compare it to the bound in @eq-ch31-compound.
+    a. Fit $e_H\approx \epsilon\,(L^H-1)/(L-1)$ to the measured curve and report the implied $L$. Is it above or below 1, and what feature of `current` explains the sign?
+    b. Raise `AMP` from 0.40 to 0.60, retrain the model, and show how both the one-step error and the free-running growth change.
 
-## Build {#sec-ch31-build}
+2. **Where open-loop and replan diverge.** In `planning_success`, sweep the horizon finely and find the horizon at which open-loop success first drops below observe-and-replan by more than 0.2. Relate that horizon to the free-running error at which the drift first exceeds the goal tolerance `tol`.
 
-The integrated build drives a language-conditioned tabletop task, records every policy call, and grades the terminal environment state. Start with the deterministic lane from the `newbook` directory:
+3. **Is your model decision-grade?** Train dynamics models on 40, 200, 1000, and 8000 transitions. For each, plot one-step RMSE on one axis and observe-and-replan planning success (at horizon 8) on the other. Where does one-step error stop predicting planning success, and why is that the whole point of the section?
 
-```bash
-python code/ch31/embodied_eval.py --episodes 10 --gate --approve-gated \
-  --plot assets/figures/ch31-horizon.svg
-python -m pytest -q tests/test_ch31_embodied_eval.py
-```
+4. **The action contract.** Change `ACTION_BINS` to 5 and to 41, retrain the token policy each time, and report closed-loop success and within-1-bin accuracy. Then corrupt the gripper convention by negating the last coordinate before tokenizing and describe the failure — even though every token is valid.
 
-The episode core stays below forty lines and is shared by both backends:
+5. **A grader you can game.** Add an obstacle to the gridworld and a policy that reaches the goal by pushing through it. Write a final-state predicate that still marks the episode successful, then add one trajectory-aware predicate that catches the violation, and state which product requirement justifies its cost (@sec-ch22 owns the statistics).
 
-```python
-# artifact: embodied_eval.py — build adds: closed-loop episode and state grader
-def run_episode(env, policy, seed, *, gate=None, approve=None,
-                max_steps=50):
-    obs = env.reset(seed)
-    latencies, success, termination = [], False, "step_limit"
-    for step in range(1, max_steps + 1):
-        started = time.perf_counter()
-        action = np.asarray(policy.act(obs, env.instruction), dtype=float)
-        latencies.append(time.perf_counter() - started)
-        if gate and not gate.authorize(action, approve):
-            termination = "gate_denied"
-            break
-        obs, done, success = env.step(action)
-        if done:
-            termination = ("environment_success" if success
-                           else "environment_terminal")
-            break
-    return {"success": success, "steps": step, "termination": termination,
-            "action_latency_ms": [round(x * 1000, 4) for x in latencies]}
-```
+6. **Grounding flips the plan.** In the SayCan example, find the affordance value for "wipe table" at which it becomes the selected skill, holding the language scores fixed. Then construct an instruction and scores where language and affordance disagree on *every* skill, and describe what the robot should do next.
 
-On the shipped seeded harness, the ten scripted episodes all satisfy the environment predicate in a mean 11.4 steps. The contact gate is hit ten times and approved ten times. The codec error is `0.0039215686`; at horizon 24 the synthetic open-loop and replanned rates are `0.0898` and `1.0`. These results verify plumbing and deliberate failure behavior. They are not a learned-policy baseline.
-
-For the live lane, pin a compatible simulator checkout, policy checkpoint, processor, and action-normalization key, then provide them explicitly:
-
-```bash
-python code/ch31/embodied_eval.py --backend simpler --episodes 10 \
-  --task "$TASK" --checkpoint "$CHECKPOINT" --unnorm-key "$UNNORM_KEY" \
-  --gate --approve-gated
-```
-
-The adapter obtains the environment’s language instruction and rendered agent-view image, sends them through an OpenVLA-compatible `predict_action` call, and passes the decoded seven-dimensional action to the same runner. Before interpreting results, inspect image orientation, camera selection, coordinate frame, action scale, gripper convention, and reset seed. A model can fail every episode because one adapter convention is wrong.
-
-Report all ten episode rows, aggregate success, mean steps, p50 and p95 policy latency, termination reasons, and gate hits. Compare with the scripted harness only to diagnose environment and grader wiring; do not present it as a fair capability competitor. Preserve simulator, task, checkpoint, processor, dependency, and hardware versions with the run. If the live checkpoint fails or is too slow for the desired control rate, that result is evidence about the complete deployment configuration.
-
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| complete `embodied_eval.py` | 214 nonblank lines | toy and live adapters share policy, gate, latency, termination, and final-state grading contracts |
-
-## What endures, what changes {#sec-ch31-endures}
-
-The enduring ideas are the closed physical loop, versioned observation/action contracts, independent environment grading, horizon-dependent model error, receding feedback, decision margins, deterministic safety envelopes, and explicit safe states. A learned model is decision-grade only for a stated task distribution and control configuration.
-
-Model rosters, checkpoint formats, benchmark leaders, simulator APIs, licenses, claimed action rates, and accelerator requirements will change. Those details belong in the dated Landscape box and Appendix C. Replacing every named model should not alter the chapter’s interfaces or tests.
-
-## Exercises {#sec-ch31-exercises}
-
-1. Sweep model error $\epsilon$ in the horizon experiment. Find where receding-horizon success drops below 80 percent, then explain why fresh state cannot compensate for the final local error.
-
-2. Extend the action tokenizer to variable bin counts. Plot maximum and mean quantization error against bins, then relate the sequence-length and smooth-trajectory limits to frequency-domain action tokenization.
-
-3. Swap the scripted policy for an OpenVLA-compatible checkpoint on three simulator tasks. Report final-state success, termination reasons, gate hits, and per-action latency with every adapter convention pinned.
-
-4. Construct a policy that passes final-state grading by accident, such as knocking the object into the target. Add one trajectory-aware predicate, measure its cost, and state which product requirement justifies it.
-
-5. Perturb the object-pose distribution in the runner and measure the success cliff. Write a Chapter 22-style evaluation note that distinguishes the sampling distribution from expected deployment prevalence.
-
-6. Apply a controlled texture patch to rendered observations, measure policy degradation, and map each proposed defense to the perception, policy, or controller boundary owned by Chapter 24.
-
-7. In a design review, argue for or against using a video-generation world model to plan warehouse picking. Apply the decision-grade criterion and name the intervention, uncertainty, hardware-correlation, and failure-slice evidence you would require.
-
-## Notes and sources {#sec-ch31-sources}
-
-Actions-as-tokens and cross-domain transfer follow [RT-1](https://arxiv.org/abs/2212.06817) and [RT-2](https://arxiv.org/abs/2307.15818). Cross-embodiment data follows [Open X-Embodiment](https://robotics-transformer-x.github.io/); the open adapter shape follows the [OpenVLA project](https://openvla.github.io/) and [repository](https://github.com/openvla/openvla). Frequency-domain action tokenization follows [FAST](https://arxiv.org/abs/2501.09747).
-
-The spatial bridge points to [PointNet](https://arxiv.org/abs/1612.00593), [NeRF](https://arxiv.org/abs/2003.08934), [3D Gaussian Splatting](https://arxiv.org/abs/2308.04079), and [3D scene graphs](https://arxiv.org/abs/1910.02527). Simulator and embodied-agent sources include [LIBERO](https://arxiv.org/abs/2306.03310), [SimplerEnv](https://github.com/simpler-env/SimplerEnv), [Habitat 2.0](https://arxiv.org/abs/2106.14405), [SayCan](https://say-can.github.io/), and [Code as Policies](https://arxiv.org/abs/2209.07753). Sim-to-real vocabulary follows [domain randomization](https://arxiv.org/abs/1703.06907) and [Causal Confusion in Imitation Learning](https://arxiv.org/abs/1905.11979). Current frontier links remain confined to the dated Landscape box.
+7. **The reversibility envelope.** Instrument `reversibility_gate` to count how often it escalates during a full `vla_success` run, then tighten `max_disp` until the escalation rate exceeds 25%.
+    a. What does that rate tell you about the policy's typical action magnitude?
+    b. Design an approval callback that auto-approves near a known-safe region of the box but escalates elsewhere, and argue why binding the approval to the observation id (not just the action) matters when the world is changing.
