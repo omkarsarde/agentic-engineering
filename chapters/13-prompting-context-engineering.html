@@ -670,25 +670,25 @@ window.Quarto = {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/29-multimodal-vlm-documents-gui.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Multimodal Agents I: VLMs, Documents, and GUI Perception [F+S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Multimodal Agents I: VLMs, Documents, and GUI Perception</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/30-multimodal-voice-video-media.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Multimodal Agents II: Voice, Video, and Generative Media [S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Multimodal Agents II: Voice, Video, and Generative Media</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/31-world-models-vla-embodied.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">World Models, VLA, and Embodied Agents [S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">World Models, VLA, and Embodied Agents</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/32-capstone.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment [F]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment</span></span></a>
   </div>
 </li>
       </ul>
@@ -696,12 +696,29 @@ window.Quarto = {
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
- <span class="menu-text">Appendices</span></a>
+ <span class="menu-text">Part IX — The Agentic System-Design Interview</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
       </div>
       <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/33-sd-interview-framework.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">The Interview Framework: Seven Moves and a Toolkit</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../appendices/a-bridge.html" class="sidebar-item-text sidebar-link">
@@ -788,7 +805,7 @@ Q(P)=\mathbb{E}_{x\sim D}\!\left[M(P,x)\right].
 \tag{13.2}</span></span></p>
 <p>Changing “precise” to “careful” changes <span class="math inline">P</span>. So does adding a tool, moving a timestamp, reordering examples, or compacting history. If two variants are not run on the same versioned cases with the same scorer and model, the comparison is anecdote. That is the whole discipline, and everything below is an instance of it.</p>
 <p>To measure anything offline we need something to measure. We use a deterministic stub: a proxy “classifier” whose behavior the reader can fully inspect, so that when a score moves we know exactly why. It routes a customer ticket to <code>refund</code>, <code>status</code>, or <code>technical</code> using keyword cues and a precedence order, and — this is the part that will matter for in-context learning — it will complete the label of the most similar demonstration when one is close enough. We start with just the keyword prior.</p>
-<div id="e675e7b4" class="cell" data-execution_count="1">
+<div id="9d803234" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -881,7 +898,7 @@ Q(P)=\mathbb{E}_{x\sim D}\!\left[M(P,x)\right].
 <span id="cb1-90"><a href="#cb1-90" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> _prior_label(text, prompt.precedence)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The scorer freezes a case set and, crucially, keeps the per-case failures. A single aggregate hides whether a rise from 82 to 86 percent fixed four hard cases or swapped eight. Exact match works here because the labels are finite; a rubric grader would work for an explanation, but then the grader, its calibration cases, and its disagreement rate all become part of the measurement system. No scorer is “just evaluation.”</p>
-<div id="c54d9ced" class="cell" data-execution_count="2">
+<div id="89b3d775" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>DEV_SET <span class="op">=</span> (</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    Ticket(<span class="st">"Where is order 41? The tracking page has not moved."</span>, <span class="st">"status"</span>),</span>
@@ -933,7 +950,7 @@ Q(P)=\mathbb{E}_{x\sim D}\!\left[M(P,x)\right].
 <span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"score"</span>: score, <span class="st">"failures"</span>: failures, <span class="st">"rows"</span>: rows}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run the baseline and read its failures, not only its score.</p>
-<div id="6ba89d92" class="cell" data-execution_count="3">
+<div id="efd912b2" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>base <span class="op">=</span> evaluate(BASELINE, DEV_SET)</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"baseline dev score: </span><span class="sc">{</span>base[<span class="st">'score'</span>]<span class="sc">:.3f}</span><span class="ss"> "</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"(</span><span class="sc">{</span><span class="bu">len</span>(DEV_SET) <span class="op">-</span> <span class="bu">len</span>(base[<span class="st">'failures'</span>])<span class="sc">}</span><span class="ss">/</span><span class="sc">{</span><span class="bu">len</span>(DEV_SET)<span class="sc">}</span><span class="ss">)"</span>)</span>
@@ -974,7 +991,7 @@ Figure&nbsp;13.1: How does an in-context example condition the answer? The query
 </div>
 </div>
 <p>That density is why examples are powerful and dangerous: a demonstration teaches format, label space, and a decision rule all at once, so a corrupted one teaches a corrupted rule. Min et al.&nbsp;(2022) found that on real models demonstrations mainly convey the label space, format, and input distribution, and that the effect of label <em>correctness</em> is model- and task-dependent <span class="citation" data-cites="min2022rethinking">(<a href="../references.html#ref-min2022rethinking" role="doc-biblioref">Min et al. 2022</a>)</span>. Our stub takes the strong form for clarity: it copies the nearest demonstration’s label. We can watch a single flipped label flip a nearby query.</p>
-<div id="543128da" class="cell" data-execution_count="4">
+<div id="51b47e5b" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>query <span class="op">=</span> <span class="st">"The billing page throws an error when I submit the form."</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>clean <span class="op">=</span> Prompt(BASELINE.instruction,</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>               demos<span class="op">=</span>(Demo(<span class="st">"The billing page shows an error on submit."</span>, <span class="st">"technical"</span>),))</span>
@@ -993,7 +1010,7 @@ corrupted demonstration-&gt; status</code></pre>
 <section id="sec-ch13-structure" class="level2" data-number="13.3">
 <h2 data-number="13.3" class="anchored" data-anchor-id="sec-ch13-structure"><span class="header-section-number">13.3</span> Structure controls parsing, and reasoning is a measured control</h2>
 <p>Long prose makes boundaries implicit; structural markup makes them explicit to people, to template code, and often to the model. Fencing separates instructions, evidence, and the query, and names the provenance of each block.</p>
-<div id="61e24af9" class="cell" data-execution_count="5">
+<div id="e7071b3f" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>document <span class="op">=</span> <span class="st">"Refund window is 30 days from delivery."</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>fenced <span class="op">=</span> (<span class="ss">f'&lt;retrieved_document trust="external" source="policy-v4"&gt;</span><span class="ch">\n</span><span class="ss">'</span></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>          <span class="ss">f'</span><span class="sc">{</span>document<span class="sc">}</span><span class="ch">\n</span><span class="ss">&lt;/retrieved_document&gt;</span><span class="ch">\n</span><span class="ss">'</span></span>
@@ -1081,7 +1098,7 @@ Figure&nbsp;13.2: What makes optimization automatic? Hand-tuning has a human pro
 </div>
 </div>
 <p>Our generator has two operators, both derived from the current failures. The first reads the confusion matrix and proposes an instruction edit — a precedence clause that promotes the label being lost over the label it loses to. The second bootstraps a demonstration: it finds a currently-correct dev case near a failure and adds it as a labelled example, so the stub’s pattern-completion path can carry the fix. This is the shape of real systems — MIPROv2 jointly proposes instructions and bootstraps few-shot demonstrations under a Bayesian search <span class="citation" data-cites="opsahlong2024mipro">(<a href="../references.html#ref-opsahlong2024mipro" role="doc-biblioref">Opsahl-Ong et al. 2024</a>)</span>; GEPA reflects in natural language over whole trajectories and keeps a Pareto frontier of candidates <span class="citation" data-cites="agrawal2025gepa">(<a href="../references.html#ref-agrawal2025gepa" role="doc-biblioref"><span class="nocase">Agrawal et al.</span> 2025</a>)</span>; DSPy packages both behind a compile step <span class="citation" data-cites="khattab2024dspy">(<a href="../references.html#ref-khattab2024dspy" role="doc-biblioref">Khattab et al. 2024</a>)</span> — reduced here to something small enough to read.</p>
-<div id="b5b2b902" class="cell" data-execution_count="6">
+<div id="b468ccfd" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> _propose_precedence(current: <span class="bu">tuple</span>[<span class="bu">str</span>, ...], failures: Sequence[<span class="bu">dict</span>]) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">str</span>, ...]:</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Promote the most-confused expected label above the label it loses to."""</span></span>
@@ -1158,7 +1175,7 @@ Figure&nbsp;13.2: What makes optimization automatic? Hand-tuning has a human pro
 <span id="cb9-74"><a href="#cb9-74" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"winner"</span>: best, <span class="st">"trajectory"</span>: trajectory}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run the loop and print the trajectory — the sequence of best scores, which is what tells us whether the search is learning or thrashing.</p>
-<div id="7b444f97" class="cell" data-execution_count="7">
+<div id="959ee4dd" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>opt <span class="op">=</span> optimize_prompt(DEV_SET, HELDOUT_SET)</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> row <span class="kw">in</span> opt[<span class="st">"trajectory"</span>]:</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"round </span><span class="sc">{</span>row[<span class="st">'round'</span>]<span class="sc">}</span><span class="ss">: dev=</span><span class="sc">{</span>row[<span class="st">'dev_score'</span>]<span class="sc">:.3f}</span><span class="ss">  "</span></span>
@@ -1260,7 +1277,7 @@ Figure&nbsp;13.4: What turns distributed application state into the one ordered 
 </div>
 </div>
 <p>Think in <strong>segments</strong>, not one growing string. Each carries at least a kind, a trust label, content, a stability flag, and a priority; a regulated system adds tenant, expiry, sensitivity, provenance, and a pointer to the source. The renderer sorts by a fixed table (stable to volatile), wraps each block with its kind and trust, and applies the budget at segment boundaries. A required system or query segment raises rather than disappears; lower-priority optional segments may be dropped, but selection should decide that before rendering so the reason is visible.</p>
-<div id="fe333d4d" class="cell" data-execution_count="9">
+<div id="66c67080" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> token_count(text: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">len</span>(text.split())</span>
@@ -1326,7 +1343,7 @@ Figure&nbsp;13.4: What turns distributed application state into the one ordered 
 <span id="cb13-63"><a href="#cb13-63" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> s.stable <span class="kw">or</span> s.kind <span class="op">==</span> <span class="st">"query"</span> <span class="kw">or</span> s.priority <span class="op">&gt;=</span> <span class="dv">8</span> <span class="kw">or</span> terms <span class="op">&amp;</span> <span class="bu">set</span>(s.tags)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Render a small window and read the assembled bytes — stable system first, evidence next, the query last, each labelled.</p>
-<div id="4e94c9eb" class="cell" data-execution_count="10">
+<div id="98f4ccd2" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>segments <span class="op">=</span> [</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>    Segment(<span class="st">"query"</span>, <span class="st">"user"</span>, <span class="st">"Where is order 41?"</span>),</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    Segment(<span class="st">"system"</span>, <span class="st">"developer"</span>, <span class="st">"Route tickets by policy v4."</span>, stable<span class="op">=</span><span class="va">True</span>),</span>
@@ -1346,7 +1363,7 @@ Where is order 41?
 </div>
 </div>
 <p>Silent truncation is the failure to design out. Dropping the end may delete the query; dropping the front may delete policy; cutting a serialized tool schema in half leaves invalid structure. So we budget at boundaries and fail closed when required material will not fit.</p>
-<div id="e56be9e0" class="cell" data-execution_count="11">
+<div id="d4d11498" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>    render_context([Segment(<span class="st">"query"</span>, <span class="st">"user"</span>, <span class="st">"one two three four five six"</span>)], budget<span class="op">=</span><span class="dv">3</span>)</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> <span class="pp">ValueError</span> <span class="im">as</span> exc:</span>
@@ -1430,7 +1447,7 @@ Figure&nbsp;13.5: Which move reduces pressure on the active context without eras
 </tbody>
 </table>
 <p>We saw poisoning in <a href="#sec-ch13-icl" class="quarto-xref"><span>Section 13.2</span></a>: a corrupted demonstration flipped a nearby query and persisted. Two more are reproducible with the machinery already built. <strong>Distraction</strong> first: preload six irrelevant promotional segments alongside one high-signal shipping fact under a tight budget, and the fact is crowded out of what the model would see. Selecting before rendering keeps it.</p>
-<div id="c9a24b85" class="cell" data-execution_count="12">
+<div id="04f2ce3e" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>signal <span class="op">=</span> Segment(<span class="st">"retrieved"</span>, <span class="st">"tool"</span>, <span class="st">"order 41 shipped on 2026-07-18 via courier"</span>,</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>                 tags<span class="op">=</span>(<span class="st">"order"</span>,), priority<span class="op">=</span><span class="dv">8</span>)</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>distractors <span class="op">=</span> [Segment(<span class="st">"retrieved"</span>, <span class="st">"promo"</span>, <span class="ss">f"promo note </span><span class="sc">{</span>i<span class="sc">}</span><span class="ss">"</span>) <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">6</span>)]</span>
@@ -1448,7 +1465,7 @@ selected — shipping fact present: True</code></pre>
 </div>
 </div>
 <p>The high-signal fact is absent from the preloaded context and present after selection — the fix the taxonomy prescribes for distraction is exactly “select fewer, higher-signal segments.” <strong>Confusion</strong> next: two demonstrations that look alike but carry different labels leave the nearest-match rule an ambiguous choice, and it takes the wrong one; removing the conflicting demonstration restores the prior.</p>
-<div id="98ae80cf" class="cell" data-execution_count="13">
+<div id="005ffb9f" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>ambiguous <span class="op">=</span> <span class="st">"Where is order 41? It still has not arrived."</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>confused <span class="op">=</span> Prompt(BASELINE.instruction,</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>                  demos<span class="op">=</span>(Demo(<span class="st">"Order 41: refund it, it has not arrived."</span>, <span class="st">"refund"</span>),))</span>
@@ -1468,7 +1485,7 @@ with the demo removed:           status</code></pre>
 \underbrace{S\,\Vert\,T\,\Vert\,E}_{\text{stable prefix}}\ \Vert\ \underbrace{R_t\,\Vert\,H_t\,\Vert\,Q_t}_{\text{volatile suffix}},
 \tag{13.4}</span></span></p>
 <p>with <span class="math inline">S</span> the system policy, <span class="math inline">T</span> stable tool and schema material, and <span class="math inline">E</span> fixed examples. Do not insert the current time, a request id, a user name, or a per-request feature flag before the stable prefix. We measure the break point directly: the reuse ends at the first differing byte.</p>
-<div id="e3344318" class="cell" data-execution_count="14">
+<div id="4613f79b" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> common_prefix_bytes(left: <span class="bu">str</span>, right: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Count identical leading bytes of two strings; the first difference ends reuse.</span></span>
@@ -1497,7 +1514,7 @@ with the demo removed:           status</code></pre>
 <span id="cb22-26"><a href="#cb22-26" aria-hidden="true" tabindex="-1"></a>    miss <span class="op">=</span> stable_tokens <span class="op">+</span> volatile_tokens</span>
 <span id="cb22-27"><a href="#cb22-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"hit"</span>: hit, <span class="st">"miss"</span>: miss, <span class="st">"multiplier"</span>: miss <span class="op">/</span> hit}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="a7d89e99" class="cell" data-execution_count="15">
+<div id="20b4be59" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"stable layout, reuse ends at byte:"</span>,</span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>      common_prefix_bytes(<span class="st">"STATIC-PREFIX</span><span class="ch">\n</span><span class="st">A"</span>, <span class="st">"STATIC-PREFIX</span><span class="ch">\n</span><span class="st">B"</span>))</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"timestamp first, reuse ends at byte:"</span>,</span>
@@ -1549,7 +1566,7 @@ Figure&nbsp;13.6: Where exactly does a volatile prefix break reuse? A stable lay
 </div>
 </div>
 <p>The economics follow. With stable-prefix tokens <span class="math inline">S</span>, volatile-suffix tokens <span class="math inline">V</span>, uncached input cost <span class="math inline">u</span> per token, and a discounted cached-read cost <span class="math inline">r</span> per token, a later hit costs <span class="math inline">C_{\text{hit}}=rS+uV</span> while breaking the prefix costs <span class="math inline">C_{\text{miss}}=u(S+V)</span>.</p>
-<div id="289edd92" class="cell" data-execution_count="17">
+<div id="87d29274" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>economics <span class="op">=</span> cache_cost(stable_tokens<span class="op">=</span><span class="dv">7000</span>, volatile_tokens<span class="op">=</span><span class="dv">300</span>, read_rate<span class="op">=</span><span class="fl">0.10</span>)</span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"hit cost:   </span><span class="sc">{</span>economics[<span class="st">'hit'</span>]<span class="sc">:.0f}</span><span class="ss"> units"</span>)</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"miss cost:  </span><span class="sc">{</span>economics[<span class="st">'miss'</span>]<span class="sc">:.0f}</span><span class="ss"> units"</span>)</span>
@@ -1594,7 +1611,7 @@ Figure&nbsp;13.7: How should a context manager shrink history without treating e
 </div>
 </div>
 </div>
-<div id="aa650448" class="cell" data-execution_count="18">
+<div id="c6a4cd92" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>DURABLE_PREFIXES <span class="op">=</span> (<span class="st">"DECISION "</span>, <span class="st">"OPEN "</span>, <span class="st">"ERROR "</span>)</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1678,7 +1695,7 @@ Figure&nbsp;13.7: How should a context manager shrink history without treating e
 <span id="cb28-81"><a href="#cb28-81" aria-hidden="true" tabindex="-1"></a>            <span class="cf">for</span> t <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, turns <span class="op">+</span> <span class="dv">1</span>)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Compact a 40-message trace whose durable state is six lines buried in routine chatter, and measure utilization before and after against a 500-token proxy budget.</p>
-<div id="61c166e5" class="cell" data-execution_count="19">
+<div id="56d57175" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>history <span class="op">=</span> synthetic_history()</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>before_tokens <span class="op">=</span> token_count(<span class="st">"</span><span class="ch">\n</span><span class="st">"</span>.join(history))</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>compacted, changed <span class="op">=</span> compact_history(history, budget<span class="op">=</span><span class="dv">500</span>)</span>
@@ -1762,7 +1779,7 @@ C_{\text{JIT}}=I+kL.
 </tbody>
 </table>
 <p>We close by exercising compaction and prefix stability together, because they solve different constraints and must not be conflated. The simulation grows a transcript over 50 turns, crossing compaction on/off with a stable/broken prefix, and records utilization and reusable-prefix fraction per turn — using the <em>same</em> survival-checked compactor, on a history that contains real durable lines.</p>
-<div id="a6a53c46" class="cell" data-execution_count="20">
+<div id="6355d308" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>POLICY_TOKENS <span class="op">=</span> <span class="dv">600</span></span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>STABLE_POLICY <span class="op">=</span> <span class="st">"SYSTEM</span><span class="ch">\n</span><span class="st">"</span> <span class="op">+</span> <span class="st">"stable-policy-token "</span> <span class="op">*</span> POLICY_TOKENS</span>
@@ -1812,7 +1829,7 @@ C_{\text{JIT}}=I+kL.
 <span id="cb31-47"><a href="#cb31-47" aria-hidden="true" tabindex="-1"></a>        previous <span class="op">=</span> prompt</span>
 <span id="cb31-48"><a href="#cb31-48" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ledger</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="6e129eab" class="cell" data-execution_count="21">
+<div id="97cf0c31" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> {(comp, stab): simulate_turns(comp, stab)</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> comp <span class="kw">in</span> (<span class="va">False</span>, <span class="va">True</span>) <span class="cf">for</span> stab <span class="kw">in</span> (<span class="va">True</span>, <span class="va">False</span>)}</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (comp, stab), rows <span class="kw">in</span> grid.items():</span>

@@ -1,0 +1,2130 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.9.38">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="description" content="One reusable procedure for the agentic system-design round — seven moves on a 45-minute clock, a taxonomy of seven problem families, and an executed back-of-envelope toolkit every design chapter in this Part reuses.">
+
+<title>33&nbsp; The Interview Framework: Seven Moves and a Toolkit – Agentic Engineering at Scale</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+/* CSS for citations */
+div.csl-bib-body { }
+div.csl-entry {
+  clear: both;
+}
+.hanging-indent div.csl-entry {
+  margin-left:2em;
+  text-indent:-2em;
+}
+div.csl-left-margin {
+  min-width:2em;
+  float:left;
+}
+div.csl-right-inline {
+  margin-left:2em;
+  padding-left:1em;
+}
+div.csl-indent {
+  margin-left: 2em;
+}</style>
+
+
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/headroom.min.js"></script>
+<script src="../site_libs/clipboard/clipboard.min.js"></script>
+<script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="../site_libs/quarto-search/fuse.min.js"></script>
+<script src="../site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="../">
+<link href="../appendices/a-bridge.html" rel="next">
+<link href="../chapters/32-capstone.html" rel="prev">
+<script src="../site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="../site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="../site_libs/quarto-html/popper.min.js"></script>
+<script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="../site_libs/quarto-html/anchor.min.js"></script>
+<link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-39d72d2d8fc74c86a6f3fad29307908e.css" rel="stylesheet" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
+<script src="../site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
+<link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
+<link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
+<script id="quarto-search-options" type="application/json">{
+  "location": "sidebar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "start",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+<style>html{ scroll-behavior: smooth; }</style>
+<script src="../site_libs/quarto-diagram/mermaid.min.js"></script>
+<script src="../site_libs/quarto-diagram/mermaid-init.js"></script>
+<link href="../site_libs/quarto-diagram/mermaid.css" rel="stylesheet">
+
+  <script>window.backupDefine = window.define; window.define = undefined;</script><script src="https://cdn.jsdelivr.net/npm/katex@latest/dist/katex.min.js"></script>
+  <script>document.addEventListener("DOMContentLoaded", function () {
+ var mathElements = document.getElementsByClassName("math");
+ var macros = [];
+ for (var i = 0; i < mathElements.length; i++) {
+  var texText = mathElements[i].firstChild;
+  if (mathElements[i].tagName == "SPAN") {
+   katex.render(texText.data, mathElements[i], {
+    displayMode: mathElements[i].classList.contains('display'),
+    throwOnError: false,
+    macros: macros,
+    fleqn: false
+   });
+}}});
+  </script>
+  <script>window.define = window.backupDefine; window.backupDefine = undefined;</script><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@latest/dist/katex.min.css">
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="nav-sidebar floating quarto-light"><script id="quarto-html-before-body" type="application/javascript">
+    const toggleBodyColorMode = (bsSheetEl) => {
+      const mode = bsSheetEl.getAttribute("data-mode");
+      const bodyEl = window.document.querySelector("body");
+      if (mode === "dark") {
+        bodyEl.classList.add("quarto-dark");
+        bodyEl.classList.remove("quarto-light");
+      } else {
+        bodyEl.classList.add("quarto-light");
+        bodyEl.classList.remove("quarto-dark");
+      }
+    }
+    const toggleBodyColorPrimary = () => {
+      const bsSheetEl = window.document.querySelector("link#quarto-bootstrap:not([rel=disabled-stylesheet])");
+      if (bsSheetEl) {
+        toggleBodyColorMode(bsSheetEl);
+      }
+    }
+    const setColorSchemeToggle = (alternate) => {
+      const toggles = window.document.querySelectorAll('.quarto-color-scheme-toggle');
+      for (let i=0; i < toggles.length; i++) {
+        const toggle = toggles[i];
+        if (toggle) {
+          if (alternate) {
+            toggle.classList.add("alternate");
+          } else {
+            toggle.classList.remove("alternate");
+          }
+        }
+      }
+    };
+    const toggleColorMode = (alternate) => {
+      // Switch the stylesheets
+      const primaryStylesheets = window.document.querySelectorAll('link.quarto-color-scheme:not(.quarto-color-alternate)');
+      const alternateStylesheets = window.document.querySelectorAll('link.quarto-color-scheme.quarto-color-alternate');
+      manageTransitions('#quarto-margin-sidebar .nav-link', false);
+      if (alternate) {
+        // note: dark is layered on light, we don't disable primary!
+        enableStylesheet(alternateStylesheets);
+        for (const sheetNode of alternateStylesheets) {
+          if (sheetNode.id === "quarto-bootstrap") {
+            toggleBodyColorMode(sheetNode);
+          }
+        }
+      } else {
+        disableStylesheet(alternateStylesheets);
+        enableStylesheet(primaryStylesheets)
+        toggleBodyColorPrimary();
+      }
+      manageTransitions('#quarto-margin-sidebar .nav-link', true);
+      // Switch the toggles
+      setColorSchemeToggle(alternate)
+      // Hack to workaround the fact that safari doesn't
+      // properly recolor the scrollbar when toggling (#1455)
+      if (navigator.userAgent.indexOf('Safari') > 0 && navigator.userAgent.indexOf('Chrome') == -1) {
+        manageTransitions("body", false);
+        window.scrollTo(0, 1);
+        setTimeout(() => {
+          window.scrollTo(0, 0);
+          manageTransitions("body", true);
+        }, 40);
+      }
+    }
+    const disableStylesheet = (stylesheets) => {
+      for (let i=0; i < stylesheets.length; i++) {
+        const stylesheet = stylesheets[i];
+        stylesheet.rel = 'disabled-stylesheet';
+      }
+    }
+    const enableStylesheet = (stylesheets) => {
+      for (let i=0; i < stylesheets.length; i++) {
+        const stylesheet = stylesheets[i];
+        if(stylesheet.rel !== 'stylesheet') { // for Chrome, which will still FOUC without this check
+          stylesheet.rel = 'stylesheet';
+        }
+      }
+    }
+    const manageTransitions = (selector, allowTransitions) => {
+      const els = window.document.querySelectorAll(selector);
+      for (let i=0; i < els.length; i++) {
+        const el = els[i];
+        if (allowTransitions) {
+          el.classList.remove('notransition');
+        } else {
+          el.classList.add('notransition');
+        }
+      }
+    }
+    const isFileUrl = () => {
+      return window.location.protocol === 'file:';
+    }
+    const hasAlternateSentinel = () => {
+      let styleSentinel = getColorSchemeSentinel();
+      if (styleSentinel !== null) {
+        return styleSentinel === "alternate";
+      } else {
+        return false;
+      }
+    }
+    const setStyleSentinel = (alternate) => {
+      const value = alternate ? "alternate" : "default";
+      if (!isFileUrl()) {
+        window.localStorage.setItem("quarto-color-scheme", value);
+      } else {
+        localAlternateSentinel = value;
+      }
+    }
+    const getColorSchemeSentinel = () => {
+      if (!isFileUrl()) {
+        const storageValue = window.localStorage.getItem("quarto-color-scheme");
+        return storageValue != null ? storageValue : localAlternateSentinel;
+      } else {
+        return localAlternateSentinel;
+      }
+    }
+    const toggleGiscusIfUsed = (isAlternate, darkModeDefault) => {
+      const baseTheme = document.querySelector('#giscus-base-theme')?.value ?? 'light';
+      const alternateTheme = document.querySelector('#giscus-alt-theme')?.value ?? 'dark';
+      let newTheme = '';
+      if(authorPrefersDark) {
+        newTheme = isAlternate ? baseTheme : alternateTheme;
+      } else {
+        newTheme = isAlternate ? alternateTheme : baseTheme;
+      }
+      const changeGiscusTheme = () => {
+        // From: https://github.com/giscus/giscus/issues/336
+        const sendMessage = (message) => {
+          const iframe = document.querySelector('iframe.giscus-frame');
+          if (!iframe) return;
+          iframe.contentWindow.postMessage({ giscus: message }, 'https://giscus.app');
+        }
+        sendMessage({
+          setConfig: {
+            theme: newTheme
+          }
+        });
+      }
+      const isGiscussLoaded = window.document.querySelector('iframe.giscus-frame') !== null;
+      if (isGiscussLoaded) {
+        changeGiscusTheme();
+      }
+    };
+    const authorPrefersDark = false;
+    const darkModeDefault = authorPrefersDark;
+      document.querySelector('link#quarto-text-highlighting-styles.quarto-color-scheme-extra').rel = 'disabled-stylesheet';
+      document.querySelector('link#quarto-bootstrap.quarto-color-scheme-extra').rel = 'disabled-stylesheet';
+    let localAlternateSentinel = darkModeDefault ? 'alternate' : 'default';
+    // Dark / light mode switch
+    window.quartoToggleColorScheme = () => {
+      // Read the current dark / light value
+      let toAlternate = !hasAlternateSentinel();
+      toggleColorMode(toAlternate);
+      setStyleSentinel(toAlternate);
+      toggleGiscusIfUsed(toAlternate, darkModeDefault);
+      window.dispatchEvent(new Event('resize'));
+    };
+    // Switch to dark mode if need be
+    if (hasAlternateSentinel()) {
+      toggleColorMode(true);
+    } else {
+      toggleColorMode(false);
+    }
+  </script>
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/33-sd-interview-framework.html">Part IX — The Agentic System-Design Interview</a></li><li class="breadcrumb-item"><a href="../chapters/33-sd-interview-framework.html"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">The Interview Framework: Seven Moves and a Toolkit</span></a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="Toggle sidebar navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+      <button type="button" class="btn quarto-search-button" aria-label="Search" onclick="window.quartoOpenSearch();">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <div class="pt-lg-2 mt-2 text-left sidebar-header">
+    <div class="sidebar-title mb-0 py-0">
+      <a href="../">Agentic Engineering at Scale</a> 
+        <div class="sidebar-tools-main tools-wide">
+    <div class="dropdown">
+      <a href="" title="Share" id="quarto-navigation-tool-dropdown-0" class="quarto-navigation-tool dropdown-toggle px-1" data-bs-toggle="dropdown" aria-expanded="false" role="link" aria-label="Share"><i class="bi bi-share"></i></a>
+      <ul class="dropdown-menu" aria-labelledby="quarto-navigation-tool-dropdown-0">
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="https://www.linkedin.com/sharing/share-offsite/?url=|url|">
+              <i class="bi bi-linkedin pe-1"></i>
+            LinkedIn
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item sidebar-tools-main-item" href="https://twitter.com/intent/tweet?url=|url|">
+              <i class="bi bi-twitter pe-1"></i>
+            Twitter
+            </a>
+          </li>
+      </ul>
+    </div>
+  <a href="" class="quarto-color-scheme-toggle quarto-navigation-tool  px-1" onclick="window.quartoToggleColorScheme(); return false;" title="Toggle dark mode"><i class="bi"></i></a>
+  <a href="" class="quarto-reader-toggle quarto-navigation-tool px-1" onclick="window.quartoToggleReader(); return false;" title="Toggle reader mode">
+  <div class="quarto-reader-toggle-btn">
+  <i class="bi"></i>
+  </div>
+</a>
+    <div id="quarto-search" class="quarto-navigation-tool px-1" title="Search"></div>
+</div>
+    </div>
+      </div>
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Agentic Engineering at Scale</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../preface.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">Preface</span></a>
+  </div>
+</li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part I — The On-Ramp and Model Foundations</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/01-operational-on-ramp.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/02-transformer-first-principles.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">2</span>&nbsp; <span class="chapter-title">The Transformer from First Principles</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/03-attention-position-long-context.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">Attention, Position, and Long Context</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/04-moe-efficient-architectures.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">Mixture-of-Experts, Efficient Architectures, and the 2026 Landscape [F+S]</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part II — Training and Post-Training</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-2" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-2" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/05-scaling-laws-pretraining-data.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">Scaling Laws and Pretraining Data [F+S]</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/06-distributed-frontier-training.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">6</span>&nbsp; <span class="chapter-title">Distributed and Frontier Training [F+S]</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/07-post-training.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">7</span>&nbsp; <span class="chapter-title">Post-Training: SFT, Preferences, RLHF/DPO, and Behavior Specs [F+S]</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/08-reasoning-test-time-compute.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">8</span>&nbsp; <span class="chapter-title">Reasoning: Test-Time Compute and RLVR [F+S]</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part III — Inference, Serving, and Customization</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-3" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-3" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/09-inference-behavior.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">9</span>&nbsp; <span class="chapter-title">Inference Anatomy and Model Behavior: Sampling, Hallucination, and Abstention [F]</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/10-serving-at-scale.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">10</span>&nbsp; <span class="chapter-title">Serving at Scale: Engines, Caching, Quantization, and Production Test-Time Compute [F+S]</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/11-customization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Customization: Distillation, Merging, and Fine-Tuning in Practice [F+S]</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IV — Programming with Models and Retrieval</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-4" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-4" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/12-api-surface.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">12</span>&nbsp; <span class="chapter-title">The API Surface: Messages, Structured Outputs, and Tool Calling</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/13-prompting-context-engineering.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">13</span>&nbsp; <span class="chapter-title">Prompting and Context Engineering</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/14-embeddings-rag.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">14</span>&nbsp; <span class="chapter-title">Embeddings and RAG Systems</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/15-agentic-retrieval.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">Advanced and Agentic Retrieval</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part V — Building Agents</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-5" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-5" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/16-agent-anatomy.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">16</span>&nbsp; <span class="chapter-title">Anatomy of an Agent: The Loop, Tools, and Workflow Patterns</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/17-tool-harness-engineering.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">17</span>&nbsp; <span class="chapter-title">Tool Engineering and Harness Design</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/18-memory-experiential-learning.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">18</span>&nbsp; <span class="chapter-title">Agent Memory and Experiential Learning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/19-protocols-frameworks.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">19</span>&nbsp; <span class="chapter-title">Protocols and Frameworks: MCP, A2A, and Agent-to-UI</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/20-multi-agent-systems.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">20</span>&nbsp; <span class="chapter-title">Multi-Agent Systems: Orchestrator-Workers, Failure Modes, and Economics</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/21-agent-applications.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">21</span>&nbsp; <span class="chapter-title">Agent Applications: Coding, Conversational, Computer Use, Data, and Deep Research</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VI — Evaluation, Agent RL, Security, and Governance</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-6" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-6" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/22-evaluation.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">22</span>&nbsp; <span class="chapter-title">Evaluation: From Traces to a Release Gate</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/23-training-agents-rl.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">23</span>&nbsp; <span class="chapter-title">Training Agents with Reinforcement Learning</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/24-agent-security.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">24</span>&nbsp; <span class="chapter-title">Agent Security</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/25-alignment-interpretability-governance.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">25</span>&nbsp; <span class="chapter-title">Alignment, Interpretability, and Governance</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VII — Production, Operations, and Organizations</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-7" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-7" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/26-production-platform.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">26</span>&nbsp; <span class="chapter-title">The Production Platform: Gateways, Cost, Durable Execution, and Delivery</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/27-operating-agents.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">27</span>&nbsp; <span class="chapter-title">Operating Agents: Observability, SLOs, Incidents, and Privacy Ops</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/28-products-people-organizations.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">28</span>&nbsp; <span class="chapter-title">Agent Products, People, and Organizations</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part VIII — The Frontier and the Capstone</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-8" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-8" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/29-multimodal-vlm-documents-gui.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Multimodal Agents I: VLMs, Documents, and GUI Perception</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/30-multimodal-voice-video-media.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Multimodal Agents II: Voice, Video, and Generative Media</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/31-world-models-vla-embodied.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">World Models, VLA, and Embodied Agents</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/32-capstone.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
+ <span class="menu-text">Part IX — The Agentic System-Design Interview</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/33-sd-interview-framework.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">The Interview Framework: Seven Moves and a Toolkit</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../appendices/a-bridge.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">The Bridge: Math, Decisions, Planning, RL, Control, and Systems</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../appendices/b-artifacts-workbook.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">B</span>&nbsp; <span class="chapter-title">Artifacts, Worksheets, and the Senior Design Workbook</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../appendices/c-landscape-2026.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">C</span>&nbsp; <span class="chapter-title">Landscape 2026: A Living, Dated Registry</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../references.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">References</span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#sec-ch33-moves" id="toc-sec-ch33-moves" class="nav-link active" data-scroll-target="#sec-ch33-moves"><span class="header-section-number">33.1</span> The seven moves on the 45-minute clock</a></li>
+  <li><a href="#sec-ch33-families" id="toc-sec-ch33-families" class="nav-link" data-scroll-target="#sec-ch33-families"><span class="header-section-number">33.2</span> The problem-family taxonomy</a></li>
+  <li><a href="#sec-ch33-cost" id="toc-sec-ch33-cost" class="nav-link" data-scroll-target="#sec-ch33-cost"><span class="header-section-number">33.3</span> The toolkit: tokens, latency, and dollars</a></li>
+  <li><a href="#sec-ch33-capacity" id="toc-sec-ch33-capacity" class="nav-link" data-scroll-target="#sec-ch33-capacity"><span class="header-section-number">33.4</span> The toolkit: memory, throughput, and storage</a></li>
+  <li><a href="#sec-ch33-loops" id="toc-sec-ch33-loops" class="nav-link" data-scroll-target="#sec-ch33-loops"><span class="header-section-number">33.5</span> The toolkit: loop caps and context budgets</a></li>
+  <li><a href="#sec-ch33-grading" id="toc-sec-ch33-grading" class="nav-link" data-scroll-target="#sec-ch33-grading"><span class="header-section-number">33.6</span> How you are graded</a></li>
+  <li><a href="#sec-ch33-run" id="toc-sec-ch33-run" class="nav-link" data-scroll-target="#sec-ch33-run"><span class="header-section-number">33.7</span> Running the clock</a></li>
+  <li><a href="#summary" id="toc-summary" class="nav-link" data-scroll-target="#summary"><span class="header-section-number">33.8</span> Summary</a></li>
+  <li><a href="#exercises" id="toc-exercises" class="nav-link" data-scroll-target="#exercises"><span class="header-section-number">33.9</span> Exercises</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+
+<header id="title-block-header" class="quarto-title-block default"><nav class="quarto-page-breadcrumbs quarto-title-breadcrumbs d-none d-lg-block" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="../chapters/33-sd-interview-framework.html">Part IX — The Agentic System-Design Interview</a></li><li class="breadcrumb-item"><a href="../chapters/33-sd-interview-framework.html"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">The Interview Framework: Seven Moves and a Toolkit</span></a></li></ol></nav>
+<div class="quarto-title">
+<h1 class="title"><span id="sec-ch33" class="quarto-section-identifier"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">The Interview Framework: Seven Moves and a Toolkit</span></span></h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>We are now ready to turn thirty-two chapters of mechanisms into the one skill the agentic system-design round actually grades: taking an unseen, deliberately underspecified prompt and producing, in forty-five minutes, a design defended with numbers, diagrams, and explicit tradeoffs. The round does not grade whether we have seen the question before. It grades whether we run a <em>procedure</em>: ask the two clarifiers that change the architecture, compute the anchor numbers before drawing boxes, decide with alternatives and reasons, and absorb a changed requirement without starting over. Memorized architectures fail this round in a specific way — the diagram survives first contact but the follow-up questions do not, because a memorized answer has no arithmetic underneath it and no reasons attached to its arrows.</p>
+<p>This chapter builds that procedure once, and the rest of the Part applies it without variation. The parts are: (i) <strong>the seven moves</strong>, each with its minute budget on the clock; (ii) <strong>the problem-family taxonomy</strong> — seven families that between them cover essentially every agentic design prompt, each identified by one question; (iii) <strong>the back-of-envelope toolkit</strong>, a set of small executed calculators (cost, latency, KV memory, throughput, index size, loop caps, context budgets) that we run live here and that Chapters 34–40 import; (iv) <strong>how the round is graded</strong>, as a rubric and an anti-pattern list; and (v) one compressed run of the whole clock on an enterprise-RAG prompt, as the bridge into Chapter 34. One honesty note about how this Part works: every design chapter that follows has the same skeleton — the same seven moves, in order, on a different family — because the repetition <em>is</em> the training. By the third chapter the moves should feel mechanical; by the seventh, the family fork should be the only thing you still have to think about.</p>
+<section id="sec-ch33-moves" class="level2" data-number="33.1">
+<h2 data-number="33.1" class="anchored" data-anchor-id="sec-ch33-moves"><span class="header-section-number">33.1</span> The seven moves on the 45-minute clock</h2>
+<p>A forty-five-minute design conversation has a shape, and the most common failure is spending its first half in the wrong place. The seven moves below allocate the clock. The minutes are budgets, not stage directions — a real interviewer interrupts, forks, and doubles back — but the <em>ordering</em> is load-bearing: words before numbers, numbers before boxes, boxes before dives, failure before wrap. <a href="#tbl-ch33-moves" class="quarto-xref">Table&nbsp;<span>33.1</span></a> is the table this whole Part executes, and <a href="#fig-ch33-clock" class="quarto-xref">Figure&nbsp;<span>33.1</span></a> draws it as a timeline you can rehearse against.</p>
+<div id="tbl-ch33-moves" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-tbl figure">
+<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-ch33-moves-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Table&nbsp;33.1: The seven moves and their minute budgets.
+</figcaption>
+<div aria-describedby="tbl-ch33-moves-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>Move</th>
+<th>Minutes</th>
+<th>What seniors do that juniors don’t</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Scope and the fork question</td>
+<td>0–5</td>
+<td>Ask the 2–3 clarifiers that change the architecture; state functional and non-functional requirements with numbers; name what is out of scope</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>Back-of-envelope</td>
+<td>5–10</td>
+<td>Token, KV, QPS, storage, and cost arithmetic before any boxes; the family’s classic numeric trap avoided aloud</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Contract and SLOs</td>
+<td>10–13</td>
+<td>The caller-visible API; the SLO split (TTFT versus completion; per-action autonomy tiers); success metrics</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>High-level design</td>
+<td>13–20</td>
+<td>The family skeleton drawn; every box named with its single responsibility; data and control planes separated</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>Deep dives</td>
+<td>20–33</td>
+<td>The 2–3 components the interviewer forks into; decisions with alternatives and reasons, not menus</td>
+</tr>
+<tr class="even">
+<td>6</td>
+<td>Failure, cost, security pass</td>
+<td>33–40</td>
+<td>The tradeoff table; failure modes with controls; cost and injection treated as attack surfaces; what pages a human</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>Evolution and wrap</td>
+<td>40–45</td>
+<td>Build order; what to measure first; one changed requirement absorbed without redrawing</td>
+</tr>
+</tbody>
+</table>
+</div>
+</figure>
+</div>
+<div id="cell-fig-ch33-clock" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> matplotlib.pyplot <span class="im">as</span> plt</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>moves <span class="op">=</span> [(<span class="st">"1 scope"</span>, <span class="dv">5</span>), (<span class="st">"2 numbers"</span>, <span class="dv">5</span>), (<span class="st">"3 contract"</span>, <span class="dv">3</span>), (<span class="st">"4 design"</span>, <span class="dv">7</span>),</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>         (<span class="st">"5 deep dives"</span>, <span class="dv">13</span>), (<span class="st">"6 failure + cost"</span>, <span class="dv">7</span>), (<span class="st">"7 evolve"</span>, <span class="dv">5</span>)]</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>colors <span class="op">=</span> [<span class="st">"#1f3b57"</span>, <span class="st">"#2a7f9e"</span>, <span class="st">"#3e7a52"</span>, <span class="st">"#7356a8"</span>, <span class="st">"#b13f3f"</span>, <span class="st">"#b7791f"</span>, <span class="st">"#4f5d75"</span>]</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">7.4</span>, <span class="fl">1.9</span>))</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>left <span class="op">=</span> <span class="dv">0</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (name, width), color <span class="kw">in</span> <span class="bu">zip</span>(moves, colors):</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    ax.barh(<span class="dv">0</span>, width, left<span class="op">=</span>left, color<span class="op">=</span>color, edgecolor<span class="op">=</span><span class="st">"white"</span>)</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    ax.text(left <span class="op">+</span> width <span class="op">/</span> <span class="dv">2</span>, <span class="dv">0</span>, name, ha<span class="op">=</span><span class="st">"center"</span>, va<span class="op">=</span><span class="st">"center"</span>, fontsize<span class="op">=</span><span class="dv">8</span>, color<span class="op">=</span><span class="st">"white"</span>)</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    left <span class="op">+=</span> width</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">45</span>)</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>ax.set_yticks([])</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>ax.set_xticks(<span class="bu">range</span>(<span class="dv">0</span>, <span class="dv">50</span>, <span class="dv">5</span>))</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"minute"</span>)</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<div class="cell-output cell-output-display">
+<div id="fig-ch33-clock" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-ch33-clock-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<a href="33-sd-interview-framework_files/figure-html/fig-ch33-clock-output-1.svg" class="lightbox" data-gallery="quarto-lightbox-gallery-1" title="Figure&nbsp;33.1: Where do the forty-five minutes go? The clock front-loads words and arithmetic: boxes are not drawn until minute 13, and a third of the interview belongs to the deep dives."><img src="33-sd-interview-framework_files/figure-html/fig-ch33-clock-output-1.svg" class="img-fluid figure-img"></a>
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-ch33-clock-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;33.1: Where do the forty-five minutes go? The clock front-loads words and arithmetic: boxes are not drawn until minute 13, and a third of the interview belongs to the deep dives.
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+<p>We teach the moves against one running prompt, the most-asked design in the agentic loop: <em>“Design question answering over our ten million internal documents. Answers must cite sources, respect per-user permissions, feel instant, and cost pennies.”</em> That sentence is underspecified on purpose — it names no QPS, no freshness requirement, no completion SLO — and the gaps are the interview.</p>
+<p><strong>Move 1 — Scope and the fork question.</strong> The first five minutes buy information, and the discipline is to ask only questions whose answers change the design. “How many users?” is weak; the load number matters, but it scales boxes rather than choosing them. On the running prompt, the clarifiers that fork the architecture are: <em>do documents change hourly or nightly?</em> — hourly forces an incremental indexing plane, nightly permits a rebuild — and <em>is the assistant read-only, or does it also file tickets?</em> — write-back imports the approval-and-effect machinery of a different family entirely. A senior closes the move by restating the problem with numbers (“ten million documents, call it 50 QPS at peak, p99 feel-instant, a couple of cents per query”) and by naming a non-goal aloud (“no cross-tenant search; out of scope”). Naming what you will <em>not</em> build is a senior signal the rubric explicitly rewards.</p>
+<p><strong>Move 2 — Back-of-envelope.</strong> Numbers before boxes, always. Four to six anchor numbers are enough: how big is the index, what does one query cost, where does the latency budget go, how many requests are in flight. Each family has one classic numeric trap — for serving designs it is computing KV memory from query heads instead of KV heads — and the senior move is to walk past the trap <em>audibly</em>: “GQA caches eight KV heads, not thirty-two query heads, so this is half a gigabyte per request, not two.” <a href="#sec-ch33-cost" class="quarto-xref"><span>Section 33.3</span></a> through <a href="#sec-ch33-loops" class="quarto-xref"><span>Section 33.5</span></a> build the calculators that make this move mechanical.</p>
+<p><strong>Move 3 — Contract and SLOs.</strong> State what the caller sees before designing what is behind it: the API surface in one or two sentences, then the service levels — split correctly. On the running prompt: streamed answers with inline citations; p99 time-to-first-token under 900 ms; completion under 6 s <em>at a 250-token output cap</em>; groundedness above a measured bar on a golden set. The split matters because the two latencies are set by different mechanisms — we compute this in <a href="#sec-ch33-cost" class="quarto-xref"><span>Section 33.3</span></a> — and a single “sub-2-seconds” promise is unkeepable in one reading and trivial in the other. When the design takes actions, the contract also states autonomy per action (“reads are automatic, refunds gated”), which Chapter 35 develops.</p>
+<p><strong>Move 4 — High-level design.</strong> Now the boxes — and the reason the boxes come this late is that the numbers and the contract have already chosen most of them. Draw the family skeleton (<a href="#sec-ch33-families" class="quarto-xref"><span>Section 33.2</span></a>), name each box with a single responsibility, and separate the planes: on the running prompt, an asynchronous indexing plane and an online query plane share an index and an ACL store, and confusing them is the classic mid-level error. One sentence per box is enough; the interviewer will choose where to go deeper.</p>
+<p><strong>Move 5 — Deep dives.</strong> The longest stretch of the clock, and the part that distinguishes deciding from reciting. The interviewer forks into two or three components; for each, the senior pattern is one sentence of recall, then the decision, the alternative, and the reason. On the running prompt: “ACL filtering runs <em>before</em> vector search, not after — post-filtering breaks the top-k guarantee when a user can see 2% of the corpus, and it leaks document existence. The alternative, filter-after-search, is simpler and fine when permissions are coarse; ours are not.” That is a complete dive answer in three sentences. Re-teaching how HNSW works is not a dive; it is a stall.</p>
+<p><strong>Move 6 — Failure, cost, security pass.</strong> Walk the design as an adversary and as an accountant: which component fails first and what the caller sees; what the tradeoff table looks like (choice, cost, what it buys, risk, control); and the two 2026 defaults — <em>cost is an attack surface</em> (an uncapped loop or an adversarially long query is a denial-of-wallet vector) and <em>retrieved text is data, not instructions</em> (a poisoned document is an injection attempt; Chapter 24 owns the defenses). Close with what pages a human, because a design with no pager story has no operator.</p>
+<p><strong>Move 7 — Evolution and wrap.</strong> State the build order (“nightly-rebuild index and plain top-k first; rerank and semantic cache only after retrieval metrics justify them”) and what to measure first. Then the interviewer flips one requirement — freshness becomes hourly, the corpus grows tenfold, permissions get row-level — and the senior answer names exactly which boxes change and which survive. Absorbing the flip in two sentences, without redrawing, is the strongest signal the round offers; it demonstrates that the design was a set of reasoned decisions, not a memorized picture.</p>
+</section>
+<section id="sec-ch33-families" class="level2" data-number="33.2">
+<h2 data-number="33.2" class="anchored" data-anchor-id="sec-ch33-families"><span class="header-section-number">33.2</span> The problem-family taxonomy</h2>
+<p>Every agentic design prompt we have seen in the wild is an instance of one of seven families, and identifying the family in the first minute is what makes the remaining forty-four tractable: the family fixes the skeleton, the classic numeric trap, and the deep dives the interviewer is most likely to fork into. All seven skeletons share one diagram vocabulary — an ingress guard, context assembly (retrieve or observe), the model step (plan or generate), validation, an effect or response, and a record at the end, with a control plane (policy, releases, budgets) and an evidence plane (traces, audits, evals) drawn beside the data path. Families differ in <em>which bone dominates</em>; learning the vocabulary once means every skeleton in Chapters 34–40 reads as a variation, not a new language. <a href="#fig-ch33-family-map" class="quarto-xref">Figure&nbsp;<span>33.2</span></a> lays out the seven with the question that identifies each.</p>
+<div class="cell" data-layout-align="default">
+<div class="cell-output-display">
+<div id="fig-ch33-family-map" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-ch33-family-map-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<div>
+<pre class="mermaid mermaid-js" data-label="fig-ch33-family-map">flowchart TD
+    P["The unseen prompt"] --&gt; A["&lt;b&gt;Retrieval-heavy&lt;/b&gt; — Ch 34&lt;br/&gt;Is the hard part locating evidence&lt;br/&gt;under permissions and latency?"]
+    P --&gt; B["&lt;b&gt;Acting agents&lt;/b&gt; — Ch 35&lt;br/&gt;Does the system change&lt;br/&gt;external state?"]
+    P --&gt; C["&lt;b&gt;Model infra&lt;/b&gt; — Ch 36&lt;br/&gt;Is the product tokens&lt;br/&gt;served under an SLO?"]
+    P --&gt; D["&lt;b&gt;Measurement infra&lt;/b&gt; — Ch 37&lt;br/&gt;Is the product a number&lt;br/&gt;someone will trust?"]
+    P --&gt; E["&lt;b&gt;State and memory&lt;/b&gt; — Ch 38&lt;br/&gt;Must behavior persist&lt;br/&gt;across sessions?"]
+    P --&gt; F["&lt;b&gt;Orchestration&lt;/b&gt; — Ch 39&lt;br/&gt;Is the work bigger than&lt;br/&gt;one context window?"]
+    P --&gt; G["&lt;b&gt;Platform&lt;/b&gt; — Ch 40&lt;br/&gt;Are the customers teams,&lt;br/&gt;not end users?"]
+</pre>
+</div>
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-ch33-family-map-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;33.2: Which family is this prompt? One identifying question routes an unseen prompt to the family whose skeleton, trap, and deep dives Chapters 34–40 work in full.
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+<p><strong>Retrieval-heavy</strong> (Chapter 34: enterprise RAG; siblings: doc search, visual-document pipelines). The hard part is finding the right evidence at scale, under access control, inside a latency budget. The fork: <em>how fresh must the index be?</em> Nightly rebuild and incremental indexing are different architectures, not different settings. Dominant bone: context assembly; the skeleton is two planes sharing an index.</p>
+<p><strong>Acting agents</strong> (Chapter 35: support and transactional agents; siblings: browser and computer-use agents). The system changes external state, so authority — not retrieval — is the design center. The fork: <em>which actions are read, compensable, or irreversible?</em> Autonomy is assigned per action, never per agent. Dominant bone: the validate-then-effect path, with approval binding and an effect ledger.</p>
+<p><strong>Model infra</strong> (Chapter 36: an LLM serving platform). The product is tokens under an SLO, and the design is an argument about accelerator memory and batching. The fork: <em>strict per-request latency or throughput?</em> — it sets the batching policy and everything downstream. Dominant bone: the model step itself; the KV-memory trap lives here.</p>
+<p><strong>Measurement infra</strong> (Chapter 37: an eval platform). The product is a number that gates launches, so the design question is trust: judge calibration, dataset ownership, statistical honesty. The fork: <em>who owns ground truth?</em> “Correct” is per-team, which makes datasets and judges versioned artifacts. Dominant bone: the evidence plane, promoted to the product.</p>
+<p><strong>State and memory</strong> (Chapter 38: cross-session memory). Behavior must persist across sessions, so the design is a data model with a security boundary. The fork: <em>what must be remembered — and what must never be?</em> Scope isolation is a correctness property, not a feature. Dominant bone: the record and its read-back path on every turn.</p>
+<p><strong>Orchestration</strong> (Chapter 39: multi-agent deep research). The work exceeds one context window or one agent’s clock, and the question is whether coordination earns its token multiplier. The fork: <em>is the work read-parallel or write-coupled?</em> Breadth-first reading parallelizes; a single evolving artifact does not, and collapses the design back to one agent with compaction. Dominant bone: the plan step and the merge boundary.</p>
+<p><strong>Platform</strong> (Chapter 40: a multi-tenant agent platform). The customers are fifty teams, not end users, so the design is governance made mechanical: releases, identity, isolation, evidence. The fork: <em>which controls are mandatory per risk tier, and where is the reviewed escape hatch?</em> Dominant bone: the control plane, promoted to the product.</p>
+<p>When a prompt seems to span families — a support agent with heavy retrieval, a platform serving evals — the tiebreak is the fork the interviewer <em>pushes on</em>, and saying so aloud (“this is an acting-agent problem wearing a RAG costume; the risk lives in the refund path, so that is where I will spend the dives”) is itself a senior signal.</p>
+</section>
+<section id="sec-ch33-cost" class="level2" data-number="33.3">
+<h2 data-number="33.3" class="anchored" data-anchor-id="sec-ch33-cost"><span class="header-section-number">33.3</span> The toolkit: tokens, latency, and dollars</h2>
+<p>Move 2 is where most candidates go vague, so we now make it mechanical. This section and the next two build the back-of-envelope toolkit as executed code — every calculator is a few lines, every worked example prints its number, and the <code># @save</code> cells tangle into <code>code/ch33/_generated.py</code>, which Chapters 34–40 import instead of redefining. The point of executing what could be mental arithmetic is honesty: an interview number you have computed twenty times with a tool you built is a number you can produce at a whiteboard without the tool.</p>
+<p>Start with money, because it is the arithmetic interviewers ask first. One model call’s cost has three terms — fresh input, cached input, output — and they respond to different knobs, which is why we keep them separate:</p>
+<p><span id="eq-ch33-cost"><span class="math display">
+C \;=\; \frac{n_{\text{fresh}}\,P_{\text{in}} \;+\; n_{\text{cached}}\,P_{\text{cached}} \;+\; n_{\text{out}}\,P_{\text{out}}}{10^{6}},
+\tag{33.1}</span></span></p>
+<p>where <span class="math inline">n_{\text{fresh}}</span>, <span class="math inline">n_{\text{cached}}</span>, and <span class="math inline">n_{\text{out}}</span> are token counts and each <span class="math inline">P</span> is a price in dollars per million tokens — the unit vendors quote, which is why the formula divides once at the end rather than trusting us to convert each price by hand.</p>
+<div id="83ff7513" class="cell" data-execution_count="2">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TokenPrice:</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Dollar prices for one model, stated per million tokens.</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="co">    Interview arithmetic wants prices in the unit vendors quote (dollars per</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a><span class="co">    million tokens) while formulas want dollars per token. This object stores</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="co">    the quoted form and converts exactly once, so a six-order-of-magnitude</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="co">    slip cannot hide inside a longer calculation.</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="co">        input_per_million: Price of one million uncached input tokens.</span></span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a><span class="co">        output_per_million: Price of one million generated tokens.</span></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a><span class="co">        cached_input_per_million: Price of one million input tokens served</span></span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a><span class="co">            from the provider's prompt cache.</span></span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a>    input_per_million: <span class="bu">float</span></span>
+<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a>    output_per_million: <span class="bu">float</span></span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>    cached_input_per_million: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.0</span></span>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> dollars(<span class="va">self</span>, fresh_in: <span class="bu">float</span>, out: <span class="bu">float</span>, cached_in: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.0</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>        <span class="co">"""Return dollars for one call given its three token counts."""</span></span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> (fresh_in <span class="op">*</span> <span class="va">self</span>.input_per_million</span>
+<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> cached_in <span class="op">*</span> <span class="va">self</span>.cached_input_per_million</span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> out <span class="op">*</span> <span class="va">self</span>.output_per_million) <span class="op">/</span> <span class="fl">1e6</span></span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cost_per_query(input_tokens: <span class="bu">int</span>, output_tokens: <span class="bu">int</span>, price: TokenPrice,</span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>                   cached_input_tokens: <span class="bu">int</span> <span class="op">=</span> <span class="dv">0</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Price one model call from its token counts (@eq-ch33-cost).</span></span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a><span class="co">    The three terms stay separate because they respond to different knobs:</span></span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a><span class="co">    fresh input shrinks with context discipline, cached input shrinks the bill</span></span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a><span class="co">    only if the prompt prefix is stable, and output shrinks only with a length</span></span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a><span class="co">    cap. The interview move is to say the split aloud — "input dominates at</span></span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a><span class="co">    this shape, so caching and retrieval width are my cost levers" — before</span></span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a><span class="co">    naming a total.</span></span>
+<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a><span class="co">        input_tokens: All input tokens the call sends, cached or not.</span></span>
+<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a><span class="co">        output_tokens: Generated tokens the call is billed for.</span></span>
+<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a><span class="co">        price: The model's prices per million tokens.</span></span>
+<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a><span class="co">        cached_input_tokens: The part of ``input_tokens`` billed at the</span></span>
+<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a><span class="co">            cached rate.</span></span>
+<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a><span class="co">        Dollars for the call.</span></span>
+<span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a><span class="co">    Raises:</span></span>
+<span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a><span class="co">        ValueError: If ``cached_input_tokens`` exceeds ``input_tokens``.</span></span>
+<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb2-56"><a href="#cb2-56" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="kw">not</span> <span class="dv">0</span> <span class="op">&lt;=</span> cached_input_tokens <span class="op">&lt;=</span> input_tokens:</span>
+<span id="cb2-57"><a href="#cb2-57" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"cached_input_tokens must lie within input_tokens"</span>)</span>
+<span id="cb2-58"><a href="#cb2-58" aria-hidden="true" tabindex="-1"></a>    fresh <span class="op">=</span> input_tokens <span class="op">-</span> cached_input_tokens</span>
+<span id="cb2-59"><a href="#cb2-59" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> price.dollars(fresh, output_tokens, cached_input_tokens)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<p>Now the running prompt’s query, priced. A representative shape: a 400-token system prompt plus a 100-token question plus five retrieved 500-token chunks and some history is roughly 3,500 input tokens, with a 250-token cited answer. The prices below are illustrative frontier-class numbers chosen for round arithmetic, not quotes.</p>
+<div id="f7702c00" class="cell" data-execution_count="3">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>price <span class="op">=</span> TokenPrice(input_per_million<span class="op">=</span><span class="fl">3.00</span>, output_per_million<span class="op">=</span><span class="fl">15.00</span>,</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>                   cached_input_per_million<span class="op">=</span><span class="fl">0.30</span>)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>plain <span class="op">=</span> cost_per_query(<span class="dv">3_500</span>, <span class="dv">250</span>, price)</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>warm <span class="op">=</span> cost_per_query(<span class="dv">3_500</span>, <span class="dv">250</span>, price, cached_input_tokens<span class="op">=</span><span class="dv">2_500</span>)</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"per query, cold cache          : $</span><span class="sc">{</span>plain<span class="sc">:.4f}</span><span class="ss">"</span>)</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"per query, 2.5k-token prefix hot: $</span><span class="sc">{</span>warm<span class="sc">:.4f}</span><span class="ss">"</span>)</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"if peak 50 QPS held for a day  : $</span><span class="sc">{</span>plain <span class="op">*</span> <span class="dv">50</span> <span class="op">*</span> <span class="dv">86_400</span><span class="sc">:&gt;9,.0f}</span><span class="ss">  vs  $</span><span class="sc">{</span>warm <span class="op">*</span> <span class="dv">50</span> <span class="op">*</span> <span class="dv">86_400</span><span class="sc">:,.0f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>per query, cold cache          : $0.0143
+per query, 2.5k-token prefix hot: $0.0075
+if peak 50 QPS held for a day  : $   61,560  vs  $32,400</code></pre>
+</div>
+</div>
+<p>About a cent and a half per query meets “cost pennies,” and the day-rate line is the one to say aloud: at peak load the difference between a cold and a warm prompt cache is tens of thousands of dollars per day, which is why cache-aware context assembly (Chapter 13) is a cost decision, not a tidiness preference. The day-rate is an upper bound — real traffic is not flat at peak — and saying <em>that</em> aloud is part of the move.</p>
+<p>Latency next. Chapter 1 measured the two phases of one generation and defined TTFT and TPOT (<a href="01-operational-on-ramp.html#sec-ch01-latency" class="quarto-xref"><span>Section 1.6</span></a>, <a href="01-operational-on-ramp.html#eq-ch01-tpot" class="quarto-xref">Equation&nbsp;<span>1.3</span></a>); the interview needs one composition on top of them:</p>
+<p><span id="eq-ch33-completion"><span class="math display">
+T_{\text{complete}} \;=\; T_{\text{TTFT}} \;+\; \left(n_{\text{out}} - 1\right) T_{\text{TPOT}}.
+\tag{33.2}</span></span></p>
+<div id="9fabd40c" class="cell" data-execution_count="4">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> completion_ms(ttft_ms: <span class="bu">float</span>, output_tokens: <span class="bu">int</span>, tpot_ms: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return end-to-end latency for one streamed response (@eq-ch33-completion).</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="co">    TTFT buys the first token; every later token costs one TPOT. This is why a</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="co">    design answer must state two SLOs rather than one: TTFT is set by queueing</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="co">    and prefill, completion is set by the output cap, and no amount of</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="co">    retrieval tuning moves the second term.</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="co">        ttft_ms: Time to first token, queueing and prefill included.</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="co">        output_tokens: Tokens the response streams.</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="co">        tpot_ms: Mean time per output token after the first.</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="co">        Milliseconds until the last token arrives; 0.0 for an empty response.</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> output_tokens <span class="op">&lt;</span> <span class="dv">1</span>:</span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="fl">0.0</span></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ttft_ms <span class="op">+</span> (output_tokens <span class="op">-</span> <span class="dv">1</span>) <span class="op">*</span> tpot_ms</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<p>Chapter 1’s decode simulator gives us a stream to check the composition against — one sentence of recall: <code>simulate_decode</code> produces deterministic token-arrival times for a given prompt and output length, and <code>tpot_ms</code> reads the mean gap off them.</p>
+<div id="41048e74" class="cell" data-execution_count="5">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_chapter(chapter: <span class="bu">str</span>, name: <span class="bu">str</span>):</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Import a committed chapter's tangled module under an explicit name."""</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>    spec <span class="op">=</span> importlib.util.spec_from_file_location(name, Path(<span class="st">"code"</span>) <span class="op">/</span> chapter <span class="op">/</span> <span class="st">"_generated.py"</span>)</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    module <span class="op">=</span> importlib.util.module_from_spec(spec)</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>    sys.modules[name] <span class="op">=</span> module</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>    spec.loader.exec_module(module)</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> module</span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>ch01 <span class="op">=</span> load_chapter(<span class="st">"ch01"</span>, <span class="st">"ch01_generated"</span>)</span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a>times <span class="op">=</span> ch01.simulate_decode(prompt_tokens<span class="op">=</span><span class="dv">800</span>, output_tokens<span class="op">=</span><span class="dv">250</span>)</span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>measured_tpot <span class="op">=</span> ch01.tpot_ms(times)</span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"simulated stream : TTFT </span><span class="sc">{</span>times[<span class="dv">0</span>]<span class="sc">:.0f}</span><span class="ss"> ms, TPOT </span><span class="sc">{</span>measured_tpot<span class="sc">:.2f}</span><span class="ss"> ms"</span>)</span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"composed estimate: </span><span class="sc">{</span>completion_ms(times[<span class="dv">0</span>], <span class="dv">250</span>, measured_tpot)<span class="sc">:,.0f}</span><span class="ss"> ms"</span>)</span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"last token really arrived at </span><span class="sc">{</span>times[<span class="op">-</span><span class="dv">1</span>]<span class="sc">:,.0f}</span><span class="ss"> ms"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>simulated stream : TTFT 328 ms, TPOT 18.05 ms
+composed estimate: 4,823 ms
+last token really arrived at 4,823 ms</code></pre>
+</div>
+</div>
+<p>The composition reproduces the simulated stream exactly, which is the algebra doing its job. Now aim it at the running prompt’s “feel instant.” A representative latency budget for the query path — each stage a number we defend in Chapter 34 — and the completion times it implies:</p>
+<div id="1d021655" class="cell" data-execution_count="6">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>stages <span class="op">=</span> {<span class="st">"embed query"</span>: <span class="fl">20.0</span>, <span class="st">"ANN search"</span>: <span class="fl">50.0</span>,</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>          <span class="st">"rerank top-100"</span>: <span class="fl">150.0</span>, <span class="st">"queue + prefill"</span>: <span class="fl">400.0</span>}</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>ttft_budget <span class="op">=</span> <span class="bu">sum</span>(stages.values())</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"TTFT budget: </span><span class="sc">{</span>ttft_budget<span class="sc">:.0f}</span><span class="ss"> ms"</span>)</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> cap <span class="kw">in</span> (<span class="dv">250</span>, <span class="dv">60</span>):</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"completion at a </span><span class="sc">{</span>cap<span class="sc">:3d}</span><span class="ss">-token cap, 20 ms/token: "</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>          <span class="ss">f"</span><span class="sc">{</span>completion_ms(ttft_budget, cap, <span class="fl">20.0</span>)<span class="sc">:&gt;5,.0f}</span><span class="ss"> ms"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>TTFT budget: 620 ms
+completion at a 250-token cap, 20 ms/token: 5,600 ms
+completion at a  60-token cap, 20 ms/token: 1,800 ms</code></pre>
+</div>
+</div>
+<p>This is the arithmetic behind the SLO split in move 3, and <a href="#fig-ch33-waterfall" class="quarto-xref">Figure&nbsp;<span>33.3</span></a> draws it. If “instant” means sub-2-seconds <em>to completion</em>, only a 60-token answer qualifies — unusable for a cited paragraph — so the keepable promise is a TTFT SLO with margin plus a completion SLO at a stated output cap. Say the waterfall aloud while you compute it: “620 ms of that budget is pipeline, and the biggest slice is prefill, so context width is my TTFT lever; everything after the first token is the output cap’s problem.”</p>
+<div id="cell-fig-ch33-waterfall" class="cell" data-execution_count="7">
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">7.2</span>, <span class="fl">2.6</span>))</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>stage_colors <span class="op">=</span> [<span class="st">"#2a7f9e"</span>, <span class="st">"#3e7a52"</span>, <span class="st">"#7356a8"</span>, <span class="st">"#b7791f"</span>]</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>left <span class="op">=</span> <span class="fl">0.0</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (name, width), color <span class="kw">in</span> <span class="bu">zip</span>(stages.items(), stage_colors):</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    ax.barh(<span class="dv">1</span>, width, left<span class="op">=</span>left, color<span class="op">=</span>color, edgecolor<span class="op">=</span><span class="st">"white"</span>, label<span class="op">=</span>name)</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>    left <span class="op">+=</span> width</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>ax.barh(<span class="dv">0</span>, left, color<span class="op">=</span><span class="st">"0.85"</span>, edgecolor<span class="op">=</span><span class="st">"white"</span>)</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>ax.barh(<span class="dv">0</span>, completion_ms(left, <span class="dv">250</span>, <span class="fl">20.0</span>) <span class="op">-</span> left, left<span class="op">=</span>left, color<span class="op">=</span><span class="st">"#b13f3f"</span>,</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>        edgecolor<span class="op">=</span><span class="st">"white"</span>, label<span class="op">=</span><span class="st">"decode, 250 tokens"</span>)</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>ax.axvline(<span class="dv">2_000</span>, ls<span class="op">=</span><span class="st">"--"</span>, color<span class="op">=</span><span class="st">"0.3"</span>)</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>ax.text(<span class="dv">2_050</span>, <span class="fl">1.35</span>, <span class="st">"the 'sub-2s' ask"</span>, fontsize<span class="op">=</span><span class="dv">8</span>, color<span class="op">=</span><span class="st">"0.3"</span>)</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>ax.set_yticks([<span class="dv">1</span>, <span class="dv">0</span>])</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>ax.set_yticklabels([<span class="st">"TTFT"</span>, <span class="st">"completion"</span>])</span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"milliseconds"</span>)</span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">"lower right"</span>, fontsize<span class="op">=</span><span class="dv">7</span>, ncol<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<div class="cell-output cell-output-display">
+<div id="fig-ch33-waterfall" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-ch33-waterfall-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<a href="33-sd-interview-framework_files/figure-html/fig-ch33-waterfall-output-1.svg" class="lightbox" data-gallery="quarto-lightbox-gallery-2" title="Figure&nbsp;33.3: Can this design promise ‘sub-2-seconds’? As TTFT, yes, with a 3x margin; as a 250-token completion, never. The SLO must name which latency it bounds — and the output cap it assumes."><img src="33-sd-interview-framework_files/figure-html/fig-ch33-waterfall-output-1.svg" class="img-fluid figure-img"></a>
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-ch33-waterfall-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;33.3: Can this design promise ‘sub-2-seconds’? As TTFT, yes, with a 3x margin; as a 250-token completion, never. The SLO must name which latency it bounds — and the output cap it assumes.
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+<div class="landscape-2026 callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">Note</span>Landscape 2026 — the constants in this toolkit
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p>The prices ($3.00 and $15.00 per million tokens, cached input at a tenth), the 20 ms TPOT, the stage latencies, and the 80 GB accelerator used below are <strong>illustrative teaching constants</strong> chosen for round arithmetic. They move with every pricing page and hardware generation; the formulas do not. <strong>Verify live:</strong> your provider’s pricing page, your own measured TTFT/TPOT percentiles, and your accelerator’s datasheet before using any of these numbers in a real capacity or budget decision. Checked 2026-07-20.</p>
+</div>
+</div>
+</section>
+<section id="sec-ch33-capacity" class="level2" data-number="33.4">
+<h2 data-number="33.4" class="anchored" data-anchor-id="sec-ch33-capacity"><span class="header-section-number">33.4</span> The toolkit: memory, throughput, and storage</h2>
+<p>Three more calculators cover the capacity half of move 2: KV memory, request throughput, and index storage. The first is a recall, not a rebuild — Chapter 3 owns the KV-cache equation and its calculator (<a href="03-attention-position-long-context.html#sec-ch03-kv-equation" class="quarto-xref"><span>Section 3.1</span></a>, <a href="03-attention-position-long-context.html#eq-ch03-kvbytes" class="quarto-xref">Equation&nbsp;<span>3.1</span></a>), and one sentence recaps it: a request’s cache is <span class="math inline">{2\,L\,H_{kv}\,d_h\,T\,s}</span> bytes — layers times <em>KV heads</em> (not query heads) times head dimension times retained tokens times bytes per scalar, doubled for keys and values. We import it and work the classic 7B-class example, trap included.</p>
+<div id="750cf9ae" class="cell" data-execution_count="8">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>ch03 <span class="op">=</span> load_chapter(<span class="st">"ch03"</span>, <span class="st">"ch03_generated"</span>)</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>gqa <span class="op">=</span> ch03.KVConfig(<span class="st">"7B-class GQA-8"</span>, layers<span class="op">=</span><span class="dv">32</span>, query_heads<span class="op">=</span><span class="dv">32</span>, kv_heads<span class="op">=</span><span class="dv">8</span>,</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>                    head_dim<span class="op">=</span><span class="dv">128</span>, bytes_per_scalar<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>per_request <span class="op">=</span> ch03.kv_bytes(gqa, tokens<span class="op">=</span><span class="dv">4_096</span>)</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>sixteen <span class="op">=</span> ch03.kv_bytes(gqa, tokens<span class="op">=</span><span class="dv">4_096</span>, batch<span class="op">=</span><span class="dv">16</span>)</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>trap <span class="op">=</span> sixteen <span class="op">*</span> gqa.query_heads <span class="op">//</span> gqa.kv_heads</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"KV, one 4K request      : </span><span class="sc">{</span>per_request <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB  (</span><span class="sc">{</span>per_request <span class="op">/</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span><span class="sc">:.1f}</span><span class="ss"> GiB)"</span>)</span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"KV, 16 concurrent       : </span><span class="sc">{</span>sixteen <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB  (</span><span class="sc">{</span>sixteen <span class="op">/</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span><span class="sc">:.0f}</span><span class="ss"> GiB)"</span>)</span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"the trap (query heads)  : </span><span class="sc">{</span>trap <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB  -- 4x too high"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>KV, one 4K request      : 0.54 GB  (0.5 GiB)
+KV, 16 concurrent       : 8.59 GB  (8 GiB)
+the trap (query heads)  : 34.36 GB  -- 4x too high</code></pre>
+</div>
+</div>
+<p>Sixteen concurrent 4K-token requests on a GQA-8 model hold 8.6 GB of cache; compute it from the thirty-two <em>query</em> heads and you get 34 GB and a design sized four times too large. This is the single most reliable numeric trap in serving interviews, and the fix is one audible clause: “GQA caches KV heads, so…”. What the interview then needs is the next step — how many such requests fit on one device — which is a division we make explicit:</p>
+<div id="854ee5fd" class="cell" data-execution_count="9">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> kv_concurrency_per_device(hbm_bytes: <span class="bu">float</span>, weights_bytes: <span class="bu">float</span>,</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>                              kv_bytes_per_request: <span class="bu">float</span>,</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>                              workspace_fraction: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.1</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return how many requests' KV caches fit on one accelerator.</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="co">    Serving capacity is a memory statement before it is a compute statement:</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="co">    weights are resident once, a workspace fraction covers activations and</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="co">    allocator slack, and the remainder is divided among per-request KV caches.</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a><span class="co">    The per-request number comes from Chapter 3's calculator</span></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a><span class="co">    (@eq-ch03-kvbytes); this function only does the division, so the classic</span></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="co">    trap stays where it belongs — in the KV arithmetic, not here.</span></span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a><span class="co">        hbm_bytes: Device memory in bytes.</span></span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a><span class="co">        weights_bytes: Resident model weights, after any quantization.</span></span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a><span class="co">        kv_bytes_per_request: KV payload of one request at its budgeted</span></span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a><span class="co">            context length.</span></span>
+<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a><span class="co">        workspace_fraction: Fraction of device memory held back for</span></span>
+<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a><span class="co">            activations, fragmentation, and temporaries.</span></span>
+<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a><span class="co">        Whole concurrent requests per device; never negative.</span></span>
+<span id="cb13-24"><a href="#cb13-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-25"><a href="#cb13-25" aria-hidden="true" tabindex="-1"></a><span class="co">    Raises:</span></span>
+<span id="cb13-26"><a href="#cb13-26" aria-hidden="true" tabindex="-1"></a><span class="co">        ValueError: If ``kv_bytes_per_request`` is not positive.</span></span>
+<span id="cb13-27"><a href="#cb13-27" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb13-28"><a href="#cb13-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> kv_bytes_per_request <span class="op">&lt;=</span> <span class="dv">0</span>:</span>
+<span id="cb13-29"><a href="#cb13-29" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"kv_bytes_per_request must be positive"</span>)</span>
+<span id="cb13-30"><a href="#cb13-30" aria-hidden="true" tabindex="-1"></a>    free <span class="op">=</span> hbm_bytes <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> workspace_fraction) <span class="op">-</span> weights_bytes</span>
+<span id="cb13-31"><a href="#cb13-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">max</span>(<span class="bu">int</span>(free <span class="op">//</span> kv_bytes_per_request), <span class="dv">0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div id="9ff77fe2" class="cell" data-execution_count="10">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>per_device <span class="op">=</span> kv_concurrency_per_device(hbm_bytes<span class="op">=</span><span class="fl">80e9</span>, weights_bytes<span class="op">=</span><span class="fl">16e9</span>,</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>                                       kv_bytes_per_request<span class="op">=</span>per_request)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"80 GB device, 16 GB fp16 weights, 10% workspace: </span><span class="sc">{</span>per_device<span class="sc">}</span><span class="ss"> concurrent requests"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>80 GB device, 16 GB fp16 weights, 10% workspace: 104 concurrent requests</code></pre>
+</div>
+</div>
+<p>About a hundred requests per device by memory — an upper bound, since compute and the batching policy (Chapter 10) usually bind first; stating which bound is active is part of the answer. To turn a request rate into a device count we need one bridge between throughput and concurrency, and it is the most quotable formula in the toolkit — Little’s law <span class="citation" data-cites="little1961proof">(<a href="../references.html#ref-little1961proof" role="doc-biblioref">Little 1961</a>)</span>:</p>
+<p><span id="eq-ch33-little"><span class="math display">
+L \;=\; \lambda\,W,
+\tag{33.3}</span></span></p>
+<p>where <span class="math inline">\lambda</span> is arrival rate in requests per second, <span class="math inline">W</span> is the mean seconds one request stays resident, and <span class="math inline">L</span> is the mean number of requests in flight. It assumes only a stable system — no distributional fine print — which is what makes it safe to use aloud under pressure.</p>
+<div id="73f33470" class="cell" data-execution_count="11">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> concurrent_requests(qps: <span class="bu">float</span>, residence_seconds: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return mean requests in flight via Little's law (@eq-ch33-little).</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Arrival rate times residence time is in-flight work, with no assumptions</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="co">    beyond stationarity. In an interview it converts an SLO into a capacity</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="co">    statement in one step: cutting residence (a tighter output cap, a faster</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="co">    model) shrinks the fleet exactly as effectively as cutting traffic.</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a><span class="co">        qps: Mean arrival rate, requests per second.</span></span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a><span class="co">        residence_seconds: Mean time one request occupies the system.</span></span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a><span class="co">        Mean concurrent requests.</span></span>
+<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a><span class="co">    Raises:</span></span>
+<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a><span class="co">        ValueError: If either argument is negative.</span></span>
+<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> qps <span class="op">&lt;</span> <span class="dv">0</span> <span class="kw">or</span> residence_seconds <span class="op">&lt;</span> <span class="dv">0</span>:</span>
+<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"qps and residence_seconds must be nonnegative"</span>)</span>
+<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> qps <span class="op">*</span> residence_seconds</span>
+<span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-27"><a href="#cb16-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-28"><a href="#cb16-28" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> devices_for_load(qps: <span class="bu">float</span>, residence_seconds: <span class="bu">float</span>,</span>
+<span id="cb16-29"><a href="#cb16-29" aria-hidden="true" tabindex="-1"></a>                     per_device_concurrency: <span class="bu">int</span>, headroom: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.3</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
+<span id="cb16-30"><a href="#cb16-30" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Turn an arrival rate into an accelerator count.</span></span>
+<span id="cb16-31"><a href="#cb16-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-32"><a href="#cb16-32" aria-hidden="true" tabindex="-1"></a><span class="co">    Little's law gives mean in-flight requests; a headroom factor covers</span></span>
+<span id="cb16-33"><a href="#cb16-33" aria-hidden="true" tabindex="-1"></a><span class="co">    burst and tail (the mean is not the p99); dividing by per-device</span></span>
+<span id="cb16-34"><a href="#cb16-34" aria-hidden="true" tabindex="-1"></a><span class="co">    concurrency — from :func:`kv_concurrency_per_device` or a measured</span></span>
+<span id="cb16-35"><a href="#cb16-35" aria-hidden="true" tabindex="-1"></a><span class="co">    batching limit, whichever is smaller — and rounding up gives devices.</span></span>
+<span id="cb16-36"><a href="#cb16-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-37"><a href="#cb16-37" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb16-38"><a href="#cb16-38" aria-hidden="true" tabindex="-1"></a><span class="co">        qps: Mean arrival rate, requests per second.</span></span>
+<span id="cb16-39"><a href="#cb16-39" aria-hidden="true" tabindex="-1"></a><span class="co">        residence_seconds: Mean residence time per request.</span></span>
+<span id="cb16-40"><a href="#cb16-40" aria-hidden="true" tabindex="-1"></a><span class="co">        per_device_concurrency: Concurrent requests one device sustains.</span></span>
+<span id="cb16-41"><a href="#cb16-41" aria-hidden="true" tabindex="-1"></a><span class="co">        headroom: Fractional margin above the mean (0.3 = 30%).</span></span>
+<span id="cb16-42"><a href="#cb16-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-43"><a href="#cb16-43" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb16-44"><a href="#cb16-44" aria-hidden="true" tabindex="-1"></a><span class="co">        Whole devices, at least 1.</span></span>
+<span id="cb16-45"><a href="#cb16-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-46"><a href="#cb16-46" aria-hidden="true" tabindex="-1"></a><span class="co">    Raises:</span></span>
+<span id="cb16-47"><a href="#cb16-47" aria-hidden="true" tabindex="-1"></a><span class="co">        ValueError: If ``per_device_concurrency`` is not positive.</span></span>
+<span id="cb16-48"><a href="#cb16-48" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb16-49"><a href="#cb16-49" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> per_device_concurrency <span class="op">&lt;</span> <span class="dv">1</span>:</span>
+<span id="cb16-50"><a href="#cb16-50" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"per_device_concurrency must be positive"</span>)</span>
+<span id="cb16-51"><a href="#cb16-51" aria-hidden="true" tabindex="-1"></a>    in_flight <span class="op">=</span> concurrent_requests(qps, residence_seconds) <span class="op">*</span> (<span class="dv">1</span> <span class="op">+</span> headroom)</span>
+<span id="cb16-52"><a href="#cb16-52" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">max</span>(math.ceil(in_flight <span class="op">/</span> per_device_concurrency), <span class="dv">1</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div id="d98e1a02" class="cell" data-execution_count="12">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>in_flight <span class="op">=</span> concurrent_requests(qps<span class="op">=</span><span class="dv">50</span>, residence_seconds<span class="op">=</span><span class="fl">5.6</span>)</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"50 QPS x 5.6 s residence          = </span><span class="sc">{</span>in_flight<span class="sc">:.0f}</span><span class="ss"> requests in flight"</span>)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"devices at </span><span class="sc">{</span>per_device<span class="sc">}</span><span class="ss">/device, 30% headroom: "</span></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>devices_for_load(<span class="dv">50</span>, <span class="fl">5.6</span>, per_device)<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"same, if a 3x burst must be served : </span><span class="sc">{</span>devices_for_load(<span class="dv">150</span>, <span class="fl">5.6</span>, per_device)<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>50 QPS x 5.6 s residence          = 280 requests in flight
+devices at 104/device, 30% headroom: 4
+same, if a 3x burst must be served : 11</code></pre>
+</div>
+</div>
+<p>The interview framing: “fifty QPS at 5.6 s residence is 280 in flight; with headroom that is four devices, eleven under a three-times burst — so the real design question is whether we buy the burst or shed it.” That last clause is the senior part; the arithmetic exists to set it up. The remaining capacity number is storage for the retrieval index, and its formula is a product of five factors you can recite:</p>
+<p><span id="eq-ch33-index"><span class="math display">
+M_{\text{index}} \;=\; n\,d\,b\,i\,r,
+\tag{33.4}</span></span></p>
+<p>with <span class="math inline">n</span> vectors of dimension <span class="math inline">d</span> at <span class="math inline">b</span> bytes per element, an index-structure overhead multiplier <span class="math inline">i</span>, and <span class="math inline">r</span> replicas. Appendix B’s sizing worksheet carries the same formula in fillable form; here it runs.</p>
+<div id="c2496aed" class="cell" data-execution_count="13">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> index_bytes(vectors: <span class="bu">int</span>, dim: <span class="bu">int</span>, bytes_per_dim: <span class="bu">float</span>,</span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>                overhead: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.5</span>, replicas: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Size a vector index from first principles (@eq-ch33-index).</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="co">    Raw payload is vectors times dimension times element width; a graph or</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="co">    codebook structure multiplies it by an overhead factor, and replication</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="co">    multiplies again. The result decides a real architecture question — one</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="co">    memory-heavy node or a sharded cluster — which is why the number belongs</span></span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="co">    in move 2, before any boxes. Source text, metadata, ACL indexes, and</span></span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="co">    build-time copies are extra and worth naming aloud.</span></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a><span class="co">        vectors: Number of stored vectors (chunks, not documents).</span></span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="co">        dim: Embedding dimension.</span></span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="co">        bytes_per_dim: Element width: 4 for fp32, 2 for fp16, 1 for int8.</span></span>
+<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="co">        overhead: Index-structure multiplier over raw payload.</span></span>
+<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a><span class="co">        replicas: Full copies serving reads.</span></span>
+<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="co">        Total bytes across replicas.</span></span>
+<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="co">    Raises:</span></span>
+<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a><span class="co">        ValueError: If any count is not positive.</span></span>
+<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="bu">min</span>(vectors, dim, replicas) <span class="op">&lt;</span> <span class="dv">1</span> <span class="kw">or</span> bytes_per_dim <span class="op">&lt;=</span> <span class="dv">0</span> <span class="kw">or</span> overhead <span class="op">&lt;</span> <span class="dv">1</span>:</span>
+<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"all sizing factors must be positive (overhead &gt;= 1)"</span>)</span>
+<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> vectors <span class="op">*</span> dim <span class="op">*</span> bytes_per_dim <span class="op">*</span> overhead <span class="op">*</span> replicas</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div id="b84b28ab" class="cell" data-execution_count="14">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>chunks <span class="op">=</span> <span class="dv">30_000_000</span>                      <span class="co"># 10M documents x ~3 chunks each</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> label, width <span class="kw">in</span> ((<span class="st">"fp32"</span>, <span class="dv">4</span>), (<span class="st">"int8"</span>, <span class="dv">1</span>)):</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> index_bytes(chunks, dim<span class="op">=</span><span class="dv">1024</span>, bytes_per_dim<span class="op">=</span>width, overhead<span class="op">=</span><span class="fl">1.5</span>, replicas<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>label<span class="sc">}</span><span class="ss">: </span><span class="sc">{</span>total <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:6.1f}</span><span class="ss"> GB across 2 replicas "</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>          <span class="ss">f"(</span><span class="sc">{</span>total <span class="op">/</span> <span class="dv">2</span> <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.1f}</span><span class="ss"> GB per copy)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>fp32:  368.6 GB across 2 replicas (184.3 GB per copy)
+int8:   92.2 GB across 2 replicas (46.1 GB per copy)</code></pre>
+</div>
+</div>
+<p>Ten million documents is thirty million chunks, and at fp32 the index is 369 GB — shard it or quantize it, and int8 brings one copy under 50 GB. The chunk-count step is the family’s quiet trap: sizing from <em>documents</em> instead of chunks understates the index threefold, and the correction costs one spoken sentence.</p>
+</section>
+<section id="sec-ch33-loops" class="level2" data-number="33.5">
+<h2 data-number="33.5" class="anchored" data-anchor-id="sec-ch33-loops"><span class="header-section-number">33.5</span> The toolkit: loop caps and context budgets</h2>
+<p>Two calculators remain, and they are the two most specific to <em>agentic</em> designs: what a multi-step loop costs, and how a context window is spent. Both look like afterthoughts and both routinely decide interviews, because they are where “the agent will figure it out” meets arithmetic.</p>
+<p>An agent loop resends its growing context every step (Chapter 16 built the loop; Chapter 13 owns the assembly). If the context starts at <span class="math inline">c_0</span> tokens and grows by <span class="math inline">g</span> tokens per step — tool results plus the model’s own last output — then across <span class="math inline">k</span> steps the <em>input</em> tokens sum to</p>
+<p><span id="eq-ch33-loop"><span class="math display">
+N_{\text{in}}(k) \;=\; k\,c_0 \;+\; g\,\frac{k\,(k-1)}{2},
+\tag{33.5}</span></span></p>
+<p>which is quadratic in <span class="math inline">k</span>: each step looks cheap, and the sum does not. The calculator prices the loop under <a href="#eq-ch33-cost" class="quarto-xref">Equation&nbsp;<span>33.1</span></a>, with and without a prompt cache over the resent prefix.</p>
+<div id="013018f9" class="cell" data-execution_count="15">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> loop_cost(steps: <span class="bu">int</span>, base_context_tokens: <span class="bu">int</span>, growth_tokens_per_step: <span class="bu">int</span>,</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>              output_tokens_per_step: <span class="bu">int</span>, price: TokenPrice,</span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a>              cached_resend: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Price an agent loop that resends its growing context (@eq-ch33-loop).</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-7"><a href="#cb22-7" aria-hidden="true" tabindex="-1"></a><span class="co">    Step ``i`` sends the whole context so far — base plus ``i - 1`` growth</span></span>
+<span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a><span class="co">    increments — so uncached input cost grows quadratically in steps even</span></span>
+<span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a><span class="co">    though each single step looks cheap. With ``cached_resend`` the previous</span></span>
+<span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a><span class="co">    step's context is billed at the cached rate and only the new tokens are</span></span>
+<span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a><span class="co">    fresh, which is the mechanism that makes long loops affordable. Either</span></span>
+<span id="cb22-12"><a href="#cb22-12" aria-hidden="true" tabindex="-1"></a><span class="co">    way, the honest design move is a hard step cap with an escalation path,</span></span>
+<span id="cb22-13"><a href="#cb22-13" aria-hidden="true" tabindex="-1"></a><span class="co">    priced in advance.</span></span>
+<span id="cb22-14"><a href="#cb22-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-15"><a href="#cb22-15" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb22-16"><a href="#cb22-16" aria-hidden="true" tabindex="-1"></a><span class="co">        steps: Loop iterations to price.</span></span>
+<span id="cb22-17"><a href="#cb22-17" aria-hidden="true" tabindex="-1"></a><span class="co">        base_context_tokens: Context at step one (system, tools, task).</span></span>
+<span id="cb22-18"><a href="#cb22-18" aria-hidden="true" tabindex="-1"></a><span class="co">        growth_tokens_per_step: Tokens appended per step (tool results plus</span></span>
+<span id="cb22-19"><a href="#cb22-19" aria-hidden="true" tabindex="-1"></a><span class="co">            the previous output).</span></span>
+<span id="cb22-20"><a href="#cb22-20" aria-hidden="true" tabindex="-1"></a><span class="co">        output_tokens_per_step: Tokens generated at each step.</span></span>
+<span id="cb22-21"><a href="#cb22-21" aria-hidden="true" tabindex="-1"></a><span class="co">        price: The model's prices per million tokens.</span></span>
+<span id="cb22-22"><a href="#cb22-22" aria-hidden="true" tabindex="-1"></a><span class="co">        cached_resend: Bill each step's previously-sent prefix at the cached</span></span>
+<span id="cb22-23"><a href="#cb22-23" aria-hidden="true" tabindex="-1"></a><span class="co">            rate instead of the fresh rate.</span></span>
+<span id="cb22-24"><a href="#cb22-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-25"><a href="#cb22-25" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb22-26"><a href="#cb22-26" aria-hidden="true" tabindex="-1"></a><span class="co">        Dollars for the whole loop.</span></span>
+<span id="cb22-27"><a href="#cb22-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-28"><a href="#cb22-28" aria-hidden="true" tabindex="-1"></a><span class="co">    Raises:</span></span>
+<span id="cb22-29"><a href="#cb22-29" aria-hidden="true" tabindex="-1"></a><span class="co">        ValueError: If ``steps`` is not positive or any count is negative.</span></span>
+<span id="cb22-30"><a href="#cb22-30" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb22-31"><a href="#cb22-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> steps <span class="op">&lt;</span> <span class="dv">1</span> <span class="kw">or</span> <span class="bu">min</span>(base_context_tokens, growth_tokens_per_step,</span>
+<span id="cb22-32"><a href="#cb22-32" aria-hidden="true" tabindex="-1"></a>                        output_tokens_per_step) <span class="op">&lt;</span> <span class="dv">0</span>:</span>
+<span id="cb22-33"><a href="#cb22-33" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"steps must be positive and token counts nonnegative"</span>)</span>
+<span id="cb22-34"><a href="#cb22-34" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> <span class="fl">0.0</span></span>
+<span id="cb22-35"><a href="#cb22-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, steps <span class="op">+</span> <span class="dv">1</span>):</span>
+<span id="cb22-36"><a href="#cb22-36" aria-hidden="true" tabindex="-1"></a>        context <span class="op">=</span> base_context_tokens <span class="op">+</span> (i <span class="op">-</span> <span class="dv">1</span>) <span class="op">*</span> growth_tokens_per_step</span>
+<span id="cb22-37"><a href="#cb22-37" aria-hidden="true" tabindex="-1"></a>        cached <span class="op">=</span> context <span class="op">-</span> growth_tokens_per_step <span class="cf">if</span> (cached_resend <span class="kw">and</span> i <span class="op">&gt;</span> <span class="dv">1</span>) <span class="cf">else</span> <span class="dv">0</span></span>
+<span id="cb22-38"><a href="#cb22-38" aria-hidden="true" tabindex="-1"></a>        total <span class="op">+=</span> cost_per_query(context, output_tokens_per_step, price,</span>
+<span id="cb22-39"><a href="#cb22-39" aria-hidden="true" tabindex="-1"></a>                                cached_input_tokens<span class="op">=</span>cached)</span>
+<span id="cb22-40"><a href="#cb22-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> total</span>
+<span id="cb22-41"><a href="#cb22-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-42"><a href="#cb22-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-43"><a href="#cb22-43" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> max_affordable_steps(budget_dollars: <span class="bu">float</span>, base_context_tokens: <span class="bu">int</span>,</span>
+<span id="cb22-44"><a href="#cb22-44" aria-hidden="true" tabindex="-1"></a>                         growth_tokens_per_step: <span class="bu">int</span>, output_tokens_per_step: <span class="bu">int</span>,</span>
+<span id="cb22-45"><a href="#cb22-45" aria-hidden="true" tabindex="-1"></a>                         price: TokenPrice, cached_resend: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>,</span>
+<span id="cb22-46"><a href="#cb22-46" aria-hidden="true" tabindex="-1"></a>                         step_cap: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1_000</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
+<span id="cb22-47"><a href="#cb22-47" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the largest step count whose loop cost fits a budget.</span></span>
+<span id="cb22-48"><a href="#cb22-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-49"><a href="#cb22-49" aria-hidden="true" tabindex="-1"></a><span class="co">    This is the loop cap stated as money instead of a guess: given a per-task</span></span>
+<span id="cb22-50"><a href="#cb22-50" aria-hidden="true" tabindex="-1"></a><span class="co">    budget, it walks steps upward until the next one would break the budget.</span></span>
+<span id="cb22-51"><a href="#cb22-51" aria-hidden="true" tabindex="-1"></a><span class="co">    A returned 0 means even one step exceeds the budget — a design signal,</span></span>
+<span id="cb22-52"><a href="#cb22-52" aria-hidden="true" tabindex="-1"></a><span class="co">    not an edge case.</span></span>
+<span id="cb22-53"><a href="#cb22-53" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-54"><a href="#cb22-54" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb22-55"><a href="#cb22-55" aria-hidden="true" tabindex="-1"></a><span class="co">        budget_dollars: The per-task spend ceiling.</span></span>
+<span id="cb22-56"><a href="#cb22-56" aria-hidden="true" tabindex="-1"></a><span class="co">        base_context_tokens: Context at step one.</span></span>
+<span id="cb22-57"><a href="#cb22-57" aria-hidden="true" tabindex="-1"></a><span class="co">        growth_tokens_per_step: Tokens appended per step.</span></span>
+<span id="cb22-58"><a href="#cb22-58" aria-hidden="true" tabindex="-1"></a><span class="co">        output_tokens_per_step: Tokens generated per step.</span></span>
+<span id="cb22-59"><a href="#cb22-59" aria-hidden="true" tabindex="-1"></a><span class="co">        price: The model's prices per million tokens.</span></span>
+<span id="cb22-60"><a href="#cb22-60" aria-hidden="true" tabindex="-1"></a><span class="co">        cached_resend: Whether resent prefixes bill at the cached rate.</span></span>
+<span id="cb22-61"><a href="#cb22-61" aria-hidden="true" tabindex="-1"></a><span class="co">        step_cap: Safety bound on the search.</span></span>
+<span id="cb22-62"><a href="#cb22-62" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-63"><a href="#cb22-63" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb22-64"><a href="#cb22-64" aria-hidden="true" tabindex="-1"></a><span class="co">        The largest affordable whole number of steps, up to ``step_cap``.</span></span>
+<span id="cb22-65"><a href="#cb22-65" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb22-66"><a href="#cb22-66" aria-hidden="true" tabindex="-1"></a>    affordable <span class="op">=</span> <span class="dv">0</span></span>
+<span id="cb22-67"><a href="#cb22-67" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> k <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, step_cap <span class="op">+</span> <span class="dv">1</span>):</span>
+<span id="cb22-68"><a href="#cb22-68" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> loop_cost(k, base_context_tokens, growth_tokens_per_step,</span>
+<span id="cb22-69"><a href="#cb22-69" aria-hidden="true" tabindex="-1"></a>                     output_tokens_per_step, price, cached_resend) <span class="op">&gt;</span> budget_dollars:</span>
+<span id="cb22-70"><a href="#cb22-70" aria-hidden="true" tabindex="-1"></a>            <span class="cf">break</span></span>
+<span id="cb22-71"><a href="#cb22-71" aria-hidden="true" tabindex="-1"></a>        affordable <span class="op">=</span> k</span>
+<span id="cb22-72"><a href="#cb22-72" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> affordable</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<p>A representative acting-agent shape: 2,000 tokens of system prompt and tool schemas, 800 tokens added per step, 300 generated per step.</p>
+<div id="005c1294" class="cell" data-execution_count="16">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> k <span class="kw">in</span> (<span class="dv">5</span>, <span class="dv">10</span>, <span class="dv">20</span>):</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>    cold <span class="op">=</span> loop_cost(k, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price)</span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    hot <span class="op">=</span> loop_cost(k, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price, cached_resend<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>k<span class="sc">:2d}</span><span class="ss"> steps: $</span><span class="sc">{</span>cold<span class="sc">:.3f}</span><span class="ss"> cold cache   $</span><span class="sc">{</span>hot<span class="sc">:.3f}</span><span class="ss"> hot cache"</span>)</span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a>budget <span class="op">=</span> <span class="fl">0.25</span></span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="ch">\n</span><span class="ss">steps a $</span><span class="sc">{</span>budget<span class="sc">:.2f}</span><span class="ss"> budget buys: "</span></span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>max_affordable_steps(budget, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price)<span class="sc">}</span><span class="ss"> cold, "</span></span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>max_affordable_steps(budget, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price, cached_resend<span class="op">=</span><span class="va">True</span>)<span class="sc">}</span><span class="ss"> hot"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code> 5 steps: $0.076 cold cache   $0.042 hot cache
+10 steps: $0.213 cold cache   $0.087 hot cache
+20 steps: $0.666 cold cache   $0.194 hot cache
+
+steps a $0.25 budget buys: 11 cold, 24 hot</code></pre>
+</div>
+</div>
+<p>Twenty cold steps cost well over three times what twenty hot steps do, and a 25-cent budget buys eleven steps cold versus more than twice as many hot — <a href="#fig-ch33-loop-cost" class="quarto-xref">Figure&nbsp;<span>33.4</span></a> draws both curves against that budget line. The interview framing has two halves: “loop cost is quadratic in steps unless the prefix caches, so my cost controls are a hard step cap with escalation, and cache-stable context assembly” — and, from move 6, “the cap is also a security control, because an adversary who can extend the loop is spending my money” (the denial-of-wallet framing Chapter 26 develops).</p>
+<div id="cell-fig-ch33-loop-cost" class="cell" data-execution_count="17">
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>steps_axis <span class="op">=</span> <span class="bu">list</span>(<span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">26</span>))</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>cold_curve <span class="op">=</span> [loop_cost(k, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price) <span class="cf">for</span> k <span class="kw">in</span> steps_axis]</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>hot_curve <span class="op">=</span> [loop_cost(k, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price, cached_resend<span class="op">=</span><span class="va">True</span>) <span class="cf">for</span> k <span class="kw">in</span> steps_axis]</span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.6</span>, <span class="fl">3.4</span>))</span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a>ax.plot(steps_axis, cold_curve, marker<span class="op">=</span><span class="st">"o"</span>, ms<span class="op">=</span><span class="dv">3</span>, color<span class="op">=</span><span class="st">"#b13f3f"</span>, label<span class="op">=</span><span class="st">"cold cache"</span>)</span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>ax.plot(steps_axis, hot_curve, marker<span class="op">=</span><span class="st">"s"</span>, ms<span class="op">=</span><span class="dv">3</span>, color<span class="op">=</span><span class="st">"#2a7f9e"</span>, label<span class="op">=</span><span class="st">"hot prompt cache"</span>)</span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>ax.axhline(<span class="fl">0.25</span>, ls<span class="op">=</span><span class="st">"--"</span>, color<span class="op">=</span><span class="st">"0.4"</span>)</span>
+<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>ax.text(<span class="fl">1.2</span>, <span class="fl">0.26</span>, <span class="st">"per-task budget"</span>, fontsize<span class="op">=</span><span class="dv">8</span>, color<span class="op">=</span><span class="st">"0.4"</span>)</span>
+<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"loop steps"</span>)</span>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"cumulative cost (USD)"</span>)</span>
+<span id="cb25-11"><a href="#cb25-11" aria-hidden="true" tabindex="-1"></a>ax.legend()</span>
+<span id="cb25-12"><a href="#cb25-12" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb25-13"><a href="#cb25-13" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<div class="cell-output cell-output-display">
+<div id="fig-ch33-loop-cost" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-ch33-loop-cost-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<a href="33-sd-interview-framework_files/figure-html/fig-ch33-loop-cost-output-1.svg" class="lightbox" data-gallery="quarto-lightbox-gallery-3" title="Figure&nbsp;33.4: What does an agent loop cost as it runs longer? Cold-cache cost bends upward (quadratic resend); a hot prompt cache keeps it near-linear. The dashed line is a 25-cent per-task budget — the step cap made visible."><img src="33-sd-interview-framework_files/figure-html/fig-ch33-loop-cost-output-1.svg" class="img-fluid figure-img"></a>
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-ch33-loop-cost-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;33.4: What does an agent loop cost as it runs longer? Cold-cache cost bends upward (quadratic resend); a hot prompt cache keeps it near-linear. The dashed line is a 25-cent per-task budget — the step cap made visible.
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+<p>The last calculator is the humblest and the one that catches overcommitted designs fastest: the context window is an account, and the design must balance it. System prompt, kept history, retrieved evidence, and a reserved output allocation must fit inside the window with slack:</p>
+<p><span id="eq-ch33-context"><span class="math display">
+W_{\text{ctx}} \;=\; n_{\text{sys}} + n_{\text{hist}} + n_{\text{ret}} + n_{\text{reserve}} + n_{\text{free}},
+\qquad n_{\text{free}} \ge 0,
+\tag{33.6}</span></span></p>
+<p>where <span class="math inline">W_{\text{ctx}}</span> is the window and the components are the token allocations just named. The reserve matters because generation that runs out of window is truncated output, a user-visible failure; the free term matters because a plan that lands at exactly zero has no room for the next tool result.</p>
+<div id="57c81634" class="cell" data-execution_count="18">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> context_budget(window_tokens: <span class="bu">int</span>, <span class="op">*</span>, system: <span class="bu">int</span>, history: <span class="bu">int</span>,</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>                   retrieval: <span class="bu">int</span>, output_reserve: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">int</span>]:</span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Balance one call's context window like an account (@eq-ch33-context).</span></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a><span class="co">    The window is a hard capacity shared by everything the call sends and</span></span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a><span class="co">    reserves; this function makes the split explicit and refuses an</span></span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a><span class="co">    overcommitted plan instead of letting truncation decide silently at</span></span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a><span class="co">    runtime. Saying the split aloud is the fastest way to expose a design</span></span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a><span class="co">    error — a 40k-token retrieval plan inside a 32k window is a redesign,</span></span>
+<span id="cb26-11"><a href="#cb26-11" aria-hidden="true" tabindex="-1"></a><span class="co">    not a tuning problem. Chapter 13 owns what to do when the budget stops</span></span>
+<span id="cb26-12"><a href="#cb26-12" aria-hidden="true" tabindex="-1"></a><span class="co">    fitting: compact deliberately rather than truncate accidentally.</span></span>
+<span id="cb26-13"><a href="#cb26-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-14"><a href="#cb26-14" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb26-15"><a href="#cb26-15" aria-hidden="true" tabindex="-1"></a><span class="co">        window_tokens: The model's context window.</span></span>
+<span id="cb26-16"><a href="#cb26-16" aria-hidden="true" tabindex="-1"></a><span class="co">        system: Tokens for instructions and tool schemas.</span></span>
+<span id="cb26-17"><a href="#cb26-17" aria-hidden="true" tabindex="-1"></a><span class="co">        history: Conversation or trajectory tokens kept verbatim.</span></span>
+<span id="cb26-18"><a href="#cb26-18" aria-hidden="true" tabindex="-1"></a><span class="co">        retrieval: Retrieved or observed evidence tokens.</span></span>
+<span id="cb26-19"><a href="#cb26-19" aria-hidden="true" tabindex="-1"></a><span class="co">        output_reserve: Tokens reserved so generation cannot be cut off.</span></span>
+<span id="cb26-20"><a href="#cb26-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-21"><a href="#cb26-21" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb26-22"><a href="#cb26-22" aria-hidden="true" tabindex="-1"></a><span class="co">        A dict of the four components plus ``"free"``, the uncommitted slack.</span></span>
+<span id="cb26-23"><a href="#cb26-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-24"><a href="#cb26-24" aria-hidden="true" tabindex="-1"></a><span class="co">    Raises:</span></span>
+<span id="cb26-25"><a href="#cb26-25" aria-hidden="true" tabindex="-1"></a><span class="co">        ValueError: If the window is not positive, a component is negative,</span></span>
+<span id="cb26-26"><a href="#cb26-26" aria-hidden="true" tabindex="-1"></a><span class="co">            or the components exceed the window.</span></span>
+<span id="cb26-27"><a href="#cb26-27" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb26-28"><a href="#cb26-28" aria-hidden="true" tabindex="-1"></a>    parts <span class="op">=</span> {<span class="st">"system"</span>: system, <span class="st">"history"</span>: history,</span>
+<span id="cb26-29"><a href="#cb26-29" aria-hidden="true" tabindex="-1"></a>             <span class="st">"retrieval"</span>: retrieval, <span class="st">"output_reserve"</span>: output_reserve}</span>
+<span id="cb26-30"><a href="#cb26-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> window_tokens <span class="op">&lt;</span> <span class="dv">1</span> <span class="kw">or</span> <span class="bu">any</span>(v <span class="op">&lt;</span> <span class="dv">0</span> <span class="cf">for</span> v <span class="kw">in</span> parts.values()):</span>
+<span id="cb26-31"><a href="#cb26-31" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"window must be positive and components nonnegative"</span>)</span>
+<span id="cb26-32"><a href="#cb26-32" aria-hidden="true" tabindex="-1"></a>    used <span class="op">=</span> <span class="bu">sum</span>(parts.values())</span>
+<span id="cb26-33"><a href="#cb26-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> used <span class="op">&gt;</span> window_tokens:</span>
+<span id="cb26-34"><a href="#cb26-34" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"overcommitted by </span><span class="sc">{</span>used <span class="op">-</span> window_tokens<span class="sc">:,}</span><span class="ss"> tokens"</span>)</span>
+<span id="cb26-35"><a href="#cb26-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="op">**</span>parts, <span class="st">"free"</span>: window_tokens <span class="op">-</span> used}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div id="bd56978d" class="cell" data-execution_count="19">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>plan <span class="op">=</span> context_budget(<span class="dv">128_000</span>, system<span class="op">=</span><span class="dv">3_000</span>, history<span class="op">=</span><span class="dv">45_000</span>,</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>                      retrieval<span class="op">=</span><span class="dv">12_000</span>, output_reserve<span class="op">=</span><span class="dv">4_000</span>)</span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"128k plan:"</span>, plan)</span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a>    context_budget(<span class="dv">32_000</span>, system<span class="op">=</span><span class="dv">3_000</span>, history<span class="op">=</span><span class="dv">18_000</span>,</span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>                   retrieval<span class="op">=</span><span class="dv">40_000</span>, output_reserve<span class="op">=</span><span class="dv">2_000</span>)</span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> <span class="pp">ValueError</span> <span class="im">as</span> err:</span>
+<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">"32k plan :"</span>, err)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>128k plan: {'system': 3000, 'history': 45000, 'retrieval': 12000, 'output_reserve': 4000, 'free': 64000}
+32k plan : overcommitted by 31,000 tokens</code></pre>
+</div>
+</div>
+<p>The second call is the teaching moment: the same retrieval ambition that fits comfortably in a 128k window overcommits a 32k one by 31,000 tokens, and the calculator refuses it at design time instead of letting the runtime truncate the evidence. In the interview this arithmetic takes fifteen seconds and buys a claim few candidates can make: “here is my context budget, and here is the free headroom the next tool result lands in.”</p>
+</section>
+<section id="sec-ch33-grading" class="level2" data-number="33.6">
+<h2 data-number="33.6" class="anchored" data-anchor-id="sec-ch33-grading"><span class="header-section-number">33.6</span> How you are graded</h2>
+<p>The rubric behind this round is not a secret, and this book keeps exactly one copy of it: Appendix B’s <a href="../appendices/b-artifacts-workbook.html#app-b-design">five-layer review rubric</a> — scope and contract, model and data path, authority and security, reliability and economics, evidence and operations — with its <a href="../appendices/b-artifacts-workbook.html#app-b-timed">45-minute protocol and 0–4 self-scoring scale</a> and its scoping form. We do not restate them here; we use them. The seven moves are that rubric turned into a clock: moves 1–3 earn layer one, move 4 earns layer two, the dives and the failure pass earn layers three and four, and move 7 earns layer five. The scoring is AND-gated — a brilliant retrieval dive does not compensate for a design with no authority story — which is why the clock refuses to let any move be skipped. What changes between candidate levels is not which topics come up but what the interviewer <em>hears</em> when they do (<a href="#tbl-ch33-signals" class="quarto-xref">Table&nbsp;<span>33.2</span></a>):</p>
+<div id="tbl-ch33-signals" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-tbl figure">
+<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-ch33-signals-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Table&nbsp;33.2: Signals per level: the same topics, heard differently.
+</figcaption>
+<div aria-describedby="tbl-ch33-signals-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Level</th>
+<th>What the interviewer hears</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Junior</td>
+<td>Components named and wired in a generic diagram; numbers absent, asserted, or in the wrong unit; dives that explain how a mechanism works rather than choose one; the changed requirement triggers a redraw</td>
+</tr>
+<tr class="even">
+<td>Senior</td>
+<td>The forks asked first; four to six anchor numbers computed before boxes; every dive shaped as decision, alternative, reason; failure and cost priced; the changed requirement absorbed in two sentences</td>
+</tr>
+<tr class="odd">
+<td>Staff</td>
+<td>All of the senior signals, plus the prompt’s own frame challenged when it deserves it; what will <em>not</em> be built stated with reasons; every control tied to an operating cost and an owner; the build order defended as an evidence-gathering sequence</td>
+</tr>
+</tbody>
+</table>
+</div>
+</figure>
+</div>
+<p>Five anti-patterns account for most failed senior rounds, and each has a one-sentence fix.</p>
+<ul>
+<li><strong>Architecture-first.</strong> Boxes at minute two mean every later number must be retrofitted to a drawing; the fix is the clock itself — nothing is drawn before minute 13, however strong the urge.</li>
+<li><strong>No numbers.</strong> A design defended entirely in adjectives (“fast”, “scalable”) cannot survive move 5; the fix is drilling the six calculators in this chapter until the <em>input shapes</em> are memorized, because the interviewer supplies the inputs and the procedure produces the number.</li>
+<li><strong>One lucky trace.</strong> Walking a single happy-path request and calling the design validated; the fix is pairing every normal-path walk with the two failure paths move 6 demands — what breaks first, and what the caller sees when it does.</li>
+<li><strong>Re-teaching instead of deciding.</strong> Spending a dive explaining how HNSW or continuous batching works; the fix is the three-sentence dive shape — one sentence of recall, then the decision, the alternative, and the reason.</li>
+<li><strong>Ignoring the changed requirement.</strong> Treating move 7’s flip as an attack on the design rather than the point of it; the fix is answering with the delta — which boxes change, which survive — which is precisely the skill the family-skeleton tables in Chapters 34–40 train.</li>
+</ul>
+<p>A useful drill loop, which Appendix B’s self-scoring section formalizes: run a prompt against the clock, score the five layers 0–4, and treat any layer at 2 or below as a pointer back to its owning chapter — not to this Part, which assembles arguments, but to the spine chapter that teaches the mechanism the argument needed.</p>
+</section>
+<section id="sec-ch33-run" class="level2" data-number="33.7">
+<h2 data-number="33.7" class="anchored" data-anchor-id="sec-ch33-run"><span class="header-section-number">33.7</span> Running the clock</h2>
+<p>We close by running the whole procedure once, compressed, on the running prompt — <em>question answering over ten million internal documents; cited, permissioned, instant-feeling, pennies</em> — as a preview of the shape every following chapter works in full. Chapter 34 runs this same prompt at interview depth; here each move gets a paragraph, so the choreography is visible end to end.</p>
+<p><strong>Minutes 0–5, scope.</strong> Two fork questions: documents change <em>nightly</em> (a rebuild is legal), and the assistant is <em>read-only</em> (no effect machinery). Requirements restated with numbers: ten million documents, peak 50 QPS, p99 TTFT under 900 ms, completion under 6 s at a 250-token cap, roughly two cents a query, per-user ACLs enforced strictly, every claim cited. Out of scope, said aloud: cross-tenant search, write-back, freshness under a day.</p>
+<p><strong>Minutes 5–10, back-of-envelope.</strong> The anchor numbers, straight from the toolkit — this cell is the interview’s whiteboard arithmetic, executed:</p>
+<div id="5539e117" class="cell" data-execution_count="20">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>anchors <span class="op">=</span> [</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"index: 30M chunks, int8, x1.5, x2 replicas"</span>,</span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>     <span class="ss">f"</span><span class="sc">{</span>index_bytes(<span class="dv">30_000_000</span>, <span class="dv">1024</span>, <span class="dv">1</span>, <span class="fl">1.5</span>, <span class="dv">2</span>) <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:,.0f}</span><span class="ss"> GB"</span>),</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"TTFT budget (embed+ANN+rerank+prefill)"</span>, <span class="ss">f"</span><span class="sc">{</span>ttft_budget<span class="sc">:,.0f}</span><span class="ss"> ms"</span>),</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"completion at the 250-token cap"</span>,</span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>     <span class="ss">f"</span><span class="sc">{</span>completion_ms(ttft_budget, <span class="dv">250</span>, <span class="fl">20.0</span>) <span class="op">/</span> <span class="dv">1000</span><span class="sc">:.1f}</span><span class="ss"> s"</span>),</span>
+<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"cost per query, warm prompt cache"</span>,</span>
+<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a>     <span class="ss">f"$</span><span class="sc">{</span>cost_per_query(<span class="dv">3_500</span>, <span class="dv">250</span>, price, cached_input_tokens<span class="op">=</span><span class="dv">2_500</span>)<span class="sc">:.4f}</span><span class="ss">"</span>),</span>
+<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"in flight at 50 QPS (Little's law)"</span>,</span>
+<span id="cb29-10"><a href="#cb29-10" aria-hidden="true" tabindex="-1"></a>     <span class="ss">f"</span><span class="sc">{</span>concurrent_requests(<span class="dv">50</span>, <span class="fl">5.6</span>)<span class="sc">:.0f}</span><span class="ss"> requests"</span>),</span>
+<span id="cb29-11"><a href="#cb29-11" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"generation devices, 30</span><span class="sc">% he</span><span class="st">adroom"</span>, <span class="ss">f"</span><span class="sc">{</span>devices_for_load(<span class="dv">50</span>, <span class="fl">5.6</span>, per_device)<span class="sc">}</span><span class="ss">"</span>),</span>
+<span id="cb29-12"><a href="#cb29-12" aria-hidden="true" tabindex="-1"></a>]</span>
+<span id="cb29-13"><a href="#cb29-13" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, value <span class="kw">in</span> anchors:</span>
+<span id="cb29-14"><a href="#cb29-14" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:44}</span><span class="ss"> </span><span class="sc">{</span>value<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>index: 30M chunks, int8, x1.5, x2 replicas   92 GB
+TTFT budget (embed+ANN+rerank+prefill)       620 ms
+completion at the 250-token cap              5.6 s
+cost per query, warm prompt cache            $0.0075
+in flight at 50 QPS (Little's law)           280 requests
+generation devices, 30% headroom             4</code></pre>
+</div>
+</div>
+<p>Six numbers in five minutes, each one sentence of narration: the index fits two commodity replicas at int8; TTFT has a 900 ms budget with 280 ms of margin over the 620 ms waterfall; completion honesty forces the output cap into the SLO; the query price meets “pennies” <em>because</em> the prefix caches; and the serving fleet is four devices, not forty. The trap avoided aloud: chunks, not documents, size the index.</p>
+<p><strong>Minutes 10–13, contract.</strong> One endpoint: streamed answer plus citation list, <code>answerable=false</code> as a first-class result (abstention is a feature, recall <a href="01-operational-on-ramp.html#sec-ch01-confabulation" class="quarto-xref"><span>Section 1.4</span></a>). SLOs as computed above; success metrics: groundedness and citation-precision on a golden set, measured weekly, with the abstention rate watched alongside so the system cannot buy groundedness by refusing everything.</p>
+<p><strong>Minutes 13–20, high-level design.</strong> The retrieval-heavy skeleton, <a href="#fig-ch33-rag-skeleton" class="quarto-xref">Figure&nbsp;<span>33.5</span></a>: an asynchronous indexing plane (chunk, embed, build) and an online query plane (embed, ACL-prefilter, ANN search, rerank, pack, generate-with-citations, validate) sharing the index and the ACL store. Every box has one responsibility; the two planes meet only at the index swap, which is versioned so a bad build rolls back by pointer flip.</p>
+<div class="cell" data-layout-align="default">
+<div class="cell-output-display">
+<div id="fig-ch33-rag-skeleton" class="quarto-float quarto-figure quarto-figure-center anchored">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-ch33-rag-skeleton-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<div>
+<pre class="mermaid mermaid-js" data-label="fig-ch33-rag-skeleton">flowchart LR
+    subgraph IDX ["indexing plane — async, nightly"]
+        S["sources"] --&gt; CH["chunk + embed"] --&gt; B["build + validate"]
+    end
+    B --&gt; IX[("versioned ANN index&lt;br/&gt;+ metadata / ACL store")]
+    subgraph QRY ["query plane — online, 620 ms budget"]
+        Q["query"] --&gt; E2["embed"] --&gt; F["ACL prefilter"] --&gt; A2["ANN top-100"]
+        A2 --&gt; RR["rerank top-5"] --&gt; PK["pack context"] --&gt; G["generate + cite"] --&gt; V["validate / abstain"]
+    end
+    IX --&gt; F
+</pre>
+</div>
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-ch33-rag-skeleton-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;33.5: The retrieval-heavy family skeleton for the enterprise-RAG prompt: where does work happen off the hot path, and where must every online millisecond be defended? Chapter 34 works every box at interview depth.
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
+<p><strong>Minutes 20–33, deep dives.</strong> The two forks this prompt reliably produces: <em>permissions</em> (filter before search; the alternative and its breaking point argued as in move 5 above) and <em>the rerank stage</em> (a cross-encoder buys precision at 150 ms and a device; the alternative — wider top-k into the packer — is cheaper and worse, and the decision is owned by a measured recall-versus-latency curve, not taste). A third dive the interviewer may take is the semantic cache, and its risk — serving a stale or wrongly-scoped answer — is why the cache key must include the ACL scope.</p>
+<p><strong>Minutes 33–40, failure, cost, security.</strong> What breaks first: the reranker under burst (control: shed to no-rerank mode, which degrades precision measurably instead of availability); a poisoned document carrying injected instructions (retrieved text is data — delimited, provenance-tagged; Chapter 24’s architecture); a mis-scoped ACL entry (the one failure with no partial credit — negative isolation tests in CI, and a leak pages a human immediately). Cost as attack surface: query length capped, per-user rate limits, the day-rate arithmetic from <a href="#sec-ch33-cost" class="quarto-xref"><span>Section 33.3</span></a> quoted as the reason.</p>
+<p><strong>Minutes 40–45, evolution.</strong> Build order: nightly index, plain top-k, no rerank, no cache — measure retrieval recall first, because it caps everything downstream (Chapter 14’s lesson). Add the reranker when the recall curve says so; add the semantic cache when the traffic histogram says so. Then the flip lands — <em>“documents now change hourly”</em> — and the answer is the delta: the indexing plane becomes incremental with a freshness watermark the query plane checks; the query plane, the contract, and five of the six anchor numbers do not move. That sentence — what changes, what survives — is the interview’s real finish line, and it is where every chapter in this Part will end.</p>
+</section>
+<section id="summary" class="level2" data-number="33.8">
+<h2 data-number="33.8" class="anchored" data-anchor-id="summary"><span class="header-section-number">33.8</span> Summary</h2>
+<p>The agentic system-design round grades a procedure, and this chapter built it: seven moves on a 45-minute clock (words, then numbers, then boxes, then decisions, then failure, then the flip), a seven-family taxonomy whose identifying questions route any unseen prompt, and an executed back-of-envelope toolkit — cost, completion latency, KV-derived concurrency, Little’s-law fleets, index sizing, loop caps, context budgets — that turns move 2 into mechanics. Grading lives in Appendix B’s five-layer rubric; the anti-patterns are all failures of ordering or arithmetic. Chapter 34 now runs the first family, enterprise RAG, at full interview depth.</p>
+</section>
+<section id="exercises" class="level2" data-number="33.9">
+<h2 data-number="33.9" class="anchored" data-anchor-id="exercises"><span class="header-section-number">33.9</span> Exercises</h2>
+<ol type="1">
+<li><strong>Route three prompts.</strong> For each of (a) “design a voice concierge for a hotel chain,” (b) “design a text-to-SQL analytics assistant over our warehouse,” and (c) “design the system that decides whether our support agent is safe to ship each week” — name the family, the identifying question that told you, and the first fork you would ask. One of the three is a deliberate costume; say which and why.</li>
+<li><strong>Move 2 on unfamiliar ground.</strong> Apply move 2 to “design a nightly batch service that summarizes two million support tickets”: choose four anchor numbers, compute them with this chapter’s calculators (batch has no TTFT — which number replaces it?), and name the numeric trap you avoided.</li>
+<li><strong>Push the cost model.</strong> Using <code>cost_per_query</code> and the chapter’s illustrative prices: (a) quadruple the output cap to 1,000 tokens and report which term dominates the query price now; (b) find the cached-input fraction at which the 3,500-in/250-out query drops below one cent; (c) using <code>max_affordable_steps</code>, find the largest per-step growth <span class="math inline">g</span> that keeps a 20-step hot-cache loop under $0.20.</li>
+<li><strong>Work the trap in both directions.</strong> Recompute the sixteen-request fleet number from <a href="#sec-ch33-capacity" class="quarto-xref"><span>Section 33.4</span></a> deliberately using query heads, state the ratio to the correct number, and explain in one sentence why GQA caches only <span class="math inline">H_{kv}</span> (recall <a href="03-attention-position-long-context.html#sec-ch03-kv-equation" class="quarto-xref"><span>Section 3.1</span></a>). Then replace the config with an MLA-style cache (latent rank 512, decoupled rotary key 64) and report what happens to <code>kv_concurrency_per_device</code>.</li>
+<li><strong>Buy the burst or shed it.</strong> Peak triples to 150 QPS. Recompute in-flight requests and devices; then instead hold 50 QPS but cut the output cap to 100 tokens, recompute residence via <a href="#eq-ch33-completion" class="quarto-xref">Equation&nbsp;<span>33.2</span></a> and the fleet again. State which knob you would pull first and what it costs the user.</li>
+<li><strong>Watch a budget die.</strong> An agent runs in a 32k window with a 4,000-token system prompt, history growing 1,200 tokens per turn, 3,000 tokens of retrieval per turn, and a 2,000-token output reserve. Using <code>context_budget</code>, find the turn at which the plan overcommits, then propose the compaction policy (Chapter 13) that extends it and show the new arithmetic.</li>
+<li><strong>Run the clock for real.</strong> Take design H from Appendix B’s prompt table (the self-hosted model platform), set a 45-minute timer, and run all seven moves against <a href="#fig-ch33-clock" class="quarto-xref">Figure&nbsp;<span>33.1</span></a>. Score yourself with Appendix B’s 0–4 self-scoring table, log the minute at which each move actually started against its budget, and route your weakest layer to its owning chapter.</li>
+</ol>
+
+
+<div id="refs" class="references csl-bib-body hanging-indent" role="list" style="display: none">
+<div id="ref-little1961proof" class="csl-entry" role="listitem">
+Little, John D. C. 1961. <span>“A Proof for the Queuing Formula: <span><span class="math inline">L = \lambda W</span></span>.”</span> <em>Operations Research</em> 9 (3): 383–87.
+</div>
+</div>
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    // Ensure there is a toggle, if there isn't float one in the top right
+    if (window.document.querySelector('.quarto-color-scheme-toggle') === null) {
+      const a = window.document.createElement('a');
+      a.classList.add('top-right');
+      a.classList.add('quarto-color-scheme-toggle');
+      a.href = "";
+      a.onclick = function() { try { window.quartoToggleColorScheme(); } catch {} return false; };
+      const i = window.document.createElement("i");
+      i.classList.add('bi');
+      a.appendChild(i);
+      window.document.body.appendChild(a);
+    }
+    setColorSchemeToggle(hasAlternateSentinel())
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="../chapters/32-capstone.html" class="pagination-link" aria-label="Capstone: From One Model Call to a Defended Deployment">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment</span></span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="../appendices/a-bridge.html" class="pagination-link" aria-label="The Bridge: Math, Decisions, Planning, RL, Control, and Systems">
+        <span class="nav-page-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">The Bridge: Math, Decisions, Planning, RL, Control, and Systems</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+<footer class="footer">
+  <div class="nav-footer">
+    <div class="nav-footer-left">
+<p>Built as an open, executable textbook.</p>
+</div>   
+    <div class="nav-footer-center">
+      &nbsp;
+    </div>
+    <div class="nav-footer-right">
+<p>Durable mechanisms in the spine; dated facts in Appendix C.</p>
+</div>
+  </div>
+</footer>
+<script>var lightboxQuarto = GLightbox({"closeEffect":"zoom","descPosition":"bottom","loop":false,"openEffect":"zoom","selector":".lightbox"});
+(function() {
+  let previousOnload = window.onload;
+  window.onload = () => {
+    if (previousOnload) {
+      previousOnload();
+    }
+    lightboxQuarto.on('slide_before_load', (data) => {
+      const { slideIndex, slideNode, slideConfig, player, trigger } = data;
+      const href = trigger.getAttribute('href');
+      if (href !== null) {
+        const imgEl = window.document.querySelector(`a[href="${href}"] img`);
+        if (imgEl !== null) {
+          const srcAttr = imgEl.getAttribute("src");
+          if (srcAttr && srcAttr.startsWith("data:")) {
+            slideConfig.href = srcAttr;
+          }
+        }
+      } 
+    });
+  
+    lightboxQuarto.on('slide_after_load', (data) => {
+      const { slideIndex, slideNode, slideConfig, player, trigger } = data;
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(slideNode);
+      }
+    });
+  
+  };
+  
+})();
+          </script>
+
+
+
+
+<script src="../site_libs/quarto-html/zenscroll-min.js"></script>
+</body></html>

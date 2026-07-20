@@ -670,25 +670,25 @@ window.Quarto = {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/29-multimodal-vlm-documents-gui.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Multimodal Agents I: VLMs, Documents, and GUI Perception [F+S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Multimodal Agents I: VLMs, Documents, and GUI Perception</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/30-multimodal-voice-video-media.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Multimodal Agents II: Voice, Video, and Generative Media [S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Multimodal Agents II: Voice, Video, and Generative Media</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/31-world-models-vla-embodied.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">World Models, VLA, and Embodied Agents [S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">World Models, VLA, and Embodied Agents</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/32-capstone.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment [F]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment</span></span></a>
   </div>
 </li>
       </ul>
@@ -696,12 +696,29 @@ window.Quarto = {
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
- <span class="menu-text">Appendices</span></a>
+ <span class="menu-text">Part IX — The Agentic System-Design Interview</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
       </div>
       <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/33-sd-interview-framework.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">The Interview Framework: Seven Moves and a Toolkit</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../appendices/a-bridge.html" class="sidebar-item-text sidebar-link">
@@ -820,7 +837,7 @@ window.Quarto = {
 \operatorname{KVBytes}=B\,T\,L\,(2\,H_{kv}\,d_h)\,s.
 \tag{3.1}</span></span></p>
 <p>The factor of two is not a safety margin — it is one tensor for keys and one for values. <span class="math inline">H_{kv}d_h</span> is the width of each tensor’s per-token slice; multiplying by layers, tokens, batch, and scalar width counts every stored element. <a href="#eq-ch03-kvbytes" class="quarto-xref">Equation&nbsp;<span>3.1</span></a> assumes a uniform architecture, equal key and value widths, and an append-only, unquantized cache. We write it once, as the book’s canonical KV function, with a small config object so an unusual cache can declare its own stored width without a second formula.</p>
-<div id="ac4c65be" class="cell" data-execution_count="1">
+<div id="6435cde1" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -896,7 +913,7 @@ window.Quarto = {
 <span id="cb1-73"><a href="#cb1-73" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> batch <span class="op">*</span> tokens <span class="op">*</span> config.layers <span class="op">*</span> config.cached_scalars_per_layer_token() <span class="op">*</span> config.bytes_per_scalar</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The opening 64 GiB now follows from the function, not from arithmetic in the margin. We instantiate the 32-layer MHA model and read off the per-token slice and the two headline totals.</p>
-<div id="ca72500f" class="cell" data-execution_count="2">
+<div id="7289d2e9" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>mha <span class="op">=</span> KVConfig(<span class="st">"MHA 7B-class"</span>, layers<span class="op">=</span><span class="dv">32</span>, query_heads<span class="op">=</span><span class="dv">32</span>, kv_heads<span class="op">=</span><span class="dv">32</span>, head_dim<span class="op">=</span><span class="dv">128</span>, bytes_per_scalar<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>per_token <span class="op">=</span> kv_bytes(mha, <span class="dv">1</span>)</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"per token: </span><span class="sc">{</span>per_token<span class="sc">:,}</span><span class="ss"> bytes = </span><span class="sc">{</span>per_token <span class="op">/</span> <span class="dv">1024</span><span class="sc">:.0f}</span><span class="ss"> KiB"</span>)</span>
@@ -910,7 +927,7 @@ at 131,072 tokens: 64.00 GiB</code></pre>
 </div>
 <p>Half a mebibyte per token, and the totals are exact: 2 GiB at 4K, 64 GiB at 128K. Before we spend the chapter shrinking that number, one complexity myth needs correcting, because it hides the <em>computation</em> question behind the <em>capacity</em> one. In Chapter 2 we measured the cache reproducing uncached logits while its storage grew linearly (<a href="02-transformer-first-principles.html#sec-ch02-kv-cache" class="quarto-xref"><span>Section 2.9</span></a>). What the cache avoids is <em>reprojecting</em> old tokens — <span class="math inline">O(1)</span> projection work per step instead of <span class="math inline">O(T)</span>. It does not avoid <em>reading</em> those keys and values: the new query still scores against all <span class="math inline">T</span> of them and mixes <span class="math inline">T</span> values, so decode attention stays <span class="math inline">O(T)</span> per step and memory stays <span class="math inline">O(T)</span>. “The KV cache makes generation <span class="math inline">O(1)</span>” confuses avoided projection with total work.</p>
 <p>Real models fight the byte count with architecture, and the differences are visible the moment we plug their published configs into the same function. Multi-query and grouped-query models cut <span class="math inline">H_{kv}</span>; latent models replace <span class="math inline">{2H_{kv}d_h}</span> with a compressed width. We build three configs from dated public sources and sweep them over context length.</p>
-<div id="d353dc8c" class="cell" data-execution_count="3">
+<div id="64f0e6fe" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fields taken from published config.json files (see the Verify-live box below).</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>llama2 <span class="op">=</span> KVConfig(<span class="st">"Llama 2 7B (MHA)"</span>, layers<span class="op">=</span><span class="dv">32</span>, query_heads<span class="op">=</span><span class="dv">32</span>, kv_heads<span class="op">=</span><span class="dv">32</span>, head_dim<span class="op">=</span><span class="dv">128</span>, bytes_per_scalar<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>llama31 <span class="op">=</span> KVConfig(<span class="st">"Llama 3.1 8B (GQA-8)"</span>, layers<span class="op">=</span><span class="dv">32</span>, query_heads<span class="op">=</span><span class="dv">32</span>, kv_heads<span class="op">=</span><span class="dv">8</span>, head_dim<span class="op">=</span><span class="dv">128</span>, bytes_per_scalar<span class="op">=</span><span class="dv">2</span>)</span>
@@ -985,7 +1002,7 @@ Figure&nbsp;3.1: How does cache architecture change the bytes-per-token slope? E
 \frac{\operatorname{KVBytes}_{\text{grouped}}}{\operatorname{KVBytes}_{\text{MHA}}}=\frac{H_{kv}}{H_q}.
 \tag{3.2}</span></span></p>
 <p>This counts stored elements, not quality — the GQA paper showed an MHA checkpoint can be <em>converted</em> by grouping heads and briefly uptrained, recovering most of the quality at close to MQA speed. We build one layer whose <code>kv_heads</code> dial spans all three regimes, cache the compact keys and values, and expand groups only for the score computation.</p>
-<div id="df4d0d77" class="cell" data-execution_count="5">
+<div id="ee471f27" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> torch <span class="im">import</span> Tensor, nn</span>
@@ -1039,7 +1056,7 @@ Figure&nbsp;3.1: How does cache architecture change the bytes-per-token slope? E
 <span id="cb7-51"><a href="#cb7-51" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.out_proj(out), present</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We turn the dial across the four heads → one head range and read the cache each setting stores. The output shape must never move; only the cached tensor’s head axis does.</p>
-<div id="59c9b665" class="cell" data-execution_count="6">
+<div id="ccd12576" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">3</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> torch.randn(<span class="dv">1</span>, <span class="dv">8</span>, <span class="dv">64</span>)                     <span class="co"># width 64, 8 query heads -&gt; head_dim 8</span></span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> kv_heads, tag <span class="kw">in</span> [(<span class="dv">8</span>, <span class="st">"MHA"</span>), (<span class="dv">2</span>, <span class="st">"GQA-2"</span>), (<span class="dv">1</span>, <span class="st">"MQA"</span>)]:</span>
@@ -1055,7 +1072,7 @@ MQA    kv_heads=1: cache (1, 1, 8, 8) x2  =  128 scalars   out (1, 8, 64)   rati
 </div>
 </div>
 <p>The output stays <span class="math inline">[1,8,64]</span> throughout while the cache drops from 1024 scalars (MHA) to 128 (MQA) — exactly the <span class="math inline">{1/8}</span> ratio <a href="#eq-ch03-gqaratio" class="quarto-xref">Equation&nbsp;<span>3.2</span></a> predicts. Shrinking the cache is only legal if the cheaper path still computes the same function, so we prove it: feed the sequence one token at a time through the cache and check the incremental outputs against a single full pass.</p>
-<div id="09854b99" class="cell" data-execution_count="7">
+<div id="db2698d2" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>layer <span class="op">=</span> GroupedQueryAttention(<span class="dv">64</span>, query_heads<span class="op">=</span><span class="dv">8</span>, kv_heads<span class="op">=</span><span class="dv">2</span>).<span class="bu">eval</span>()</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>full, _ <span class="op">=</span> layer(x)</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>cache, pieces <span class="op">=</span> <span class="va">None</span>, []</span>
@@ -1134,7 +1151,7 @@ Figure&nbsp;3.3: What does MLA store versus reconstruct? The latent c_t (down-pr
 </div>
 </div>
 <p>We build the down/up latent path as an inspectable toy — deliberately <em>not</em> absorbing the projections the way a production kernel would, so the compress-reconstruct boundary stays on the page. The decoupled rotary band is what <a href="#fig-ch03-mla-flow" class="quarto-xref">Figure&nbsp;<span>3.3</span></a> adds on top; here we measure the compression the latent buys.</p>
-<div id="0b69260c" class="cell" data-execution_count="8">
+<div id="1aea98b9" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ToyLatentKVAttention(nn.Module):</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Didactic MLA-style attention that caches one low-rank latent per token.</span></span>
@@ -1182,7 +1199,7 @@ Figure&nbsp;3.3: What does MLA store versus reconstruct? The latent c_t (down-pr
 <span id="cb12-45"><a href="#cb12-45" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.latent_rank <span class="op">+</span> <span class="va">self</span>.rope_key_dim</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>At width 64 with 4 heads, a standard cache stores <span class="math inline">{2H_qd_h}=128</span> scalars per token. We compress that to a rank-16 latent (plus a 4-wide decoupled rotary band for honest accounting) and measure both the ratio and that attention still works incrementally.</p>
-<div id="e5e54954" class="cell" data-execution_count="9">
+<div id="883239fe" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">11</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>layer <span class="op">=</span> ToyLatentKVAttention(<span class="dv">64</span>, query_heads<span class="op">=</span><span class="dv">4</span>, latent_rank<span class="op">=</span><span class="dv">16</span>, rope_key_dim<span class="op">=</span><span class="dv">4</span>).<span class="bu">eval</span>()</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> torch.randn(<span class="dv">1</span>, <span class="dv">8</span>, <span class="dv">64</span>)</span>
@@ -1209,7 +1226,7 @@ cached == full: True</code></pre>
 <h2 data-number="3.4" class="anchored" data-anchor-id="sec-ch03-patterns"><span class="header-section-number">3.4</span> Restrict visibility: windows, interleaving, and sinks</h2>
 <p>Sharing and compression keep full causal visibility — every query can still reach every past key. The third lever changes <em>which</em> keys a query may see at all. A <strong>sliding-window</strong> layer lets position <span class="math inline">t</span> attend only to the most recent <span class="math inline">W</span> positions. Its cached state per layer is bounded by substituting <span class="math inline">\min(T,W)</span> for <span class="math inline">T</span> in <a href="#eq-ch03-kvbytes" class="quarto-xref">Equation&nbsp;<span>3.1</span></a>, and its attention work per query is bounded by <span class="math inline">W</span>. The price is architectural: anything older than <span class="math inline">W</span> is unreachable through that layer.</p>
 <p>The mask is the mechanism, so we build it directly — a boolean grid where cell <span class="math inline">(i,j)</span> is true when query <span class="math inline">i</span> may attend key <span class="math inline">j</span>.</p>
-<div id="6f862620" class="cell" data-execution_count="10">
+<div id="e868325e" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> visibility_mask(seq_len: <span class="bu">int</span>, window: <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, sinks: <span class="bu">int</span> <span class="op">=</span> <span class="dv">0</span>) <span class="op">-&gt;</span> Tensor:</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the boolean attention-visibility grid for one layer.</span></span>
@@ -1264,7 +1281,7 @@ Figure&nbsp;3.4: Which past keys can each query read? Full causal attention (lef
 </div>
 </div>
 <p>Stacking local layers widens the <em>effective</em> receptive field — an old token can influence a newer summary across layers — but indirect reach is not direct access, and exact copying or evidence attribution is sensitive to the difference. The common compromise <strong>interleaves</strong> local and full layers: local layers handle nearby structure cheaply, periodic global layers restore long-range paths. The total cache is then a sum, and it is worth computing rather than hand-waving. Take a 32-layer model at 128K tokens with a 4K window and every fourth layer global.</p>
-<div id="78e6e802" class="cell" data-execution_count="12">
+<div id="bffe50fc" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>cfg <span class="op">=</span> KVConfig(<span class="st">"GQA-8"</span>, layers<span class="op">=</span><span class="dv">32</span>, query_heads<span class="op">=</span><span class="dv">32</span>, kv_heads<span class="op">=</span><span class="dv">8</span>, head_dim<span class="op">=</span><span class="dv">128</span>, bytes_per_scalar<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>T, W <span class="op">=</span> <span class="dv">131_072</span>, <span class="dv">4_096</span></span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>width_bytes <span class="op">=</span> cfg.cached_scalars_per_layer_token() <span class="op">*</span> cfg.bytes_per_scalar</span>
@@ -1279,7 +1296,7 @@ Figure&nbsp;3.4: Which past keys can each query read? Full causal attention (lef
 </div>
 </div>
 <p>Interleaving turns 16 GiB into under 3 GiB by keeping only a quarter of the layers full-range. But windows carry a failure mode discovered by StreamingLLM <span class="citation" data-cites="xiao2024streaming">(<a href="../references.html#ref-xiao2024streaming" role="doc-biblioref">Xiao et al. 2024</a>)</span>: a <em>naive</em> rolling window that simply evicts old tokens can destabilize a trained model, even when the evicted tokens are semantically unimportant. The reason is that softmax must put its weight <em>somewhere</em>, and models learn to dump excess probability on the first few positions — <strong>attention sinks</strong>. Evict the sink and that mass has nowhere to go but the content tokens. We show the mechanism on a constructed score row where position 0 is the learned sink.</p>
-<div id="d8482069" class="cell" data-execution_count="13">
+<div id="2ec73ccf" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>scores <span class="op">=</span> torch.tensor([<span class="fl">9.0</span>, <span class="fl">1.0</span>, <span class="fl">0.5</span>, <span class="fl">1.2</span>, <span class="fl">0.8</span>, <span class="fl">1.1</span>, <span class="fl">0.6</span>, <span class="fl">1.3</span>])   <span class="co"># pos 0 is the sink</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>full_attn <span class="op">=</span> scores.softmax(<span class="dv">0</span>)</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>content <span class="op">=</span> <span class="bu">slice</span>(<span class="dv">4</span>, <span class="dv">8</span>)                         <span class="co"># the recent tokens a window keeps</span></span>
@@ -1303,7 +1320,7 @@ Figure&nbsp;3.4: Which past keys can each query read? Full causal attention (lef
 <section id="sec-ch03-rope" class="level2" data-number="3.5">
 <h2 data-number="3.5" class="anchored" data-anchor-id="sec-ch03-rope"><span class="header-section-number">3.5</span> RoPE encodes relative position by rotation</h2>
 <p>Attention is permutation-blind: reorder the tokens and, before the causal mask, the outputs merely reorder with them. Chapter 2 patched that with a learned absolute position table. Let us look at what that placeholder actually is, using the model we built there.</p>
-<div id="100b394a" class="cell" data-execution_count="14">
+<div id="3983422f" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>sys.path.insert(<span class="dv">0</span>, <span class="st">"code/ch02"</span>)</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> _generated <span class="im">as</span> ch02                       <span class="co"># the model we built in Chapter 2</span></span>
@@ -1326,7 +1343,7 @@ R_j(m)=\begin{bmatrix}\cos(m\omega_j)&amp;-\sin(m\omega_j)\\ \sin(m\omega_j)&amp
 (R(m)q)^\top(R(n)k)=q^\top R(m)^\top R(n)k=q^\top R(n-m)k .
 \tag{3.5}</span></span></p>
 <p>The score depends on <span class="math inline">m</span> and <span class="math inline">n</span> only through <span class="math inline">n-m</span>. Shift both positions by the same amount and it is unchanged. We implement the interleaved-pair rotation and keep it as the chapter’s rotary operator.</p>
-<div id="453782c0" class="cell" data-execution_count="15">
+<div id="1e9dd1cb" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> apply_rope(vectors: Tensor, positions: Tensor, frequencies: Tensor, magnitude: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>) <span class="op">-&gt;</span> Tensor:</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Rotate interleaved coordinate pairs by position-dependent angles.</span></span>
@@ -1362,7 +1379,7 @@ R_j(m)=\begin{bmatrix}\cos(m\omega_j)&amp;-\sin(m\omega_j)\\ \sin(m\omega_j)&amp
 <span id="cb23-33"><a href="#cb23-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rotated.flatten(<span class="op">-</span><span class="dv">2</span>) <span class="op">*</span> magnitude</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We need the band frequencies. The plain-RoPE branch of <code>inverse_frequencies</code> (built out for scaling in the next section) supplies them; for now we take the unscaled bands and make the invariant concrete. Rotate a fixed query and key at several position pairs and print the scores.</p>
-<div id="9472a0a1" class="cell" data-execution_count="16">
+<div id="ee6e53f1" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> math <span class="im">import</span> isclose</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> rope_frequencies(dim: <span class="bu">int</span>, base: <span class="bu">float</span> <span class="op">=</span> <span class="fl">10_000.0</span>) <span class="op">-&gt;</span> Tensor:</span>
@@ -1424,7 +1441,7 @@ Figure&nbsp;3.5: Why do RoPE bands encode different distance scales? A high-freq
 <section id="sec-ch03-scaling" class="level2" data-number="3.6">
 <h2 data-number="3.6" class="anchored" data-anchor-id="sec-ch03-scaling"><span class="header-section-number">3.6</span> Stretching RoPE changes the coordinate system</h2>
 <p>A model trained through context <span class="math inline">T_0</span> but evaluated at <span class="math inline">T_1=aT_0</span> needs its positions to fit the phase range it learned. RoPE extension changes the map from position to phase; it adds no training data. <strong>Position interpolation</strong> (PI) maps <span class="math inline">m\mapsto m/a</span>, equivalently dividing every frequency by <span class="math inline">a</span>, so positions through <span class="math inline">T_1</span> reuse the original phase range at the cost of compressed local resolution <span class="citation" data-cites="chen2023pi">(<a href="../references.html#ref-chen2023pi" role="doc-biblioref">Chen et al. 2023</a>)</span>. <strong>NTK-aware</strong> scaling instead changes the base, <span class="math inline">b'=b\,a^{d_R/(d_R-2)}</span>, which leaves the fastest band nearly untouched while stretching the slow ones. <strong>YaRN</strong> interpolates band-by-band — leaving short-wavelength bands alone, interpolating long-wavelength ones, ramping between — and also rescales the query/key magnitude to correct attention entropy <span class="citation" data-cites="peng2023yarn">(<a href="../references.html#ref-peng2023yarn" role="doc-biblioref">Peng et al. 2023</a>)</span>. We build all four band constructions in one function.</p>
-<div id="a258a62d" class="cell" data-execution_count="18">
+<div id="2e927c7a" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1505,7 +1522,7 @@ Figure&nbsp;3.5: Why do RoPE bands encode different distance scales? A high-freq
 <span id="cb27-78"><a href="#cb27-78" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> frequencies, magnitude</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We build the four band vectors for a fourfold extension and read the distinctions the tests will pin: PI divides uniformly, NTK holds the top band fixed while shrinking the rest, and YaRN sits between the two.</p>
-<div id="8752ce41" class="cell" data-execution_count="19">
+<div id="7438cd5f" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>rope, _ <span class="op">=</span> inverse_frequencies(<span class="dv">16</span>)</span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>pi, _ <span class="op">=</span> inverse_frequencies(<span class="dv">16</span>, method<span class="op">=</span><span class="st">"pi"</span>, factor<span class="op">=</span><span class="dv">4</span>)</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>ntk, _ <span class="op">=</span> inverse_frequencies(<span class="dv">16</span>, method<span class="op">=</span><span class="st">"ntk"</span>, factor<span class="op">=</span><span class="dv">4</span>)</span>
@@ -1553,7 +1570,7 @@ Figure&nbsp;3.6: How do PI, NTK, and YaRN reshape the frequency bands? Each curv
 <h2 data-number="3.7" class="anchored" data-anchor-id="sec-ch03-alternatives"><span class="header-section-number">3.7</span> No position, dropped position, and distributed context</h2>
 <p>RoPE extension is not the only response to length. <strong>NoPE</strong> removes explicit position encodings entirely; the causal mask still imposes an order (position <span class="math inline">t</span> sees <span class="math inline">t</span> prefix states, an earlier one sees fewer), and causal Transformers without position encodings have been shown to infer usable relative signals and extrapolate surprisingly well on some tasks <span class="citation" data-cites="kazemnejad2023nope">(<a href="../references.html#ref-kazemnejad2023nope" role="doc-biblioref">Kazemnejad et al. 2023</a>)</span>. The absence of an <em>explicit</em> encoding is not the absence of order, nor a guaranteed quality win. <strong>DroPE</strong> treats explicit position as a training scaffold: start from a RoPE model, remove the embeddings, and briefly recalibrate — an inductive bias that eased training becomes an extrapolation constraint later, so it is removed after the fact rather than never added.</p>
 <p>Long context can also be a <em>systems</em> property. <strong>Ring Attention</strong> partitions one long sequence across devices, circulating key-value blocks around a ring while overlapping communication with blockwise attention; the global pattern stays dense, and the logical KV state is unchanged — merely divided so a sequence longer than one device’s memory fits. That is worth seeing as a number: partitioning does not shrink the cache, it spreads it.</p>
-<div id="982809e6" class="cell" data-execution_count="21">
+<div id="adee2e59" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>seq <span class="op">=</span> KVConfig(<span class="st">"GQA-8"</span>, layers<span class="op">=</span><span class="dv">32</span>, query_heads<span class="op">=</span><span class="dv">32</span>, kv_heads<span class="op">=</span><span class="dv">8</span>, head_dim<span class="op">=</span><span class="dv">128</span>, bytes_per_scalar<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>total <span class="op">=</span> kv_bytes(seq, <span class="dv">131_072</span>)</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> devices <span class="kw">in</span> (<span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">8</span>):</span>
@@ -1570,7 +1587,7 @@ Figure&nbsp;3.6: How do PI, NTK, and YaRN reshape the frequency bands? Each curv
 <h2 data-number="3.8" class="anchored" data-anchor-id="sec-ch03-effective"><span class="header-section-number">3.8</span> Advertised context is not effective context</h2>
 <p>“Context window” hides three different quantities: <strong>accepted</strong> context (the largest request the runtime admits), <strong>trained</strong> context (the length distribution seen during optimization), and <strong>effective</strong> context (the positions and lengths over which a task stays above a quality bar). Only the third is a capability claim, and it is task-specific — a model can accept a huge tensor, keep finite perplexity, recover a literal passkey, and still fail to combine two facts buried in the middle. The “Lost in the Middle” study found exactly this U-shape: information near the start or end of a long context was used better than information in the middle <span class="citation" data-cites="liu2024lostmiddle">(<a href="../references.html#ref-liu2024lostmiddle" role="doc-biblioref"><span class="nocase">Liu et al.</span> 2024</a>)</span>, and the broader phenomenon of quality decaying as more context is added is now called <em>context rot</em>. There is no universal “useful fraction”; it must be measured on the deployed model and prompt.</p>
 <p>We can isolate one cause of the shape — rotary phase — without a language model at all, using a probe that is honest about what it does and does not show. Each trial plants a content “needle” at a chosen depth among random distractor keys, rotates everything with a chosen RoPE method at a fourfold extension, and asks whether the needle wins the dot product against the end-position query.</p>
-<div id="32c2b88f" class="cell" data-execution_count="22">
+<div id="9c21cf57" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> retrieval_probe(method: <span class="bu">str</span>, <span class="op">*</span>, seed: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1_700</span>, trials: <span class="bu">int</span> <span class="op">=</span> <span class="dv">256</span>, context: <span class="bu">int</span> <span class="op">=</span> <span class="dv">128</span>,</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>                    original_context: <span class="bu">int</span> <span class="op">=</span> <span class="dv">32</span>, dim: <span class="bu">int</span> <span class="op">=</span> <span class="dv">32</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">float</span>]]:</span>
@@ -1617,7 +1634,7 @@ Figure&nbsp;3.6: How do PI, NTK, and YaRN reshape the frequency bands? Each curv
 <span id="cb33-44"><a href="#cb33-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run the probe under unscaled RoPE, NTK, and YaRN and print the mean top-1 rate for each.</p>
-<div id="da340576" class="cell" data-execution_count="23">
+<div id="6c505f73" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>runs <span class="op">=</span> {m: retrieval_probe(m) <span class="cf">for</span> m <span class="kw">in</span> (<span class="st">"rope"</span>, <span class="st">"ntk"</span>, <span class="st">"yarn"</span>)}</span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> m, rows <span class="kw">in</span> runs.items():</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>    mean <span class="op">=</span> <span class="bu">sum</span>(r[<span class="st">"accuracy"</span>] <span class="cf">for</span> r <span class="kw">in</span> rows) <span class="op">/</span> <span class="bu">len</span>(rows)</span>

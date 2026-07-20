@@ -670,25 +670,25 @@ window.Quarto = {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/29-multimodal-vlm-documents-gui.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Multimodal Agents I: VLMs, Documents, and GUI Perception [F+S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">29</span>&nbsp; <span class="chapter-title">Multimodal Agents I: VLMs, Documents, and GUI Perception</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/30-multimodal-voice-video-media.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Multimodal Agents II: Voice, Video, and Generative Media [S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">30</span>&nbsp; <span class="chapter-title">Multimodal Agents II: Voice, Video, and Generative Media</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/31-world-models-vla-embodied.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">World Models, VLA, and Embodied Agents [S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">31</span>&nbsp; <span class="chapter-title">World Models, VLA, and Embodied Agents</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/32-capstone.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment [F]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">32</span>&nbsp; <span class="chapter-title">Capstone: From One Model Call to a Defended Deployment</span></span></a>
   </div>
 </li>
       </ul>
@@ -696,12 +696,29 @@ window.Quarto = {
         <li class="sidebar-item sidebar-item-section">
       <div class="sidebar-item-container"> 
             <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true">
- <span class="menu-text">Appendices</span></a>
+ <span class="menu-text">Part IX — The Agentic System-Design Interview</span></a>
           <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-9" role="navigation" aria-expanded="true" aria-label="Toggle section">
             <i class="bi bi-chevron-right ms-2"></i>
           </a> 
       </div>
       <ul id="quarto-sidebar-section-9" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="../chapters/33-sd-interview-framework.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">33</span>&nbsp; <span class="chapter-title">The Interview Framework: Seven Moves and a Toolkit</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-10" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-10" class="collapse list-unstyled sidebar-section depth1 show">  
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../appendices/a-bridge.html" class="sidebar-item-text sidebar-link">
@@ -780,7 +797,7 @@ window.Quarto = {
 <section id="sec-ch16-tools" class="level2" data-number="16.1">
 <h2 data-number="16.1" class="anchored" data-anchor-id="sec-ch16-tools"><span class="header-section-number">16.1</span> Tools and their contracts</h2>
 <p>An agent’s tools are ordinary functions. What makes them <em>tools</em> is that they carry a declared contract — a schema of argument names and types — that is advertised to the model as data and enforced by our code before anything runs. We start with the contract type.</p>
-<div id="1f4393a1" class="cell" data-execution_count="1">
+<div id="1fa89615" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -806,7 +823,7 @@ window.Quarto = {
 <span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>    effectful: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Our running environment is a tiny support desk: one order table, a policy document, and three tools. The important design choice is the <strong>effect log</strong> — an append-only list that records every refund actually issued. Reads return data; only <code>refund_order</code> appends a receipt. For the rest of the chapter, every safety claim we make will be an assertion on this list, never on anything the model says.</p>
-<div id="0107fe08" class="cell" data-execution_count="2">
+<div id="d3916782" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_environment() <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">dict</span>[<span class="bu">str</span>, ToolSpec], <span class="bu">list</span>[<span class="bu">dict</span>[<span class="bu">str</span>, Any]]]:</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Create the support-desk world: three tools and an append-only effect log.</span></span>
@@ -849,7 +866,7 @@ window.Quarto = {
 <span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> tools, effects</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Watch what the raw handlers do when we call them directly, with no model anywhere in sight.</p>
-<div id="dfd2dd54" class="cell" data-execution_count="3">
+<div id="c347a55c" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>tools, effects <span class="op">=</span> make_environment()</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(tools[<span class="st">"lookup_order"</span>].handler(order_id<span class="op">=</span><span class="st">"A-17"</span>))</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(tools[<span class="st">"refund_order"</span>].handler(order_id<span class="op">=</span><span class="st">"A-17"</span>, amount_cents<span class="op">=</span><span class="dv">999999</span>))</span>
@@ -861,7 +878,7 @@ effect log: [{'order_id': 'A-17', 'refunded_cents': 999999}]</code></pre>
 </div>
 </div>
 <p>The second line is the chapter’s whole problem in one receipt: the handler cheerfully refunded 999,999 cents — two hundred times what the customer paid — because nothing in Python stops it. The authority lives in the handler, and today the handler grants it to any caller. Before we let a model near this function, we need two layers of judgment. The first is <strong>validation</strong>: is this call well formed? A proposal names a tool and carries arguments, and validation checks it against the declared contract.</p>
-<div id="fdb05dbb" class="cell" data-execution_count="4">
+<div id="113803fd" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ToolCall:</span>
@@ -904,7 +921,7 @@ effect log: [{'order_id': 'A-17', 'refunded_cents': 999999}]</code></pre>
 <span id="cb5-40"><a href="#cb5-40" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> <span class="ss">f"</span><span class="sc">{</span>arg_name<span class="sc">}</span><span class="ss"> must be </span><span class="sc">{</span>expected<span class="sc">.</span><span class="va">__name__</span><span class="sc">}</span><span class="ss">"</span></span>
 <span id="cb5-41"><a href="#cb5-41" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">None</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="81e829ed" class="cell" data-execution_count="5">
+<div id="96b2fa5b" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>good <span class="op">=</span> ToolCall(<span class="st">"c1"</span>, <span class="st">"refund_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>, <span class="st">"amount_cents"</span>: <span class="dv">4999</span>})</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>bad_type <span class="op">=</span> ToolCall(<span class="st">"c2"</span>, <span class="st">"refund_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>, <span class="st">"amount_cents"</span>: <span class="st">"lots"</span>})</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>bad_name <span class="op">=</span> ToolCall(<span class="st">"c3"</span>, <span class="st">"delete_database"</span>, {})</span>
@@ -918,7 +935,7 @@ delete_database  -&gt; unknown tool: delete_database</code></pre>
 </div>
 <p>Note what validation did <em>not</em> catch: the 999,999-cent refund is perfectly well formed — right tool, right fields, right types. Well-formed and permissible are different questions, and we keep them in different functions on purpose. Our exact <code>name -&gt; type</code> schema is a teaching miniature; production tools use JSON Schema with ranges, enumerations, and nested objects, but the division of labor is identical. The second question — may this exact call run now? — waits for the gate in <a href="#sec-ch16-denial" class="quarto-xref"><span>Section 16.4</span></a>.</p>
 <p>The last thing tools need is a way to reach the model. They travel as data: one JSON declaration per tool, carried in the request. The model never receives the handlers — only these descriptions — so everything it “knows” about a tool is what we choose to advertise.</p>
-<div id="1f2f0c3c" class="cell" data-execution_count="6">
+<div id="1bfe050d" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> tool_schema_json(tools: <span class="bu">dict</span>[<span class="bu">str</span>, ToolSpec]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">dict</span>[<span class="bu">str</span>, Any]]:</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Render the registry in the JSON wire shape a chat API expects.</span></span>
@@ -953,7 +970,7 @@ delete_database  -&gt; unknown tool: delete_database</code></pre>
 <span id="cb8-32"><a href="#cb8-32" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> name, spec <span class="kw">in</span> tools.items()</span>
 <span id="cb8-33"><a href="#cb8-33" aria-hidden="true" tabindex="-1"></a>    ]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="64fa1a28" class="cell" data-execution_count="7">
+<div id="5d13c9a3" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(json.dumps(tool_schema_json(tools)[<span class="dv">2</span>], indent<span class="op">=</span><span class="dv">2</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>{
@@ -985,7 +1002,7 @@ delete_database  -&gt; unknown tool: delete_database</code></pre>
 <section id="sec-ch16-model" class="level2" data-number="16.2">
 <h2 data-number="16.2" class="anchored" data-anchor-id="sec-ch16-model"><span class="header-section-number">16.2</span> The model side of the wire</h2>
 <p>What does a model actually send back when it wants to use a tool? Not a function call — text, structured as an <strong>assistant message</strong> that carries a list of proposed tool calls. Two helpers build the two message shapes we need, and their exact structure is the point, so read them as data formats rather than code.</p>
-<div id="6a55c987" class="cell" data-execution_count="8">
+<div id="7fe3fe7a" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> tool_call_message(</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    call_id: <span class="bu">str</span>, name: <span class="bu">str</span>, arguments: <span class="bu">dict</span>[<span class="bu">str</span>, Any], thought: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span></span>
@@ -1022,7 +1039,7 @@ delete_database  -&gt; unknown tool: delete_database</code></pre>
 <span id="cb11-34"><a href="#cb11-34" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Build a plain assistant message that answers and proposes nothing."""</span></span>
 <span id="cb11-35"><a href="#cb11-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"role"</span>: <span class="st">"assistant"</span>, <span class="st">"content"</span>: text}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="d361e0ea" class="cell" data-execution_count="9">
+<div id="3374c25e" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(json.dumps(tool_call_message(<span class="st">"call_1"</span>, <span class="st">"lookup_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>}), indent<span class="op">=</span><span class="dv">2</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>{
@@ -1043,7 +1060,7 @@ delete_database  -&gt; unknown tool: delete_database</code></pre>
 </div>
 <p>Three details deserve a hard look. The <code>arguments</code> value is a <em>string</em> containing JSON, not a JSON object — the model generated characters, and someone has to parse them. The <code>id</code> is a correlation handle: when we send the tool’s result back, we must echo this id so the model (and our own verifier) can match result to proposal; position in a list is not a stable identity once calls can be parallel or retried. And <code>content</code> can coexist with <code>tool_calls</code> — that slot is where visible reasoning text rides along, which is how we will print a ReAct trace in <a href="#sec-ch16-planning" class="quarto-xref"><span>Section 16.7</span></a>.</p>
 <p>Now the stand-in model. It holds a script of assistant turns and plays them in order, with one twist that earns its keep for the rest of the chapter: before consuming the next turn, it checks the most recent tool result against a small table of <em>reactions</em>, so a script can respond to what the loop feeds back — retry after a denial, for example — while staying fully deterministic.</p>
-<div id="907811a7" class="cell" data-execution_count="10">
+<div id="b05e2516" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span></span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ScriptedModel:</span>
@@ -1081,7 +1098,7 @@ delete_database  -&gt; unknown tool: delete_database</code></pre>
 <span id="cb14-35"><a href="#cb14-35" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> answer_message(<span class="st">"I have nothing further to add."</span>)</span>
 <span id="cb14-36"><a href="#cb14-36" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.turns.pop(<span class="dv">0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="842006fc" class="cell" data-execution_count="11">
+<div id="d3efa817" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>model <span class="op">=</span> ScriptedModel(</span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>    turns<span class="op">=</span>[</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>        tool_call_message(<span class="st">"call_1"</span>, <span class="st">"lookup_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>}),</span>
@@ -1100,7 +1117,7 @@ turn 2: {"role": "assistant", "content": "Order A-17 arrived damaged; the custom
 </div>
 </div>
 <p>The interface is one method: messages in, assistant message out. A hosted model has exactly the same interface, which is why swapping the stub for the real thing touches nothing else in the chapter. Here is that swap, shown but not executed — it needs a network and a served model — followed by a representative response so you can see the wire shape survives contact with reality.</p>
-<div id="df59b7bb" class="cell" data-execution_count="12">
+<div id="a9d304e2" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> httpx</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>payload <span class="op">=</span> {</span>
@@ -1135,7 +1152,7 @@ turn 2: {"role": "assistant", "content": "Order A-17 arrived damaged; the custom
 <p><strong>Tool-call envelopes are vendor-specific and drift.</strong> The OpenAI-compatible shape above — <code>tool_calls</code> with arguments as a JSON string — is the most widely copied, but Anthropic’s Messages API carries <code>tool_use</code> content blocks whose <code>input</code> arrives already parsed, and both vendors have revised these envelopes several times since 2023. The mechanism this chapter teaches (proposals as data, parse, gate, correlated results) is stable; the field names are not. Verify live: your provider’s tool-use API reference for the current envelope (checked 2026-07-20).</p>
 </div>
 <p>Because the arguments are model-generated text, parsing them is a step that can fail, and a loop that crashes on bad JSON hands the model a denial-of-service button. Our parser therefore never raises: a call whose arguments do not parse still comes back as a <code>ToolCall</code>, with <code>arguments=None</code>, and <code>validate_call</code> already knows what to say about it.</p>
-<div id="8bee744a" class="cell" data-execution_count="13">
+<div id="b7913bd6" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> parse_tool_calls(message: <span class="bu">dict</span>[<span class="bu">str</span>, Any]) <span class="op">-&gt;</span> <span class="bu">list</span>[ToolCall]:</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Parse the tool calls, if any, out of an assistant message.</span></span>
@@ -1161,7 +1178,7 @@ turn 2: {"role": "assistant", "content": "Order A-17 arrived damaged; the custom
 <span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a>        calls.append(ToolCall(item[<span class="st">"id"</span>], function[<span class="st">"name"</span>], arguments))</span>
 <span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> calls</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="eb75837a" class="cell" data-execution_count="14">
+<div id="4177bd58" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(parse_tool_calls(tool_call_message(<span class="st">"call_7"</span>, <span class="st">"refund_order"</span>,</span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>                                         {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>, <span class="st">"amount_cents"</span>: <span class="dv">4999</span>})))</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>broken <span class="op">=</span> {<span class="st">"role"</span>: <span class="st">"assistant"</span>, <span class="st">"content"</span>: <span class="va">None</span>,</span>
@@ -1181,7 +1198,7 @@ arguments were not valid JSON</code></pre>
 <section id="sec-ch16-loop" class="level2" data-number="16.3">
 <h2 data-number="16.3" class="anchored" data-anchor-id="sec-ch16-loop"><span class="header-section-number">16.3</span> The loop: propose, gate, execute, observe</h2>
 <p>We have tools with contracts and a model that proposes calls in wire format. The loop that connects them has four verbs, and keeping them separate matters more than any framework choice. <strong>Propose</strong>: the model returns an assistant message. <strong>Gate</strong>: our code decides whether each proposed call may run. <strong>Execute</strong>: only an allowed call reaches a handler. <strong>Observe</strong>: the result — success, denial, or failure — travels back to the model as an ordinary tool message. First, the typed endings and budgets the loop will enforce.</p>
-<div id="06804c85" class="cell" data-execution_count="15">
+<div id="3029fe7d" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> enum <span class="im">import</span> Enum</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1210,7 +1227,7 @@ arguments were not valid JSON</code></pre>
 <span id="cb22-26"><a href="#cb22-26" aria-hidden="true" tabindex="-1"></a>    repeated_denials: <span class="bu">int</span> <span class="op">=</span> <span class="dv">2</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Next, the observation type and a cost estimator. An observation is the typed result of attempting one call, correlated to the proposal that caused it; the <code>kind</code> field distinguishes a denial from a validation failure from a handler error, because a strategy that only sees “failed” can do nothing smarter than retry blindly. The token estimator is deliberately crude — four characters per token — but it is monotone in the thing that matters: the transcript, and with it the price of every further turn, only ever grows.</p>
-<div id="bde78085" class="cell" data-execution_count="16">
+<div id="693d612f" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Observation:</span>
@@ -1243,7 +1260,7 @@ arguments were not valid JSON</code></pre>
 <span id="cb23-30"><a href="#cb23-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(<span class="bu">len</span>(json.dumps(message)) <span class="cf">for</span> message <span class="kw">in</span> messages) <span class="op">//</span> <span class="dv">4</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the function that carries one proposal across the effect boundary — or refuses to. A <strong>gate</strong> is any function from a validated call to an allow-or-deny decision with a reason. We start with the gate that every system has before anyone writes policy: the one that allows everything.</p>
-<div id="1f511f7d" class="cell" data-execution_count="17">
+<div id="d75d1f92" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>Gate <span class="op">=</span> Callable[[ToolCall], <span class="bu">tuple</span>[<span class="bu">bool</span>, <span class="bu">str</span>]]</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1282,7 +1299,7 @@ arguments were not valid JSON</code></pre>
 <span id="cb24-36"><a href="#cb24-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Observation(call.call_id, <span class="va">True</span>, <span class="st">"result"</span>, result)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Three probes — a good call, a missing order, an unknown tool — show the three failure textures a strategy can tell apart.</p>
-<div id="5080acdc" class="cell" data-execution_count="18">
+<div id="68c4e52f" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>tools, effects <span class="op">=</span> make_environment()</span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(execute_call(ToolCall(<span class="st">"c1"</span>, <span class="st">"lookup_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>}), tools, allow_all))</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(execute_call(ToolCall(<span class="st">"c2"</span>, <span class="st">"lookup_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"Z-99"</span>}), tools, allow_all))</span>
@@ -1331,7 +1348,7 @@ Figure&nbsp;16.1: How does one proposed action cross — or fail to cross — th
 </div>
 </div>
 <p>The loop’s state is worth a pause before we write the loop. It is nothing but plain data — the wire-format transcript, the typed observations, and two counters. That plainness is a feature with a name: if you persist <code>messages</code>, you can resume the run on another machine, replay it into an evaluator, or hand it to a human, because there is no hidden state anywhere else.</p>
-<div id="11630221" class="cell" data-execution_count="19">
+<div id="ea4b0992" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span></span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> RunState:</span>
@@ -1358,7 +1375,7 @@ Figure&nbsp;16.1: How does one proposed action cross — or fail to cross — th
 <span id="cb27-24"><a href="#cb27-24" aria-hidden="true" tabindex="-1"></a>    state: RunState</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Here is the loop entire — no elisions, because this is the raw mechanism every agent framework wraps. The model chooses what to propose; this function owns everything else: the transcript, the budgets, the effect boundary, and the decision to stop.</p>
-<div id="6da24aae" class="cell" data-execution_count="20">
+<div id="a3b037d4" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>SYSTEM_PROMPT <span class="op">=</span> (</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"You are a support agent. Use the tools to resolve the customer's problem. "</span></span>
@@ -1428,7 +1445,7 @@ Figure&nbsp;16.1: How does one proposed action cross — or fail to cross — th
 <span id="cb28-67"><a href="#cb28-67" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> RunResult(Stop.STEP_LIMIT, <span class="va">None</span>, state)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>It is worth reading this function slowly, because you will recognize it inside every agent product you ever open up. To watch it run, we want the transcript in a readable form, so a small printer first.</p>
-<div id="5c39a59c" class="cell" data-execution_count="21">
+<div id="ec13bbb2" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> print_transcript(state: RunState) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Print a run's transcript, one aligned line per message or tool call.</span></span>
@@ -1448,7 +1465,7 @@ Figure&nbsp;16.1: How does one proposed action cross — or fail to cross — th
 <span id="cb29-17"><a href="#cb29-17" aria-hidden="true" tabindex="-1"></a>            <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>labels[message[<span class="st">'role'</span>]]<span class="sc">}</span><span class="ss"> </span><span class="sc">{</span>message[<span class="st">'content'</span>]<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the first complete run: a well-behaved script that looks up the order, refunds what was paid, and answers.</p>
-<div id="8708a467" class="cell" data-execution_count="22">
+<div id="cd318194" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>task <span class="op">=</span> <span class="st">"Order A-17 arrived damaged. Please make this right."</span></span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>tools, effects <span class="op">=</span> make_environment()</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>scripted <span class="op">=</span> ScriptedModel(turns<span class="op">=</span>[</span>
@@ -1504,7 +1521,7 @@ Figure&nbsp;16.2: Who owns what around the loop? The model only proposes; the ha
 <section id="sec-ch16-denial" class="level2" data-number="16.4">
 <h2 data-number="16.4" class="anchored" data-anchor-id="sec-ch16-denial"><span class="header-section-number">16.4</span> The effect boundary: a denial that must not happen</h2>
 <p>The happy path ran with <code>allow_all</code>, and that should make you nervous. Let us make the danger concrete with a model script that over-reaches: it looks up the order, proposes a 9,999-cent refund — twice what the customer paid — and, <em>if it ever sees a denial</em>, falls back to refunding exactly the paid amount. The fallback lives in the script’s reaction table, so this stub reacts to what the loop feeds back the way a capable instructed model would.</p>
-<div id="3c66587f" class="cell" data-execution_count="23">
+<div id="1eb9a9c3" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> overreaching_model() <span class="op">-&gt;</span> ScriptedModel:</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Build the chapter's over-reaching support model, fresh for each run.</span></span>
@@ -1532,7 +1549,7 @@ Figure&nbsp;16.2: Who owns what around the loop? The model only proposes; the ha
 <span id="cb32-25"><a href="#cb32-25" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>First, the world as it is today: the same loop, no policy.</p>
-<div id="8734a9c1" class="cell" data-execution_count="24">
+<div id="cbf71ca5" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>tools, effects_ungated <span class="op">=</span> make_environment()</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>result_ungated <span class="op">=</span> run_agent(task, overreaching_model(), tools, allow_all)</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"stop=</span><span class="sc">{</span>result_ungated<span class="sc">.</span>stop<span class="sc">.</span>value<span class="sc">}</span><span class="ss">  turns=</span><span class="sc">{</span>result_ungated<span class="sc">.</span>state<span class="sc">.</span>turns<span class="sc">}</span><span class="ss">"</span>)</span>
@@ -1543,7 +1560,7 @@ effect log: [{'order_id': 'A-17', 'refunded_cents': 9999}]</code></pre>
 </div>
 </div>
 <p>The 9,999-cent refund landed. Note that the system prompt was present the whole time — it says to use the tools responsibly — and it changed nothing, because a prompt is an input to a distribution, not a constraint on execution. The fix is not a sterner prompt. It is a few lines of policy evaluated against the <em>exact arguments</em> immediately before execution.</p>
-<div id="007db285" class="cell" data-execution_count="25">
+<div id="84dcee26" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>AUTO_REFUND_LIMIT_CENTS <span class="op">=</span> <span class="dv">5000</span></span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1566,7 +1583,7 @@ effect log: [{'order_id': 'A-17', 'refunded_cents': 9999}]</code></pre>
 <span id="cb35-20"><a href="#cb35-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">True</span>, <span class="st">"within policy"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Same task, same over-reaching model, one changed argument: the gate.</p>
-<div id="e38280fc" class="cell" data-execution_count="26">
+<div id="5a98c80b" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>tools, effects_gated <span class="op">=</span> make_environment()</span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>result_gated <span class="op">=</span> run_agent(task, overreaching_model(), tools, refund_gate)</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>print_transcript(result_gated.state)</span>
@@ -1638,7 +1655,7 @@ Figure&nbsp;16.3: What actually bounded the refund? With no gate, the same model
 <section id="sec-ch16-lifecycle" class="level2" data-number="16.5">
 <h2 data-number="16.5" class="anchored" data-anchor-id="sec-ch16-lifecycle"><span class="header-section-number">16.5</span> Termination, budgets, and typed endings</h2>
 <p>A gate can contain every action while the loop still fails operationally: a model can wander across harmless reads forever, or repeat a denied proposal until the caller’s budget is gone. “The model will eventually stop” is not a termination condition — our <code>while</code> loop needs its own. The <code>Limits</code> we wrote in <a href="#sec-ch16-loop" class="quarto-xref"><span>Section 16.3</span></a> give it three, and we can trigger each one on demand. First the wanderer, a script that reacts to every lookup result by looking up again.</p>
-<div id="b89b4c76" class="cell" data-execution_count="28">
+<div id="80a36661" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>tools, _ <span class="op">=</span> make_environment()</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a>lookup_again <span class="op">=</span> tool_call_message(<span class="st">"call_w"</span>, <span class="st">"lookup_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>})</span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>wanderer <span class="op">=</span> ScriptedModel(turns<span class="op">=</span>[lookup_again], reactions<span class="op">=</span>{<span class="st">"order_id"</span>: lookup_again})</span>
@@ -1651,7 +1668,7 @@ Figure&nbsp;16.3: What actually bounded the refund? With no gate, the same model
 </div>
 </div>
 <p>Each iteration consumes one turn, so the loop must return within <code>max_turns</code> decisions — a liveness guarantee that holds even for a model that never chooses to stop. Next, the stubborn model: it proposes the over-limit refund and reacts to every denial by proposing it again, unchanged.</p>
-<div id="3648bdd0" class="cell" data-execution_count="29">
+<div id="906645c0" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>tools, effects_stub <span class="op">=</span> make_environment()</span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>insist <span class="op">=</span> tool_call_message(<span class="st">"call_s"</span>, <span class="st">"refund_order"</span>,</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>                           {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>, <span class="st">"amount_cents"</span>: <span class="dv">9999</span>})</span>
@@ -1668,7 +1685,7 @@ effect log: []</code></pre>
 </div>
 </div>
 <p>The loop fingerprints each denied proposal by tool name and canonical arguments; the second identical denial trips <code>repeated_denials</code> and the run ends <code>no_progress</code> after two turns instead of burning six more. The detector is deliberately narrow — a model alternating between 9,998 and 9,999 would evade it, and Exercise 3 asks you to close that gap without punishing a legitimate retry. Third, the budget that bites in production: tokens. Every turn resends the whole transcript, so cost per turn grows even when the model does nothing new.</p>
-<div id="df299d58" class="cell" data-execution_count="30">
+<div id="7fadc2fa" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>tools, _ <span class="op">=</span> make_environment()</span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a>wanderer <span class="op">=</span> ScriptedModel(turns<span class="op">=</span>[lookup_again], reactions<span class="op">=</span>{<span class="st">"order_id"</span>: lookup_again})</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>result_t <span class="op">=</span> run_agent(<span class="st">"Investigate order A-17."</span>, wanderer, tools, refund_gate,</span>
@@ -1748,7 +1765,7 @@ Figure&nbsp;16.5: Which typed states make every run end? Each loop iteration eit
 <section id="sec-ch16-workflows" class="level2" data-number="16.6">
 <h2 data-number="16.6" class="anchored" data-anchor-id="sec-ch16-workflows"><span class="header-section-number">16.6</span> The workflow canon: strategies over one kernel</h2>
 <p>The same refund task can be organized under very different control policies, and the industry has settled on a small canon of named patterns: the prompt chain, the router, the parallel fan-out, the evaluator–optimizer, and the adaptive agent <span class="citation" data-cites="anthropic2024effectiveagents">(<a href="../references.html#ref-anthropic2024effectiveagents" role="doc-biblioref">Anthropic 2024</a>)</span>. Implementing them as five separate runtimes would duplicate message handling, dispatch, and safety behavior — and let the copies drift. The discipline that keeps a codebase sane is to fix what must be shared and vary only what genuinely differs. What must be shared is the effect boundary: every pattern executes tools through the same <code>execute_call</code> and the same <code>refund_gate</code>. What varies is exactly one thing: <em>who chooses the next step</em>. To compare the patterns fairly we also need shared accounting.</p>
-<div id="e2923b5b" class="cell" data-execution_count="32">
+<div id="d1c4e9c1" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span></span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Meter:</span>
@@ -1793,7 +1810,7 @@ Figure&nbsp;16.5: Which typed states make every run end? Each loop iteration eit
 <span id="cb46-42"><a href="#cb46-42" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> execute_call(call, tools, gate)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The <strong>chain</strong> is the pattern to reach for when the path is known in advance: code owns the whole sequence and consults the model exactly once, for the only genuinely semantic step.</p>
-<div id="2a7ba661" class="cell" data-execution_count="33">
+<div id="29a4c961" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> run_chain(model: Any, tools: <span class="bu">dict</span>[<span class="bu">str</span>, ToolSpec], gate: Gate, meter: Meter) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The chain pattern: code owns the whole sequence.</span></span>
@@ -1823,7 +1840,7 @@ Figure&nbsp;16.5: Which typed states make every run end? Each loop iteration eit
 <span id="cb47-27"><a href="#cb47-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> reply[<span class="st">"content"</span>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The <strong>parallel fan-out</strong> dispatches independent, effect-free reads together and joins the typed results before acting — safe here precisely because the two reads cannot conflict.</p>
-<div id="60b9ddc2" class="cell" data-execution_count="34">
+<div id="4517238f" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb48"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> run_parallel(model: Any, tools: <span class="bu">dict</span>[<span class="bu">str</span>, ToolSpec], gate: Gate, meter: Meter) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The parallel fan-out pattern: independent reads dispatched together.</span></span>
@@ -1855,7 +1872,7 @@ Figure&nbsp;16.5: Which typed states make every run end? Each loop iteration eit
 <span id="cb48-29"><a href="#cb48-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> reply[<span class="st">"content"</span>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The <strong>router</strong> grants the model one bounded decision — classify the request — and code owns everything after it. The failure mode is proportionate to the grant: a misroute contaminates the entire branch, which is why the branch set stays small and the routing decision is worth logging.</p>
-<div id="adeb6461" class="cell" data-execution_count="35">
+<div id="6bd5745c" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> run_router(task: <span class="bu">str</span>, model: Any, tools: <span class="bu">dict</span>[<span class="bu">str</span>, ToolSpec], gate: Gate,</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>               meter: Meter) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
@@ -1884,7 +1901,7 @@ Figure&nbsp;16.5: Which typed states make every run end? Each loop iteration eit
 <span id="cb49-26"><a href="#cb49-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> run_chain(model, tools, gate, meter)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The <strong>evaluator–optimizer</strong> alternates generation with a check, and the check is what makes it more than retry-until-tired: code owns an acceptance criterion — here, that the draft states the exact refunded amount — and each rejection feeds a concrete critique back into the next attempt. A weak criterion rewards cosmetic revision, so the criterion deserves as much design attention as the prompt.</p>
-<div id="80ffc4af" class="cell" data-execution_count="36">
+<div id="5f988fce" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> run_evaluator(model: Any, tools: <span class="bu">dict</span>[<span class="bu">str</span>, ToolSpec], gate: Gate, meter: Meter,</span>
 <span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a>                  max_rounds: <span class="bu">int</span> <span class="op">=</span> <span class="dv">3</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
@@ -1922,7 +1939,7 @@ Figure&nbsp;16.5: Which typed states make every run end? Each loop iteration eit
 <span id="cb50-35"><a href="#cb50-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> draft</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Two of these deserve to be seen actually exercising their distinctive move. The router, given two different requests (with routing turns scripted accordingly), takes two different branches — note the second task never touches the refund tool at all.</p>
-<div id="0df6576e" class="cell" data-execution_count="37">
+<div id="93294210" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> routed_task, script <span class="kw">in</span> [</span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"Order A-17 arrived damaged. Please make this right."</span>,</span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>     ScriptedModel(turns<span class="op">=</span>[answer_message(<span class="st">"billing"</span>),</span>
@@ -1947,7 +1964,7 @@ task: What is your refund policy for damaged orders?
 </div>
 </div>
 <p>And the evaluator, given a scripted drafter whose first attempt omits the amount, visibly spends a second round to satisfy the criterion.</p>
-<div id="bf45a984" class="cell" data-execution_count="38">
+<div id="adaab307" class="cell" data-execution_count="38">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a>tools, effects_e <span class="op">=</span> make_environment()</span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>meter <span class="op">=</span> Meter()</span>
 <span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a>draft_model <span class="op">=</span> ScriptedModel(turns<span class="op">=</span>[</span>
@@ -1963,7 +1980,7 @@ model_calls=2  (round 1 failed the criterion)</code></pre>
 </div>
 </div>
 <p>Now the comparison. We run all five patterns — the fifth being the adaptive agent, our <code>run_agent</code> loop with the over-reaching model from <a href="#sec-ch16-denial" class="quarto-xref"><span>Section 16.4</span></a> — on the same task against fresh environments, and read off what each spent and whether the correct refund landed. A small helper keeps the accounting uniform.</p>
-<div id="3194d7b1" class="cell" data-execution_count="39">
+<div id="c888769b" class="cell" data-execution_count="39">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb55"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> measure(name: <span class="bu">str</span>, run_fn: Callable[..., Any]) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, Any]:</span>
 <span id="cb55-2"><a href="#cb55-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Run one pattern against a fresh environment and record what it spent."""</span></span>
 <span id="cb55-3"><a href="#cb55-3" aria-hidden="true" tabindex="-1"></a>    tools, fx <span class="op">=</span> make_environment()</span>
@@ -1980,7 +1997,7 @@ model_calls=2  (round 1 failed the criterion)</code></pre>
 <span id="cb55-14"><a href="#cb55-14" aria-hidden="true" tabindex="-1"></a>        answer_message(<span class="st">"We refunded 4999 cents for damaged order A-17."</span>),</span>
 <span id="cb55-15"><a href="#cb55-15" aria-hidden="true" tabindex="-1"></a>    ])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="aad71f5f" class="cell" data-execution_count="40">
+<div id="35dc8ae0" class="cell" data-execution_count="40">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb56"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a>rows <span class="op">=</span> [</span>
 <span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a>    measure(<span class="st">"chain"</span>, <span class="kw">lambda</span> t, m: run_chain(drafter(), t, refund_gate, m)),</span>
 <span id="cb56-3"><a href="#cb56-3" aria-hidden="true" tabindex="-1"></a>    measure(<span class="st">"router"</span>, <span class="kw">lambda</span> t, m: run_router(task, ScriptedModel(</span>
@@ -2096,7 +2113,7 @@ Figure&nbsp;16.6: What does each control policy spend on the identical task? Cal
 <section id="sec-ch16-planning" class="level2" data-number="16.7">
 <h2 data-number="16.7" class="anchored" data-anchor-id="sec-ch16-planning"><span class="header-section-number">16.7</span> ReAct, planning, and replanning</h2>
 <p>The adaptive agent we have run so far acts without narrating. ReAct — reason and act — added a simple, influential discipline: interleave visible reasoning with actions and observations, so that each consequential step is grounded in what the environment just said rather than in a plan hallucinated whole at turn one <span class="citation" data-cites="yao2023react">(<a href="../references.html#ref-yao2023react" role="doc-biblioref"><span class="nocase">Yao et al.</span> 2023</a>)</span>. Our wire format already has the slot for it — the <code>content</code> field that rides alongside <code>tool_calls</code> — so a ReAct turn is an assistant message carrying both a thought and an action. Here is a full trace through the gated loop; the thoughts are scripted, like every model output in this chapter, but the interleaving machinery — thought and action arriving together, each next step conditioned on a fresh observation — is exactly the mechanism, and the trace below is really executed.</p>
-<div id="28462f1b" class="cell" data-execution_count="42">
+<div id="f02cb7f2" class="cell" data-execution_count="42">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb59"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a>tools, effects_react <span class="op">=</span> make_environment()</span>
 <span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a>react_model <span class="op">=</span> ScriptedModel(turns<span class="op">=</span>[</span>
 <span id="cb59-3"><a href="#cb59-3" aria-hidden="true" tabindex="-1"></a>    tool_call_message(<span class="st">"t1"</span>, <span class="st">"lookup_order"</span>, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>},</span>
@@ -2129,7 +2146,7 @@ stop=answered  effects=[{'order_id': 'A-17', 'refunded_cents': 4999}]</code></pr
 </div>
 <p>Read the rhythm: thought, action, observation, next thought conditioned on that observation. The engineering value of ReAct is <em>not</em> that the thought text becomes trustworthy — a model can narrate one plan and execute another, which is why our gate never reads the thoughts at all. The value is grounding (the refund amount came from a lookup, not from the model’s prior) plus an operational record: a concise stated reason next to each structured action is easier to audit and redact than raw hidden reasoning, and Chapter 25 examines how far such narrations can be trusted as evidence. ReAct’s successors keep the skeleton and extend the feedback: Reflexion, for example, feeds verbal self-critique from failed episodes back into the next attempt, a memory-shaped idea we build properly in Chapter 18 <span class="citation" data-cites="shinn2023reflexion">(<a href="../references.html#ref-shinn2023reflexion" role="doc-biblioref"><span class="nocase">Shinn et al.</span> 2023</a>)</span>.</p>
 <p>Planning goes one step further than a per-turn thought: the model proposes a <em>future</em> — several steps at once. The temptation is to treat an approved-looking plan as permission to execute it. Resist that: a plan is a hypothesis about dependencies, not an execution grant, and the world can change between planning and acting. Mechanically that means each planned step passes the same gate at execution time, and the executor stops at the first failure so the planner can revise with fresh information.</p>
-<div id="1f849628" class="cell" data-execution_count="43">
+<div id="bca22857" class="cell" data-execution_count="43">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb61"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> execute_plan(plan: <span class="bu">list</span>[<span class="bu">dict</span>[<span class="bu">str</span>, Any]], tools: <span class="bu">dict</span>[<span class="bu">str</span>, ToolSpec],</span>
 <span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a>                 gate: Gate) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">list</span>[Observation], <span class="bu">int</span>]:</span>
@@ -2158,7 +2175,7 @@ stop=answered  effects=[{'order_id': 'A-17', 'refunded_cents': 4999}]</code></pr
 <span id="cb61-26"><a href="#cb61-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> observations, <span class="bu">len</span>(plan)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Our scripted planner drafts its plan before looking anything up, and guesses the refund at 9,999 cents — a stale-information mistake real planners make constantly. Watch the plan survive parsing, start executing, and hit the gate mid-plan.</p>
-<div id="e88124ed" class="cell" data-execution_count="44">
+<div id="7865b13a" class="cell" data-execution_count="44">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb62"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb62-1"><a href="#cb62-1" aria-hidden="true" tabindex="-1"></a>tools, effects_plan <span class="op">=</span> make_environment()</span>
 <span id="cb62-2"><a href="#cb62-2" aria-hidden="true" tabindex="-1"></a>planner <span class="op">=</span> ScriptedModel(turns<span class="op">=</span>[</span>
 <span id="cb62-3"><a href="#cb62-3" aria-hidden="true" tabindex="-1"></a>    answer_message(json.dumps([</span>
@@ -2197,7 +2214,7 @@ stopped at step 1; effect log: []</code></pre>
 </div>
 </div>
 <p>Step 0 executed and step 1 was denied, so the effect log is still empty — the bad half of the plan simply never ran. Now the replanning move: we hand the planner the failure and the fresh observation, and it produces a corrected plan.</p>
-<div id="52ba12d1" class="cell" data-execution_count="45">
+<div id="a27d4595" class="cell" data-execution_count="45">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb64"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a>replan_prompt <span class="op">=</span> (<span class="ss">f"Step </span><span class="sc">{</span>failed_at<span class="sc">}</span><span class="ss"> failed: </span><span class="sc">{</span>observations[<span class="op">-</span><span class="dv">1</span>]<span class="sc">.</span>content<span class="sc">}</span><span class="ss">. "</span></span>
 <span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a>                 <span class="ss">f"The order shows paid_cents=</span><span class="sc">{</span>observations[<span class="dv">0</span>]<span class="sc">.</span>content[<span class="st">'paid_cents'</span>]<span class="sc">}</span><span class="ss">. Replan."</span>)</span>
 <span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a>plan2 <span class="op">=</span> json.loads(planner.chat([{<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: replan_prompt}])[<span class="st">"content"</span>])</span>
@@ -2218,7 +2235,7 @@ completed 1/1 steps; effect log: [{'order_id': 'A-17', 'refunded_cents': 4999}]<
 h_{t+1} \;=\; h_t \oplus \bigl(a_t,\, o_t\bigr), \qquad a_t = \pi(h_t), \qquad o_t = E\bigl(a_t,\, G(a_t)\bigr),
 \tag{16.1}</span></span></p>
 <p>where <span class="math inline">h_t</span> is the transcript at turn <span class="math inline">t</span>, <span class="math inline">\pi</span> is the proposal policy (the model — <code>ScriptedModel.chat</code> here, a hosted model in production), <span class="math inline">a_t</span> its proposed action, <span class="math inline">G</span> the gate, <span class="math inline">E</span> the executor that produces observation <span class="math inline">o_t</span> (a denial when <span class="math inline">G</span> refuses), and <span class="math inline">\oplus</span> appends both to the history. The endings in <a href="#fig-ch16-lifecycle" class="quarto-xref">Figure&nbsp;<span>16.5</span></a> are the absorbing states of the machine <a href="#eq-ch16-step" class="quarto-xref">Equation&nbsp;<span>16.1</span></a> defines, and the budgets guarantee one is reached. Five invariants make the specification testable, and each one is a line of code you have already read: <strong>effect authorization</strong> — no handler runs without validation and gate approval (<code>execute_call</code> is the only call site); <strong>correlation</strong> — every observation carries the id of the proposal that caused it (the <code>tool_call_id</code> echo); <strong>boundedness</strong> — the loop returns within its budgets (the <code>while</code> condition and the token check); <strong>typed endings</strong> — every return path names a <code>Stop</code>; and <strong>outcome separation</strong> — “the model answered” and “the task succeeded” are different predicates, which the rest of this section makes concrete. Because the state is plain data, checking the first four needs no re-running:</p>
-<div id="1a69c44f" class="cell" data-execution_count="46">
+<div id="b2fc2678" class="cell" data-execution_count="46">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb66"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> check_run(result: RunResult, effects: <span class="bu">list</span>[<span class="bu">dict</span>[<span class="bu">str</span>, Any]],</span>
 <span id="cb66-3"><a href="#cb66-3" aria-hidden="true" tabindex="-1"></a>              limits: Limits) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">bool</span>]:</span>
@@ -2252,7 +2269,7 @@ h_{t+1} \;=\; h_t \oplus \bigl(a_t,\, o_t\bigr), \qquad a_t = \pi(h_t), \qquad o
 <span id="cb66-31"><a href="#cb66-31" aria-hidden="true" tabindex="-1"></a>        <span class="st">"typed_ending"</span>: <span class="bu">isinstance</span>(result.stop, Stop),</span>
 <span id="cb66-32"><a href="#cb66-32" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="cd8de621" class="cell" data-execution_count="47">
+<div id="2869ba79" class="cell" data-execution_count="47">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb67"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(check_run(result_gated, effects_gated, Limits()))</span>
 <span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(check_run(result_s, effects_stub, Limits()))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -2261,7 +2278,7 @@ h_{t+1} \;=\; h_t \oplus \bigl(a_t,\, o_t\bigr), \qquad a_t = \pi(h_t), \qquad o
 </div>
 </div>
 <p>Both the successful denial-recovery run and the no-progress run satisfy all four — which is the point of a specification: the <em>unsuccessful</em> run is still a <em>correct</em> run, because failing inside the rules is an outcome the system was designed to produce. The fifth invariant needs the environment. <code>answered</code> is a control-flow fact; whether the customer was actually made whole is a question only the effect log can answer, and conflating the two is the most common measurement error in agent systems. The verifier is three lines:</p>
-<div id="f7084d46" class="cell" data-execution_count="48">
+<div id="1ac3f5f6" class="cell" data-execution_count="48">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb69"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb69-2"><a href="#cb69-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> verify_refund(effects: <span class="bu">list</span>[<span class="bu">dict</span>[<span class="bu">str</span>, Any]], order_id: <span class="bu">str</span>, amount_cents: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">bool</span>:</span>
 <span id="cb69-3"><a href="#cb69-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Decide task success from the environment, not from the answer text.</span></span>
@@ -2282,7 +2299,7 @@ h_{t+1} \;=\; h_t \oplus \bigl(a_t,\, o_t\bigr), \qquad a_t = \pi(h_t), \qquad o
 <span id="cb69-18"><a href="#cb69-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> effects <span class="op">==</span> [{<span class="st">"order_id"</span>: order_id, <span class="st">"refunded_cents"</span>: amount_cents}]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>And here is the model it exists to catch — one that announces success without ever proposing a tool call:</p>
-<div id="0f8bcee6" class="cell" data-execution_count="49">
+<div id="2dbcb83b" class="cell" data-execution_count="49">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb70"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb70-1"><a href="#cb70-1" aria-hidden="true" tabindex="-1"></a>tools, effects_liar <span class="op">=</span> make_environment()</span>
 <span id="cb70-2"><a href="#cb70-2" aria-hidden="true" tabindex="-1"></a>liar <span class="op">=</span> ScriptedModel(turns<span class="op">=</span>[</span>
 <span id="cb70-3"><a href="#cb70-3" aria-hidden="true" tabindex="-1"></a>    answer_message(<span class="st">"Good news - your refund for order A-17 is complete!"</span>),</span>
