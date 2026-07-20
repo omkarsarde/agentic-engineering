@@ -1,127 +1,145 @@
 ---
-description: "Compare three mature agent families by the observations, actions, verifiers, commit points, and recovery paths that make each one dependable."
+description: "Build a minimal coding agent — read, edit, run-tests — and score it on an embedded task suite, then carry the same observation-verifier-commit contract through conversational, computer-use, deep-research, and data-analytics agents, catching a mis-cited claim and a join fan-out in code."
 ---
 
-# Agent Applications: Coding, Deep Research, and Computer Use [S] {#sec-ch21}
+# Agent Applications: Coding, Conversational, Computer Use, Data, and Deep Research {#sec-ch21}
 
-## What you need going in
+A coding agent edits the right function, announces the bug is fixed, and leaves one regression failing. A customer-service agent tells a caller their refund is processed while the account still shows the charge. A browser agent reports an order cancelled after clicking a control that no longer does anything. These read as three unrelated product failures. Structurally they are one: the system trusted the model's account of success instead of checking an authoritative postcondition. Every mature agent application is built to close that exact gap, and this chapter builds the machinery that closes it.
 
-> **Assumed:** neural-network fundamentals, production Python, ordinary software tests, web applications, and the difference between a model response and an application-side effect.
->
-> **From earlier chapters:** [Chapter 16](16-agent-anatomy.qmd) supplies the proposal–gate–execute–observe loop and typed endings. [Chapter 17](17-tool-harness-engineering.qmd) supplies tool contracts, workspace boundaries, approval mechanics, and resumable harness state. Chapter 15 owns query planning and agentic retrieval; this chapter consumes those mechanisms without reteaching them.
->
-> **Not required:** a particular coding-agent framework, browser driver, hosted model, multi-agent topology, or GUI vision model. Pixel-based GUI perception is deliberately deferred to Chapter 29, the second audited forward dependency on both reading routes.
-
-## Contents
-
-- [One loop, three application contracts](#sec-ch21-contracts)
-- [The action–verification boundary is the architecture](#sec-ch21-boundary)
-- [Coding: treat the repository as executable state](#sec-ch21-coding)
-- [Deep research: build an evidence ledger before prose](#sec-ch21-research)
-- [Computer use: prefer semantic controls, then bind action to observation](#sec-ch21-computer-use)
-- [Rigor where the verifier is weak](#sec-ch21-rigor)
-- [Escalation follows authority and reversibility](#sec-ch21-risk)
-- [Choose the smallest architecture that can prove completion](#sec-ch21-choice)
-- [Build](#sec-ch21-build)
-- [What endures, what changes](#sec-ch21-endures)
-- [Exercises](#sec-ch21-exercises)
-- [Notes and sources](#sec-ch21-sources)
-
-## What you will build
-
-::: {.callout-tip}
-### One coding agent, six repositories, one honest verifier
-
-The artifact under `code/ch21/` materializes six tiny repository fixtures, observes a structural repository map, accepts a constrained edit proposal, emits a unified-diff receipt, runs the repository's tests, and feeds a failed test back into a bounded repair loop. One task requires repair; another proposes a path outside the workspace and is rejected before execution. The proposal source is scripted so the default run is local and deterministic. Success means six resolved tasks, seven test runs, eight proposals, one rejected edit, no edited tests, and no write outside an isolated temporary workspace.
-:::
-
-## One loop, three application contracts {#sec-ch21-contracts}
-
-A coding agent edits the right function, reports that the bug is fixed, and leaves one regression failing. A research agent produces a polished report whose citations lead to relevant pages but do not support the adjacent claims. A browser agent says an order was cancelled after clicking a stale control, while the order remains active. These look like different product failures. Structurally, they are the same failure: the system accepted the model's account of success instead of checking an authoritative postcondition.
-
-“Agent application” should therefore mean more than a model plus domain-flavored tools. It is a contract over six application-specific elements:
-
-1. **Observation:** which representation of the current environment enters the loop, and how fresh it is.
-2. **Proposal vocabulary:** which next actions the model may express.
-3. **Execution boundary:** which component validates and performs a proposal.
-4. **Verifier:** which observation can establish the requested postcondition.
-5. **Commit point:** when provisional work becomes externally meaningful.
-6. **Recovery path:** how the system repairs, reverses, compensates, or escalates after failure.
-
-The generic loop from Chapter 16 remains intact. What changes is the body attached to each seam.
-
-| Contract element | Coding | Deep research | Computer use |
-|---|---|---|---|
-| Primary observation | Repository snapshot, issue, build metadata, test output | Research brief, source records, claim ledger, contradictions | Live DOM or accessibility tree, application state, optional screenshot |
-| Proposal vocabulary | Inspect, patch, run a bounded command, test | Search, browse, extract, calculate, challenge, draft | Navigate, select semantic element, type, invoke command, request takeover |
-| Strongest ordinary verifier | Deterministic tests and static checks against final files | Claim–evidence support, coverage, provenance, contradiction review | Application state, receipt, or backend record after the action |
-| Commit point | Accepted patch, branch, or merge | Reviewed report or downstream decision | Externally visible state change |
-| Recovery | Revert patch and rerun | Correct or retract claims; reopen search | Undo when supported; otherwise compensate or escalate |
-| Characteristic risk | Test gaming and repository damage | Plausible unsupported synthesis | Acting on stale or misperceived state |
-
-```{mermaid}
-%%| label: fig-ch21-application-contract
-%%| fig-cap: "The invariant loop stays fixed; each application supplies a different observation, action language, verifier, and commit boundary."
-%%| fig-alt: "A shared observe, propose, validate and execute, verify, commit loop branches into coding with repositories and tests, research with evidence ledgers and claim checks, and computer use with semantic UI state and post-action state assertions."
-flowchart LR
-    O["Observe"] --> P["Propose"] --> X["Validate and execute"] --> V["Verify"]
-    V -->|"not done"| O
-    V -->|"postcondition holds"| C["Commit"]
-    K["Coding: repo + tests"] -. "supplies contract" .-> O
-    R["Research: ledger + claim support"] -. "supplies contract" .-> O
-    U["Computer use: live UI + state receipt"] -. "supplies contract" .-> O
-```
-
-The figure's design claim is narrow: reuse the loop kernel, not the entire application architecture. A universal `act()` tool or universal “critic” hides the distinctions that determine whether an application can prove completion.
-
-This comparison also explains why capability transfers unevenly. A model can be excellent at proposing code and weak at manipulating a desktop because its observation representation and grounding problem changed. It can browse broadly and still produce unreliable research because discovering a source and proving a claim are separate operations. Model choice matters, but the application contract determines how much unverified model judgment reaches the user.
+We build one thing all the way through — a minimal coding agent that reads a repository map, proposes a constrained edit, runs the repository's own tests, feeds a failure back into a bounded repair loop, and refuses to write outside its workspace — and score it on a small embedded task suite with the counts shown. Then we carry the same skeleton across the other families the title names, each with a runnable fragment that produces a shown result: a policy-gated refund verified against final account state; a computer-use step that re-resolves a control and checks the resulting state rather than the click; a deep-research citation audit that catches a claim its source does not support; and a data-analytics gate that catches a join fan-out inflating a total. The unifying claim is that an agent application is not a model plus domain tools — it is a **contract over six seams**: which observation enters the loop, which actions the model may propose, which component executes them, which observation verifies the postcondition, when provisional work commits, and how the system recovers. Chapter 16 owns the raw loop these seams wrap; here we fill the seams in per family. Pixel-based GUI perception is the one piece we defer, to Chapter 29.
 
 ## The action–verification boundary is the architecture {#sec-ch21-boundary}
 
-Every application should separate **provisional state** from **committed state**. A proposed patch in an isolated checkout is provisional. Extracted notes in an evidence ledger are provisional. Text entered into a form before submission is provisional. The model may change provisional state repeatedly because mistakes remain cheap. Promotion to committed state requires an application-owned rule.
+Start with the single design decision every application shares: separate **provisional state** from **committed state**. A proposed patch in an isolated checkout is provisional. Notes in an evidence ledger are provisional. Text typed into a form before submission is provisional. The model may rewrite provisional state as often as it likes because mistakes there are cheap. Promotion to committed state — a merged branch, a published report, a submitted form, a moved dollar — is where mistakes become expensive, and that promotion must be gated by an application-owned rule, never by the model's confidence.
 
-Let (s_0) be the observed starting state, (a) a proposed action, and (s_1) the state observed after execution. The model predicts that (a) advances goal (g). The application decides completion with a verifier:
+That rule is a verifier. Let $s_0$ be the observed starting state, $a$ a proposed action, $s_1$ the state observed after execution, and $g$ the goal. The application decides completion with
 
-\[
-V(s_0, a, s_1, g) \in \{\text{pass},\text{fail},\text{unknown}\}.
-\]
+$$
+V(s_0, a, s_1, g) \in \{\text{pass}, \text{fail}, \text{unknown}\}.
+$$ {#eq-ch21-verifier}
 
-The third value matters. A timeout does not prove a code change wrong. An inaccessible article does not prove a research claim false. A missing confirmation banner does not prove that a backend write failed. Collapsing `unknown` into either success or failure causes duplicate actions, false completion, and unsafe retries. Typed uncertainty lets the policy inspect, retry safely, reconcile, or ask a human.
+The third value earns its keep. A test timeout does not prove a code change wrong. An unreachable article does not prove a research claim false. A missing confirmation banner does not prove a backend write failed. Collapsing `unknown` into `pass` invents completion; collapsing it into `fail` triggers duplicate actions and unsafe retries. A typed `unknown` lets the policy re-observe, retry safely, reconcile, or escalate. A useful verifier has four properties, and each family below is really an argument about how to get them:
 
-A useful verifier has four properties:
+- **Authority:** it measures the state that matters, not the model's narration of that state.
+- **Specificity:** it corresponds to the user's postcondition, not to an intermediate action.
+- **Freshness:** it is taken after the action and identifies the environment version it saw.
+- **Independence:** the same proposal cannot corrupt both the work and its check.
 
-- **Authority:** it measures the state that matters, rather than the model's narration of that state.
-- **Specificity:** it corresponds to the user's postcondition, not merely to an intermediate action.
-- **Freshness:** it is taken after the proposed action and identifies the relevant environment version.
-- **Independence:** it is difficult for the same proposal to corrupt both the work and the check.
+The generic loop from Chapter 16 stays fixed; what each application changes is the body attached to each seam. @fig-ch21-application-contract draws the shared loop branching into three of the contracts we build.
 
-Tests are strong only when they capture the requirement and remain read-only to the agent. Citations are strong only when they support the associated atomic claim and preserve source provenance. A UI banner is strong only when the product defines it as an authoritative outcome; a backend record or transaction receipt is often better.
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch21-application-contract
+%%| fig-cap: "One loop, many contracts: the observe-propose-execute-verify-commit kernel is invariant, while coding, research, and computer use each supply a different observation, action vocabulary, verifier, and commit boundary."
+%%| fig-alt: "A shared observe, propose, validate-and-execute, verify, commit loop branches into coding with repositories and tests, research with an evidence ledger and claim checks, and computer use with a live UI and a post-action state check."
+flowchart LR
+    O["Observe"] --> P["Propose"] --> X["Validate + execute"] --> V["Verify"]
+    V -->|"not done"| O
+    V -->|"postcondition holds"| C["Commit"]
+    K["Coding: repo + tests"] -. "fills the seams" .-> O
+    R["Research: ledger + claim support"] -. "fills the seams" .-> O
+    U["Computer use: live UI + state receipt"] -. "fills the seams" .-> O
+```
 
-Verification strength and reversibility jointly determine autonomy. When both are strong, the loop may iterate without frequent intervention. When the verifier is weak but the work is reversible, the agent can draft or stage work for review. When a verifier is weak and an effect is hard to reverse, human approval belongs before the commit point. Chapter 24 owns adversarial controls and Chapter 27 owns operational review queues; this chapter uses that policy boundary to compare applications.
+Two forces set how much autonomy a seam can safely carry: how strong the verifier is, and how reversible the effect is. When both are strong the loop can iterate on its own. When the verifier is weak but the work is reversible, the agent can draft and stage for human review. When the verifier is strong but the effect is hard to undo, a single gated commit is right. When both are weak, the system stays advisory. That is a function, so we write it as one.
 
-Freshness deserves special treatment. Repositories change between inspection and patch application. Sources are updated or disappear between extraction and publication. Web pages rerender between a snapshot and a click. Bind a proposal to the version it observed: commit hash and file digest, source URL plus retrieval time and content hash, page or element reference plus application state. Re-observe before a consequential commit. This is the application-level form of the approval-to-execution race from Chapter 17.
+```{python}
+# @save
+from __future__ import annotations
 
-## Coding: treat the repository as executable state {#sec-ch21-coding}
 
-Code generation becomes coding agency when the model can inspect and change a repository, execute programs, interpret failures, and iterate. The repository is not a bag of source text. It is a stateful environment containing source, tests, dependency locks, generators, build scripts, migrations, conventions, and version history. The useful output is not a persuasive explanation. It is a minimal patch that satisfies the intended behavior without breaking protected behavior.
+def autonomy_regime(verification: float, reversibility: float) -> str:
+    """Map a (verification strength, reversibility) pair to an autonomy regime.
 
-The Agent–Computer Interface (ACI) determines what the model can express and observe. A single unrestricted shell can represent almost any operation, but it offers weak intent typing, noisy output, and a large blast radius. A practical coding surface combines a few bounded capabilities:
+    Autonomy is not a property of the model; it follows from whether completion
+    can be proven and whether a mistake can be undone. Strong-and-reversible
+    earns free iteration; weak-but-reversible earns staged drafts;
+    strong-but-irreversible earns a single gated commit; weak-and-irreversible
+    stays advisory.
 
-- structural repository mapping and targeted file inspection;
-- literal, range-based, or patch-based edits with path controls;
-- search over names and references;
-- bounded commands for tests, formatting, static analysis, and build steps;
-- version-control inspection and diff receipts;
-- concise observations that retain the failing assertion, command, exit status, and relevant location.
+    Args:
+        verification: Strength of the available verifier in [0, 1].
+        reversibility: Ease of undoing the effect in [0, 1].
 
-A **repository map** is an orientation layer, not a replacement for retrieval. Paths, module summaries, top-level symbols, dependency edges, and changed-file status help the model choose where to inspect. Complete contents should be loaded on demand. Chapter 15 owns the algorithms for locating relevant code in large repositories; the application concern here is that every retrieved fragment is tied to a repository revision and that edits are applied to the same revision.
+    Returns:
+        One of four regime labels.
+    """
+    strong, reversible = verification >= 0.5, reversibility >= 0.5
+    if strong and reversible:
+        return "iterate freely"
+    if not strong and reversible:
+        return "stage for review"
+    if strong and not reversible:
+        return "verify, then commit"
+    return "advisory (human commits)"
+```
 
-Edit format is another capability surface. Whole-file replacement is simple but expands diffs and overwrites concurrent changes. Line numbers are compact but become stale after prior edits. Free-form search-and-replace is readable but ambiguous when the target repeats. Unified diffs express locality and produce familiar review artifacts, yet a production patch applier must handle context drift and parser edge cases. Structured edits can name a file, anchor, expected old text, replacement, and observed file digest. There is no universal winner: measure malformed edits, unintended changed lines, repair turns, and task completion for the model and repository distribution you deploy.
+We place each family this chapter builds at its rough coordinates and read off the regime.
 
-The teaching artifact uses an exact single-occurrence replacement while emitting a unified diff as its receipt. Its model-facing proposal is intentionally small:
+```{python}
+families = {
+    "coding (tests)": (0.9, 0.9),
+    "deep research": (0.3, 0.85),
+    "analytics": (0.45, 0.9),
+    "refund tool": (0.85, 0.35),
+    "computer-use commit": (0.65, 0.2),
+}
+for name, (v, r) in families.items():
+    print(f"{name:22} verify={v:.2f} reversible={r:.2f} -> {autonomy_regime(v, r)}")
+```
 
-```python
-# coding_agent.py — the proposal and trace contracts
+Coding lands in "iterate freely" because good tests are a strong verifier and a patch is trivial to revert; deep research and analytics land in "stage for review" because their verifiers are semantic and weak while their work is cheap to redo; the refund tool and the money-moving browser action demand "verify, then commit" because the effect is hard to undo. @fig-ch21-autonomy-regimes plots the four regimes as quadrants so the placement is visual rather than asserted.
+
+```{python}
+#| label: fig-ch21-autonomy-regimes
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "When can an agent commit on its own? Verification strength and reversibility divide the plane into four regimes; each application this chapter builds sits where its verifier and undo cost put it."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(6.4, 4.4))
+ax.axhline(0.5, color="0.7", lw=1)
+ax.axvline(0.5, color="0.7", lw=1)
+for name, (v, r) in families.items():
+    ax.plot(v, r, "o", color="#b13f3f")
+    ax.annotate(name, (v, r), textcoords="offset points", xytext=(6, 5), fontsize=8)
+for x, y, label in [(0.75, 0.95, "iterate freely"), (0.22, 0.95, "stage for review"),
+                    (0.75, 0.03, "verify, then commit"), (0.22, 0.03, "advisory")]:
+    ax.text(x, y, label, ha="center", fontsize=9, color="0.4")
+ax.set_xlim(0, 1.05)
+ax.set_ylim(0, 1.05)
+ax.set_xlabel("verification strength")
+ax.set_ylabel("reversibility")
+fig.tight_layout()
+plt.show()
+```
+
+Freshness needs one more note because it is the quiet source of the failures in the opening. Repositories change between inspection and patch. Sources are updated between extraction and publication. Pages rerender between a snapshot and a click. Bind every proposal to the version it observed — a commit hash and file digest, a URL plus retrieval time, a page reference plus a tree digest — and re-observe before a consequential commit. This is the application-level form of the approval-to-execution race from Chapter 17, and each section below pays it off in code.
+
+## Coding: the repository is executable state {#sec-ch21-coding}
+
+Code generation becomes coding *agency* when the model can inspect and change a repository, run programs, read failures, and iterate. The repository is not a bag of source text; it is a stateful environment — source, tests, locks, build scripts, conventions, history — and the useful output is not an explanation but a minimal patch that satisfies the intended behavior without breaking protected behavior. The Agent–Computer Interface (ACI) is what the model can observe and express, and its design changes agent behavior more than most prompt tweaks do [@yang2024sweagent]. We build a small ACI whose defining property is that **the executor, not the model, owns every invariant.**
+
+The model's proposal vocabulary is one small value: an edit naming a file, an anchor to replace, its replacement, and a reason. The result of a task is another: the outcome plus countable evidence.
+
+```{python}
+# @save
+import ast
+import difflib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+class EditRejected(ValueError):
+    """Raised when a proposed edit violates an executor-owned invariant."""
+
+
 @dataclass(frozen=True)
 class Edit:
     path: str
@@ -129,8 +147,17 @@ class Edit:
     new: str
     reason: str
 
+
 @dataclass
 class TaskResult:
+    """The countable outcome of one task plus its full event trace.
+
+    Everything an auditor needs lives here: whether the task resolved, how many
+    proposals and test runs it cost, how many edits were rejected before
+    execution, and an ordered event log. The counts are what we score; the
+    events are what we read when a count surprises us.
+    """
+
     task_id: str
     resolved: bool = False
     proposals: int = 0
@@ -139,18 +166,70 @@ class TaskResult:
     events: list[dict[str, Any]] = field(default_factory=list)
 ```
 
-The executor, not the model, owns the invariants. It resolves the path against the workspace, refuses test-file edits, requires one exact anchor, parses the resulting Python, writes the file, and returns a reviewable receipt:
+The first invariant is containment. Before any edit is applied, the target path is resolved and three rules are enforced: it may not escape the workspace, it may touch only Python source, and it may not rewrite a test file — because an agent that can edit its own oracle can "pass" by deleting the assertion.
 
-```python
-# coding_agent.py — the constrained edit seam
+```{python}
+# @save
+def safe_path(root: Path, relative: str, *, allow_tests: bool = False) -> Path:
+    """Resolve a repository-relative path and refuse anything outside the rules.
+
+    The executor, not the model, owns three invariants here: an edit may not
+    escape the workspace, may touch only Python source, and may not rewrite a
+    test file (which would let the agent pass by changing the oracle).
+
+    Args:
+        root: Absolute path of the isolated workspace.
+        relative: Path the proposal named, relative to ``root``.
+        allow_tests: Whether ``test_*.py`` targets are writable; only
+            materialization sets this, never an edit.
+
+    Returns:
+        The resolved absolute path inside the workspace.
+
+    Raises:
+        EditRejected: If the path escapes the workspace, is not ``.py``, or
+            names a read-only test file.
+    """
+    candidate = (root / relative).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise EditRejected(f"path escapes workspace: {relative}")
+    if candidate.suffix != ".py":
+        raise EditRejected(f"only Python source files are editable: {relative}")
+    if not allow_tests and candidate.name.startswith("test_"):
+        raise EditRejected(f"tests are read-only: {relative}")
+    return candidate
+```
+
+The edit itself is an exact single-occurrence replacement. Two admission checks matter: the anchor must occur exactly once, so the edit is unambiguous, and the result must parse, so a broken file never reaches the test runner. Syntax validity is only an admission gate — the authoritative check comes later. The receipt is a unified diff, the artifact a human reviewer already knows how to read.
+
+```{python}
+# @save
 def apply_edit(root: Path, edit: Edit) -> str:
+    """Apply one exact single-occurrence replacement and return a diff receipt.
+
+    The admission checks are the whole point: the anchor text must occur exactly
+    once (so the edit is unambiguous), and the result must parse as Python (so a
+    broken file never reaches the test runner). Syntax validity is only an
+    admission gate; the authoritative check is the test run that follows.
+
+    Args:
+        root: Absolute workspace path.
+        edit: The proposed edit, naming a file, an anchor, and its replacement.
+
+    Returns:
+        A unified-diff string documenting exactly what changed.
+
+    Raises:
+        EditRejected: If the file is missing, the anchor is absent or repeated,
+            or the edited file would not parse.
+    """
     target = safe_path(root, edit.path)
     if not target.is_file():
         raise EditRejected(f"file does not exist: {edit.path}")
     before = target.read_text(encoding="utf-8")
     occurrences = before.count(edit.old)
     if occurrences != 1:
-        raise EditRejected(f"old text must occur once, found {occurrences}: {edit.path}")
+        raise EditRejected(f"anchor must occur once, found {occurrences}: {edit.path}")
     after = before.replace(edit.old, edit.new, 1)
     try:
         ast.parse(after)
@@ -165,271 +244,694 @@ def apply_edit(root: Path, edit: Edit) -> str:
     )
 ```
 
-Syntax validity is only an admission check. The authoritative observation is the repository's test command, executed after the edit. A failed assertion becomes evidence for the next proposal; it is not an invitation to rewrite the assertion.
+The model orients itself with a **repository map**, not the full source: an orientation layer listing each file with its line count and top-level symbols, so the loop can request contents on demand instead of paying for the whole tree every turn. Chapter 15 owns the retrieval that finds relevant code in large repositories; here the map is a few lines, and a companion helper writes a task's files into a fresh workspace.
 
-```{mermaid}
-%%| label: fig-ch21-coding-sequence
-%%| fig-cap: "A coding agent earns completion from a post-edit test observation; a plausible patch is only provisional."
-%%| fig-alt: "Sequence diagram in which the agent reads a repository map, proposes a patch, the executor validates and applies it, and the test runner returns a failure. The agent proposes a repair, tests pass, and only then does the application accept the patch."
-sequenceDiagram
-    participant A as Agent policy
-    participant E as Edit executor
-    participant R as Isolated repository
-    participant T as Test runner
-    A->>R: inspect map and relevant files
-    A->>E: propose patch bound to observed text
-    E->>E: validate path, anchor, syntax
-    E->>R: apply provisional edit
-    E->>T: run declared tests
-    T-->>A: failing assertion and exit status
-    A->>E: propose bounded repair
-    E->>R: apply repair
-    E->>T: rerun tests
-    T-->>E: postcondition passes
-    E-->>A: commit-eligible diff receipt
+```{python}
+# @save
+def materialize(task: dict[str, Any], root: Path) -> None:
+    """Write a task's files into a fresh workspace before the loop starts.
+
+    Args:
+        task: A task record whose ``files`` maps repository-relative paths to
+            their contents; test files are written with ``allow_tests`` set.
+        root: The empty workspace directory to populate.
+    """
+    for relative, contents in task["files"].items():
+        target = safe_path(root, relative, allow_tests=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(contents, encoding="utf-8")
+
+
+def repository_map(root: Path) -> list[dict[str, Any]]:
+    """Return an orientation layer: paths and top-level symbols, not full source.
+
+    A repository map is what the model reads to decide *where* to look. It lists
+    each file with its line count and its top-level function and class names, so
+    the loop can request full contents on demand instead of paying for the whole
+    tree on every turn.
+
+    Args:
+        root: Absolute path of the workspace to summarize.
+
+    Returns:
+        One record per ``.py`` file with ``path``, ``lines``, and ``symbols``.
+    """
+    result: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        try:
+            symbols = [
+                node.name
+                for node in ast.parse(source).body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ]
+        except SyntaxError:
+            symbols = ["<syntax-error>"]
+        result.append(
+            {"path": path.relative_to(root).as_posix(), "lines": source.count("\n") + 1,
+             "symbols": symbols}
+        )
+    return result
 ```
 
-The shell, edit, and test loop should have separate policy. Read-only inspection can be broad. Build commands need CPU, memory, time, network, and output limits. Edits need path and file-class controls. Tests need an environment the agent cannot redefine. A command that exits zero is not sufficient if it ran the wrong test target, skipped tests, or reused stale build output. Record the exact command, repository revision, dependency image, resource envelope, and test-selection rule.
+The suite is six tiny tasks stored beside the chapter; each has an issue, a buggy source file, a test file, and a scripted list of proposals. Scripting the proposals is the honest simplification: with no model in the loop, every reader sees the same rejection and the same repair, and swapping in a real model means replacing only the proposal source. We load the suite and print the map the agent would see for one task.
 
-Repository-level benchmarks such as SWE-bench made an essential contribution: the environment and executable verifier are part of the task. Their scores are not portable model constants. Dataset filtering, issue ambiguity, test adequacy, repository exposure, scaffold, dependency image, CPU and memory limits, timeout, and retry policy all change the construct. The chapter fixture is not a miniature SWE-bench and its six-of-six result makes no capability claim. Chapter 22 owns statistical comparison and release decisions.
+```{python}
+tasks = json.loads(Path("data/ch21/tasks.json").read_text(encoding="utf-8"))
+print(f"{len(tasks)} tasks:", [t["id"] for t in tasks])
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `coding_agent.py` complete | 197 lines total; fewer than 50 shown | A patch cannot escape the workspace or edit tests, and completion requires tests observed after the edit. |
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory).resolve()
+    materialize(next(t for t in tasks if t["id"] == "minimum-repair"), root)
+    for entry in repository_map(root):
+        print(f"  {entry['path']:16} {entry['lines']:2d} lines  symbols={entry['symbols']}")
+```
+
+The map exposes structure, not source: the agent learns that `choose.py` defines `minimum` and that `test_choose.py` exists and is off-limits, without loading either in full. The authoritative verifier is the repository's own test command, run *after* an edit. A pass requires the process to exit zero; a timeout returns `fail` with an honest reason rather than a guess.
+
+```{python}
+# @save
+def run_tests(root: Path, timeout_seconds: float = 8.0) -> tuple[bool, str]:
+    """Run the repository's own test command as the authoritative verifier.
+
+    Completion is earned from this observation, taken *after* an edit, not from
+    the model's narration that the bug is fixed. A ``pass`` requires the process
+    to exit zero; a timeout returns ``fail`` with an honest reason rather than
+    an unknown collapsed into either verdict.
+
+    Args:
+        root: Workspace to run the tests in.
+        timeout_seconds: Wall-clock bound on the test process.
+
+    Returns:
+        A ``(passed, observation)`` pair; the observation is the tail of the
+        combined stdout and stderr, kept short enough to feed back to the model.
+    """
+    command = [sys.executable, "-m", "unittest", "discover", "-s", ".", "-p", "test_*.py"]
+    environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    try:
+        done = subprocess.run(command, cwd=root, env=environment, capture_output=True,
+                              text=True, timeout=timeout_seconds, check=False)
+        return done.returncode == 0, (done.stdout + done.stderr)[-600:]
+    except subprocess.TimeoutExpired:
+        return False, f"TIMEOUT after {timeout_seconds:.1f}s"
+```
+
+Now the loop that ties the seams together. It materializes the workspace, records the map, and for each scripted proposal within a budget: applies the edit (or records a rejection), runs the tests, and — only if they pass — commits. The budget bounds recovery from both failing tests and rejected edits, which is why it is a semantic knob, not a timeout.
+
+```{python}
+# @save
+def solve_task(task: dict[str, Any], max_proposals: int = 3) -> TaskResult:
+    """Drive one task through the observe-propose-execute-verify-commit loop.
+
+    Proposals are scripted so every reader sees the same rejection and repair;
+    swapping in a real model means replacing only this proposal source. The
+    executor owns every invariant, so a wrong or malicious proposal costs a
+    rejection or a failing test, never workspace damage or a gamed oracle.
+
+    Args:
+        task: One task record with ``id``, ``files``, and ``proposals``.
+        max_proposals: How many proposals the loop may spend before giving up;
+            this is the repair budget, and it bounds recovery from both failing
+            tests and rejected edits.
+
+    Returns:
+        A :class:`TaskResult` with the outcome, the counts, and the full event
+        trace for audit.
+    """
+    result = TaskResult(task_id=task["id"])
+    with tempfile.TemporaryDirectory(prefix=f"ch21-{task['id']}-") as directory:
+        root = Path(directory).resolve()
+        materialize(task, root)
+        result.events.append({"kind": "observe", "repo_map": repository_map(root)})
+        for raw in task["proposals"][:max_proposals]:
+            result.proposals += 1
+            edit = Edit(**raw)
+            result.events.append({"kind": "propose", "path": edit.path, "reason": edit.reason})
+            try:
+                receipt = apply_edit(root, edit)
+            except EditRejected as exc:
+                result.rejected_edits += 1
+                result.events.append({"kind": "reject", "reason": str(exc)})
+                continue
+            result.events.append({"kind": "execute", "diff": receipt})
+            passed, observation = run_tests(root)
+            result.test_runs += 1
+            result.events.append({"kind": "verify", "passed": passed, "observation": observation})
+            if passed:
+                result.resolved = True
+                result.events.append({"kind": "commit"})
+                break
+    return result
+```
+
+```{python}
+# @save
+def run_suite(tasks: list[dict[str, Any]], max_proposals: int = 3) -> dict[str, Any]:
+    """Score every task and aggregate the loop's countable outcomes.
+
+    Args:
+        tasks: The task list to score.
+        max_proposals: Repair budget passed to each task.
+
+    Returns:
+        A report dict with the task count and the summed resolved, proposal,
+        test-run, and rejected-edit counts, plus each task's result.
+    """
+    results = [solve_task(task, max_proposals=max_proposals) for task in tasks]
+    return {
+        "tasks": len(results),
+        "resolved": sum(r.resolved for r in results),
+        "proposals": sum(r.proposals for r in results),
+        "test_runs": sum(r.test_runs for r in results),
+        "rejected_edits": sum(r.rejected_edits for r in results),
+        "results": [asdict(r) for r in results],
+    }
+```
+
+We score the suite at three repair budgets at once, then read the aggregates off the full-budget run.
+
+```{python}
+sweep = {budget: run_suite(tasks, max_proposals=budget) for budget in (1, 2, 3)}
+report = sweep[3]
+print(f"tasks={report['tasks']} resolved={report['resolved']} "
+      f"proposals={report['proposals']} test_runs={report['test_runs']} "
+      f"rejected_edits={report['rejected_edits']}")
+print("resolved by budget:", {b: sweep[b]["resolved"] for b in (1, 2, 3)})
+```
+
+Six tasks resolve using eight proposals but only seven test runs — the missing run is the one rejected edit, which never reaches the test runner. That gap is the point: the executor's guard fires before execution, so a bad proposal costs a rejection, not a test. The aggregate hides the two tasks that actually teach, so we print the full trace for `minimum-repair`, where the first plausible patch fails and the second is proposed only after seeing the failure.
+
+```{python}
+def show_trace(result: dict[str, Any]) -> None:
+    for event in result["events"]:
+        kind = event["kind"]
+        if kind == "observe":
+            print(f"observe   repository map: {len(event['repo_map'])} files")
+        elif kind == "propose":
+            print(f"propose   {event['path']}: {event['reason']}")
+        elif kind == "execute":
+            change = event["diff"].strip().splitlines()[-1]
+            print(f"execute   applied  {change}")
+        elif kind == "verify":
+            tail = "" if event["passed"] else event["observation"].strip().splitlines()[-1]
+            print(f"verify    passed={event['passed']}  {tail}")
+        elif kind == "reject":
+            print(f"reject    {event['reason']}")
+        elif kind == "commit":
+            print("commit    tests pass after the edit -> commit-eligible")
+
+
+show_trace(next(r for r in report["results"] if r["task_id"] == "minimum-repair"))
+```
+
+Read it top to bottom: the agent proposes `values[-1]`, the tests fail with a concrete counterexample, and *that observation* — not a second guess in the dark — drives the repair to `min(values)`, which passes and commits. A failed assertion is evidence for the next proposal; it is never an invitation to rewrite the assertion. The `workspace-guard` task shows the other guard: a proposal aimed outside the workspace is rejected before any write, then the local edit succeeds.
+
+```{python}
+show_trace(next(r for r in report["results"] if r["task_id"] == "workspace-guard"))
+```
+
+The rejection happens before the test runner is ever invoked, which is why the suite counted eight proposals but seven runs. Now vary the one knob and re-measure: shrink the repair budget and watch the two feedback-dependent tasks fall, as @fig-ch21-repair-budget plots.
+
+```{python}
+#| label: fig-ch21-repair-budget
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why is a proposal budget semantic, not a timeout? At one proposal the repair task and the workspace-guard task cannot recover; a second proposal is what buys back the two tasks that depend on feedback."
+fig, ax = plt.subplots(figsize=(6.2, 3.2))
+budgets = sorted(sweep)
+ax.bar([str(b) for b in budgets], [sweep[b]["resolved"] for b in budgets], color="#2a7f9e")
+ax.axhline(len(tasks), ls="--", color="0.6")
+ax.set_xlabel("proposal budget (max_proposals)")
+ax.set_ylabel("tasks resolved (of 6)")
+ax.set_ylim(0, 6.6)
+fig.tight_layout()
+plt.show()
+```
+
+At a budget of one, four of six resolve: the repair task spends its only proposal on the wrong edit, and the workspace task spends its only proposal on the rejected path. A second proposal recovers both. "One proposal" therefore constrains recovery from a failing test *and* recovery from a rejected action — a single number governing two different recovery paths.
+
+One more ACI decision deserves a measured look, because the chapter's claim is that edit format changes behavior and you should measure it rather than argue about it. Our applier uses an exact anchor. A common alternative is a line-range edit, which is compact but whose coordinates go stale the instant another writer touches the file. Carrying the digest the proposer observed turns that silent hazard into a typed rejection.
+
+```{python}
+# @save
+import hashlib
+
+
+def digest(text: str) -> str:
+    """Return a short content hash used as a freshness token for a file."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def apply_guarded_edit(root: Path, path: str, observed_digest: str,
+                       start: int, end: int, new_lines: list[str]) -> str:
+    """Apply a line-range edit only if the file still matches what was observed.
+
+    A line-range edit is compact but its coordinates go stale the moment another
+    writer touches the file. Carrying the digest the proposer observed turns that
+    silent hazard into a typed rejection: if the current file hashes differently,
+    the edit refers to a version that no longer exists and is refused.
+
+    Args:
+        root: Workspace path.
+        path: Repository-relative file to edit.
+        observed_digest: The :func:`digest` the proposer saw when it chose the range.
+        start: First line index to replace (0-based, inclusive).
+        end: Line index to stop at (exclusive).
+        new_lines: Replacement lines, without trailing newlines.
+
+    Returns:
+        A unified-diff receipt for the applied change.
+
+    Raises:
+        EditRejected: If the file's current digest differs from ``observed_digest``.
+    """
+    target = safe_path(root, path)
+    before = target.read_text(encoding="utf-8")
+    if digest(before) != observed_digest:
+        raise EditRejected(f"stale digest: file changed since it was observed ({path})")
+    lines = before.splitlines(keepends=True)
+    after = "".join(lines[:start] + [ln + "\n" for ln in new_lines] + lines[end:])
+    ast.parse(after)
+    target.write_text(after, encoding="utf-8")
+    return "".join(difflib.unified_diff(lines, after.splitlines(keepends=True),
+                                        fromfile=f"a/{path}", tofile=f"b/{path}"))
+```
+
+We observe a file, let a concurrent writer prepend a line, and offer the same stale edit to both appliers.
+
+```{python}
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory).resolve()
+    original = "def price(x):\n    return x * 2\n"
+    (root / "m.py").write_text(original, encoding="utf-8")
+    observed = digest(original)
+
+    (root / "m.py").write_text("import math\n" + original, encoding="utf-8")  # concurrent change
+    receipt = apply_edit(root, Edit("m.py", "return x * 2", "return x * 3", "bump"))
+    print("exact-anchor applier :", receipt.strip().splitlines()[-1], " (applied to an unseen version)")
+
+    (root / "m.py").write_text("import math\n" + original, encoding="utf-8")  # same stale state
+    try:
+        apply_guarded_edit(root, "m.py", observed, 1, 2, ["    return x * 3"])
+    except EditRejected as exc:
+        print("digest-guarded applier:", exc)
+```
+
+The exact-anchor applier finds its unique anchor and applies the edit to a file it never saw — harmless here, dangerous when the concurrent change was semantically relevant. The digest-guarded applier refuses, because freshness is one of the four verifier properties and it is checkable in one line. There is no universal best edit format; the discipline is to measure malformed edits, unintended changed lines, and repair turns for the model and repository distribution you actually deploy.
+
+Repository-level benchmarks such as SWE-bench made the essential contribution that the environment and executable verifier are part of the task, not an afterthought [@jimenez2024swebench]. But their scores are not portable model constants: dataset filtering, issue ambiguity, test adequacy, repository exposure, scaffold, dependency image, resource limits, and retry policy all change the construct. Our six-of-six result makes no capability claim whatsoever — it demonstrates that the *invariants* hold, and Chapter 22 owns the statistics that turn repeated trials into a defensible comparison.
+
+::: {.callout-note title="In the interview"}
+**Q. Your coding agent's tests pass. Is the task done?**
+Not necessarily. A green test run proves the postcondition only when the tests capture the requirement, ran the right target, and stayed read-only to the agent. The trap is treating "exit code zero" as authority: an agent that can edit tests, a suite that skips the relevant case, or a run that reused stale build output all produce a pass that means nothing. The strong answer names the four verifier properties — authority, specificity, freshness, independence — and says which one each failure mode violates.
 :::
 
-## Deep research: build an evidence ledger before prose {#sec-ch21-research}
+::: {.landscape-2026}
+**Coding benchmarks are fragmenting** into curated, live-updated, held-out, and longer-horizon variants; as of 2026-07-20, scores from SWE-bench and its Verified, Live, and Pro-style descendants are not interchangeable, and recent audits show infrastructure and task defects can move results enough to swamp small leaderboard gaps. Verify live: the official SWE-bench repository and the current benchmark papers before quoting any subset or comparing products.
+:::
 
-Deep research is not “RAG with more searches.” It is a long-horizon production process whose deliverable is a set of claims, qualifications, and source relationships. Retrieval finds potentially useful material; research decides which questions remain open, which evidence is fit for purpose, how sources conflict, and what the final report may assert. Chapter 15 owns adaptive query and retrieval mechanics. This section owns the application state those mechanics must populate.
+## Deep research: an evidence ledger before prose {#sec-ch21-research}
 
-Begin with a **research contract**. State the decision the report will inform, scope, jurisdictions or populations, time boundary, acceptable source classes, required comparisons, output form, and stop condition. Decompose the brief into questions whose answers could change the conclusion. A plan should remain editable because early evidence often reveals that the original decomposition was wrong. Plan revision is progress when it is recorded; silent goal drift is not.
-
-The central artifact is an evidence ledger. One record should contain at least:
-
-- an atomic candidate claim;
-- source identifier, stable locator, title, author or publisher, publication date, and retrieval time;
-- the exact supporting span or structured result, within copyright and privacy limits;
-- whether the source supports, contradicts, or merely contextualizes the claim;
-- source class and known conflicts of interest;
-- units, population, time range, and methodology for quantitative evidence;
-- transformations or calculations performed by the agent;
-- confidence and unresolved questions;
-- the report locations that consume the record.
-
-This representation prevents a common failure: attaching a relevant citation to a sentence that the cited page does not establish. Citation presence, source quality, and claim entailment are three different checks. A corporate homepage may be authoritative for the company's current product description and poor evidence for an independent performance comparison. A review may orient the search while the final claim requires the underlying study. Two secondary sources repeating the same primary claim are not independent corroboration.
+Deep research is not "RAG with more searches." It is a long-horizon process whose deliverable is a set of claims, qualifications, and source relationships. Retrieval finds potentially useful material; research decides which questions remain open, which evidence is fit for purpose, how sources conflict, and what the report may assert. Chapter 15 owns the adaptive query and retrieval mechanics. This section owns the application state those mechanics must populate: an **evidence ledger**, built before any prose is written. @fig-ch21-evidence-ledger shows the shape.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch21-evidence-ledger
-%%| fig-cap: "The ledger makes report claims traceable to support, contradiction, transformations, and unresolved gaps before synthesis."
-%%| fig-alt: "A research brief splits into atomic questions. Search observations populate source records. Source records connect through supporting, contradicting, or contextual edges to atomic claims. Claims with methods and transformations enter a draft, while unsupported claims return to open questions."
+%%| fig-cap: "The ledger makes every report claim traceable to support, contradiction, and unresolved gaps before synthesis, so a citation can never be attached to a claim its source does not establish."
+%%| fig-alt: "A decision-bound brief splits into atomic questions, which drive search observations that populate source records; records connect through supporting, contradicting, or context edges to atomic claims, which enter a draft, while unsupported claims loop back to open gaps."
 flowchart LR
     B["Decision-bound brief"] --> Q["Atomic questions"]
-    Q --> S["Search and browse observations"]
+    Q --> S["Search + browse observations"]
     S --> E["Source records with provenance"]
     E -->|"supports"| C["Atomic claims"]
     E -->|"contradicts"| C
     E -->|"context only"| C
-    C --> M["Methods, units, transformations"]
-    M --> D["Draft synthesis"]
-    C -->|"unsupported or disputed"| G["Open gaps"]
+    C --> D["Draft synthesis"]
+    C -->|"unsupported"| G["Open gaps"]
     G --> Q
 ```
 
-The ledger changes the control loop. Search is driven by gaps, contradictions, and decision value rather than by a fixed source count. Before adding another query, ask which unresolved claim it could change. Before drafting a conclusion, ask whether each load-bearing claim has suitable evidence and whether contrary evidence was sought. Before stopping, ask whether marginal search is producing new decision-relevant evidence or merely more redundant sources.
+A ledger record binds one atomic claim to one source, with the span that supports it, the source's stance, its class, and when it was retrieved. The stance field is the one that prevents the opening's second failure — a citation that leads to a relevant page which does not actually establish the adjacent claim.
 
-Synthesis should operate from ledger records rather than a large undifferentiated transcript. Draft one claim at a time, attach its evidence IDs, preserve qualifications, and distinguish observation from inference. Run a citation audit in both directions: every material factual claim needs adequate support, and every citation must have a declared purpose. Then perform a contradiction pass and a coverage pass against the original research contract. These are semantic checks, so a second model may help triage them, but it does not convert them into ground truth. High-stakes claims still require expert review of the cited material.
+```{python}
+# @save
+@dataclass(frozen=True)
+class EvidenceRecord:
+    """One row of the evidence ledger: a claim tied to a single source.
 
-Parallel researchers can reduce latency when questions are independent and sources are read-only. They can also duplicate searches, miss shared contradictions, and hand the synthesizer incompatible definitions. Chapter 20 owns orchestration topologies. At the application layer, every worker must write the same evidence schema, use stable question and source IDs, declare search coverage, and return gaps as well as findings. A single researcher is preferable when the question is tightly coupled, the evidence corpus is small, or cross-source interpretation dominates browsing time.
+    The ledger is the application state deep research must build before prose.
+    Each record binds an atomic claim to exactly one source, records the span
+    that supports it, and — crucially — its ``stance``, because a source that
+    merely mentions a topic is not a source that establishes the claim.
+    """
 
-Test-time effort should be allocated by expected information value. More browsing often improves coverage at first, then produces diminishing returns. Set per-question search budgets, reserve effort for contradiction and citation audits, and stop when new searches fail to change the claim ledger across several rounds. A long report is not evidence that the research loop used its budget well.
+    claim_id: str
+    source_id: str
+    span: str
+    stance: str          # "supports" | "contradicts" | "context"
+    source_class: str
+    retrieved: str
+```
 
-## Computer use: prefer semantic controls, then bind action to observation {#sec-ch21-computer-use}
+Synthesis then runs a **bidirectional citation audit**: every load-bearing claim needs at least one supporting record, and a claim with a citation whose stance is only `context` is flagged as unsupported even though a link is present. Citation presence, source stance, and entailment are three different checks; the audit keeps them apart. (Entailment here is a stance label; a production system would use an entailment model, and high-stakes claims still need expert review of the cited span.)
 
-A computer-use agent interacts with applications built for humans. Its core difficulty is **grounding**: mapping an intent such as “cancel this order” onto the correct control in the correct application state, then determining whether the requested state actually changed. Desktop and web environments add partial observability, dynamic layout, focus, modal dialogs, latency, authentication, and irreversible external effects.
+```{python}
+# @save
+def citation_audit(claims: dict[str, str], records: list[EvidenceRecord]) -> list[str]:
+    """Audit claims against the ledger in both directions and return findings.
 
-Choose the highest-level reliable interface available:
+    Two failures are distinct and both matter. A load-bearing claim with no
+    supporting record is unsupported synthesis. A record whose stance is only
+    ``context`` cannot license the claim it is attached to, even though a
+    citation is present. Citation presence, source stance, and entailment are
+    three different checks; this audit keeps them apart.
 
-1. **Domain API or purpose-built tool.** It exposes typed arguments and machine-readable receipts. Prefer it when it faithfully implements the user's task.
-2. **DOM or accessibility-tree control.** Roles, accessible names, labels, states, and element references preserve interaction semantics while reducing visual noise.
-3. **Keyboard commands and application scripting.** These can be efficient but depend on focus, mode, and platform conventions.
-4. **Pixel perception and coordinate action.** Use it for canvas content, remote desktops, visual-only controls, and layout-dependent tasks that lack semantic exposure.
+    Args:
+        claims: Mapping of claim id to the sentence the report will assert.
+        records: Every ledger record gathered for those claims.
 
-The ordering is a decision rule, not a claim that semantic trees are complete. Custom canvases, unlabeled controls, charts, maps, drag-and-drop, remote-rendered applications, and visual confirmation can require pixels. Chapter 29 teaches VLM grounding, screenshot parsing, and coordinate-based GUI perception. This chapter's responsibility is to mark that fallback explicitly and to keep coordinate actions behind stronger freshness and confirmation checks.
+    Returns:
+        One human-readable finding per problem, empty if the ledger is clean.
+    """
+    findings: list[str] = []
+    by_claim: dict[str, list[EvidenceRecord]] = {claim_id: [] for claim_id in claims}
+    for record in records:
+        by_claim.setdefault(record.claim_id, []).append(record)
+    for claim_id in claims:
+        present = by_claim.get(claim_id, [])
+        supporting = [r for r in present if r.stance == "supports"]
+        if not present:
+            findings.append(f"{claim_id}: NO CITATION for a load-bearing claim")
+        elif not supporting:
+            stances = ", ".join(sorted({r.stance for r in present}))
+            findings.append(f"{claim_id}: cited but UNSUPPORTED (stance: {stances})")
+    return findings
+```
 
-Accessibility trees are useful because they expose roles, names, values, and states close to how assistive technologies perceive an interface. A control can be addressed as “button named Submit” instead of “the blue rectangle around coordinate 812, 644.” Semantic selection is more resilient to window size and minor layout changes, and the action is easier to audit. It still fails when names are duplicated, semantics are absent, virtualized content is not mounted, or the page is stale.
+We fill in two claims — one backed by the primary source, one propped up by a vendor blog that only gestures at the number — and run the audit.
 
-Treat an element reference as a lease on an observation, not a permanent address. A safe interaction step records the application identity, page or document identity, semantic target, observed state, and freshness token. Immediately before a consequential action, re-resolve the target and compare the material state. Immediately afterward, obtain a new observation and test the user's postcondition. A click receipt proves only that an input event was dispatched; it does not prove that the business action completed.
+```{python}
+claims = {
+    "c1": "The model reaches 71.7 percent on the benchmark's verified split.",
+    "c2": "Independent testing confirms a 30 percent latency reduction.",
+}
+records = [
+    EvidenceRecord("c1", "primary-paper", "we report 71.7 on Verified",
+                   "supports", "peer-reviewed", "2026-07-10"),
+    EvidenceRecord("c2", "vendor-blog", "our platform feels much faster",
+                   "context", "marketing", "2026-07-11"),
+]
+for finding in citation_audit(claims, records):
+    print(finding)
+```
 
-Computer-use actions fall into three bands:
+The audit catches exactly the failure that ships in polished reports: claim `c2` has a citation, so a shallow check would pass it, but its only source *contextualizes* rather than supports, so the claim cannot be asserted as written. This separates report quality from citation accuracy, which recent deep-research benchmarks show are genuinely different axes [@du2025deepresearchbench]. The ledger also changes the control loop upstream: search is driven by gaps and contradictions rather than a fixed source count, and drafting proceeds one claim at a time from records rather than from an undifferentiated transcript.
 
-- **Navigate and inspect:** reversible movement, search, scroll, open, and read.
-- **Stage:** fill fields, select options, prepare a draft, or place items in a cart without committing.
-- **Commit:** submit, send, purchase, delete, publish, authorize, or change an external record.
+## Computer use: ground, then bind action to observation {#sec-ch21-computeruse}
 
-The system should expose the band before execution. Stage work can be inspected and summarized to a human. Commit work requires an explicit postcondition, recovery plan, and authority rule. If the interface cannot reveal what will happen, the agent should stop rather than infer semantics from appearance.
+A computer-use agent drives applications built for humans. Its core difficulty is **grounding**: mapping an intent like "cancel this order" onto the right control in the right application state, then checking whether the state actually changed. The first decision is which interface to reach for, and the rule is to prefer the highest-level reliable one. @fig-ch21-interface-ladder is that decision.
 
-Web content is also untrusted input. Instructions embedded in pages, documents, issue text, or tool output do not acquire authority merely because the agent can read them. Bot-detection challenges and authentication failures are environment states, not puzzles to evade. The application should surface them as typed handoff conditions. Chapter 24 develops prompt-injection defenses, credential isolation, and action authorization; here, the architectural rule is to keep observed content separate from the instruction and authority channels.
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch21-interface-ladder
+%%| fig-cap: "Which interface should a computer-use agent reach for? Descend only when the level above cannot express the task; pixels are the last resort, and the perception they need is Chapter 29's subject."
+%%| fig-alt: "A top-down decision flow: prefer a domain API or typed tool; else an accessibility-tree or DOM control resolved by role and name; else keyboard or scripting; else pixel perception and coordinates, deferred to Chapter 29."
+flowchart TB
+    G["Goal: act on an application"] --> A{"Domain API or typed tool?"}
+    A -->|yes| API["Call it: typed args, machine-readable receipt"]
+    A -->|no| B{"Accessibility tree / DOM control?"}
+    B -->|yes| SEM["Resolve by role + name: auditable, layout-stable"]
+    B -->|no| C{"Keyboard or scripting reaches it?"}
+    C -->|yes| KBD["Drive by command: depends on focus and mode"]
+    C -->|no| PIX["Pixel perception + coordinates — Chapter 29"]
+```
 
-Verification should prefer resulting state over UI narration. For a sent message, inspect the durable sent-item identifier. For an order change, retrieve the order record or transaction receipt. For a saved document, reopen it and verify its content and location. When the interface exposes no authoritative state, lower autonomy: stage the work, capture the final screen and intended action, and request takeover.
+The ordering is a decision rule, not a claim that semantic trees are complete — custom canvases, unlabeled controls, charts, and remote-rendered apps can force pixels, and Chapter 29 teaches the VLM grounding that reads them. Here we work one level up, on an accessibility tree, where a control is addressed as "button named Submit" rather than "the rectangle near coordinate 812, 644." A reference is a lease on one observation, not a permanent address.
+
+```{python}
+# @save
+class StaleObservation(RuntimeError):
+    """Raised when the UI changed between observation and action."""
+
+
+@dataclass(frozen=True)
+class UINode:
+    """One control from an accessibility tree: role, accessible name, and a ref.
+
+    Semantic addressing ("the button named Submit") survives layout changes that
+    would break a pixel coordinate, and it audits cleanly. The ``ref`` is a lease
+    on one observation, not a permanent address.
+    """
+
+    role: str
+    name: str
+    ref: str
+
+
+def resolve(tree: list[UINode], role: str, name: str) -> str:
+    """Resolve a semantic target to exactly one element reference.
+
+    Grounding fails safe: zero matches means the control is gone and more than
+    one means the name is ambiguous. Either way we refuse to act rather than
+    click a guess, because acting on a misresolved control is how a browser
+    agent reports success while the real state never changed.
+
+    Args:
+        tree: The current accessibility-tree snapshot.
+        role: The ARIA role to match (for example ``"button"``).
+        name: The accessible name to match.
+
+    Returns:
+        The single matching element's ``ref``.
+
+    Raises:
+        StaleObservation: If zero or more than one node matches.
+    """
+    matches = [node.ref for node in tree if node.role == role and node.name == name]
+    if len(matches) != 1:
+        raise StaleObservation(f"{name!r} resolved to {len(matches)} controls, expected 1")
+    return matches[0]
+
+
+def tree_digest(tree: list[UINode]) -> str:
+    """Return a freshness token over a tree snapshot's roles, names, and refs."""
+    return digest("|".join(f"{n.role}:{n.name}:{n.ref}" for n in tree))
+```
+
+We resolve "Submit" on a clean page, then let the page rerender — a confirmation modal adds a second Submit — and re-observe before committing.
+
+```{python}
+tree_v1 = [UINode("button", "Submit", "b1"), UINode("button", "Cancel", "b2"),
+           UINode("textbox", "Amount", "t1")]
+target = resolve(tree_v1, "button", "Submit")
+token = tree_digest(tree_v1)
+print(f"resolved 'Submit' -> {target}; freshness token {token}")
+
+tree_v2 = tree_v1 + [UINode("button", "Submit", "b9")]        # a modal added a second Submit
+print(f"before commit, re-observe -> {tree_digest(tree_v2)}  changed: {tree_digest(tree_v2) != token}")
+try:
+    resolve(tree_v2, "button", "Submit")
+except StaleObservation as exc:
+    print("re-resolve refuses:", exc)
+```
+
+The freshness token changed, and re-resolution refuses because "Submit" is now ambiguous — so the stale reference `b1` is never clicked. The last habit is to verify the resulting *state*, not the click. A click receipt proves an input event was dispatched; it does not prove the business action completed.
+
+```{python}
+click_receipt = {"event": "click", "ref": "b1", "dispatched": True}
+order_record = {"id": "A-1001", "status": "open"}     # backend truth after the blocked action
+print(f"receipt dispatched={click_receipt['dispatched']}, "
+      f"but order status is {order_record['status']!r} -> not submitted")
+```
+
+The receipt says the click happened; the authoritative order record says the order is still open. Verification prefers the durable record — a sent-item id, a transaction receipt, a reopened document — over any UI narration. Web content is also untrusted input: instructions embedded in a page do not gain authority because the agent can read them, and bot-detection or auth failures are environment states to surface as typed handoffs, not puzzles to evade. Chapter 24 develops those injection defenses; the architectural rule here is to keep observed content separate from the instruction and authority channels, and to lower autonomy — stage the work, capture the final screen, request takeover — whenever the interface exposes no authoritative state. Reproducible web environments with final-state checks are what made this measurable in the first place [@zhou2024webarena].
+
+## Conversational customer service: policy-gated effects {#sec-ch21-conversational}
+
+Conversational customer service looks different — the dominant observation is dialogue — but it is the same contract. The observation is the conversation plus account state; the proposal vocabulary is a policy-constrained tool set; the verifier is the resulting account state and policy compliance; the recovery is correction, compensation, or escalation. τ-bench made exactly this explicit by scoring the final database state and policy following rather than the transcript [@yao2024taubench]. We build the smallest instance that shows it: a refund tool gated by policy, verified against the account.
+
+```{python}
+# @save
+@dataclass
+class Account:
+    """A tiny customer account: the authoritative state a refund tool must move."""
+
+    customer_id: str
+    paid: float
+    days_since_purchase: int
+    refunded: float = 0.0
+
+
+def refund(account: Account, amount: float, policy: dict[str, float]) -> dict[str, Any]:
+    """Apply a policy-gated refund and verify it against final account state.
+
+    The action language is a policy-constrained tool, and the verifier is the
+    resulting account state plus policy compliance. Anything outside policy is
+    not an error to retry but a typed escalation carrying exactly what a human
+    needs to decide.
+
+    Args:
+        account: The mutable account record.
+        amount: The refund the dialogue requested.
+        policy: Limits with ``max_days`` and ``max_amount`` keys.
+
+    Returns:
+        Either a ``committed`` verdict with the verified post-state, or an
+        ``escalate`` verdict with a decision packet.
+    """
+    remaining = account.paid - account.refunded
+    if account.days_since_purchase > policy["max_days"]:
+        reason = f"{account.days_since_purchase} days exceeds the {int(policy['max_days'])}-day window"
+    elif amount > policy["max_amount"]:
+        reason = f"amount {amount:.0f} exceeds the tool limit {policy['max_amount']:.0f}"
+    elif amount > remaining:
+        reason = f"amount {amount:.0f} exceeds the refundable balance {remaining:.0f}"
+    else:
+        account.refunded += amount                       # commit: move the DB state
+        verified = account.refunded == amount            # re-read the final state
+        return {"verdict": "committed", "refunded": account.refunded, "verified": verified}
+    return {"verdict": "escalate",
+            "packet": {"customer": account.customer_id, "requested": amount,
+                       "reason": reason, "decision": "approve exception?"}}
+```
+
+We run one request inside policy and one outside it.
+
+```{python}
+policy = {"max_days": 30, "max_amount": 100.0}
+print("within policy :", refund(Account("cust-7", paid=80.0, days_since_purchase=12), 80.0, policy))
+print("outside policy:", refund(Account("cust-9", paid=80.0, days_since_purchase=45), 80.0, policy))
+```
+
+The in-policy refund commits and the account confirms it — the verifier reads final state, not the model's assurance. The out-of-policy request does not become a creative workaround; it becomes a typed escalation packet naming the customer, the request, the reason, and the exact decision asked of a human. Escalation is a first-class outcome with a useful payload, which is the general pattern the next two sections generalize.
 
 ## Rigor where the verifier is weak {#sec-ch21-rigor}
 
-Coding enjoys an unusually honest verifier when tests are good. Research and computer use often have weaker or delayed feedback. Data and analytics agents make the contrast sharp: SQL can execute successfully while answering the wrong question, and a chart can render perfectly while mixing units or leaking future information. The remedy is not a generic “critic” prompt. It is to turn analytical assumptions and evidence lineage into application state.
+Coding enjoys an unusually honest verifier when tests are good. Data and analytics agents make the opposite case sharp: a SQL query can execute successfully while answering the wrong question, and a chart can render perfectly while mixing units or double-counting rows. The remedy is not a generic "critic" prompt; it is to turn analytical assumptions into checkable application state. For every computed quantity, retain a lineage chain
 
-For every computed quantity, retain a chain:
+$$
+\text{snapshot} \rightarrow \text{selection} \rightarrow \text{transforms}
+\rightarrow \text{assumptions} \rightarrow \text{claim},
+$$ {#eq-ch21-lineage}
 
-\[
-\text{source snapshot} \rightarrow \text{selection} \rightarrow \text{transformations}
-\rightarrow \text{statistical assumptions} \rightarrow \text{claim}.
-\]
+naming snapshot version, filters, joins, units, denominators, and aggregation grain, so a number in the report points back to how it was produced. Two failure bands are common enough to gate directly. The first is units. Distinct sources report money in dollars, thousands, or millions, and summing them raw is silently wrong.
 
-The chain should name schema and snapshot versions, filters, joins, missing-data handling, units, denominators, time zones, aggregation grain, and code or query hashes. A number in the final report points back to this chain. Re-executing the query against the same snapshot should reproduce it; checking the current database state answers a different question and must be labeled as such.
+```{python}
+# @save
+class UnitError(ValueError):
+    """Raised when quantities with different declared units are combined raw."""
 
-Several failure bands deserve explicit gates:
 
-- **Units and denominators:** distinguish dollars from thousands of dollars, events from users, gross from net, percentages from percentage points, calendar days from business days, and local time from UTC.
-- **Population and selection:** state inclusion criteria, missingness, survivorship, and whether a sample represents the target population.
-- **Leakage:** prevent future labels, post-outcome fields, duplicate entities, or test-set knowledge from entering features or analysis choices.
-- **Multiplicity and researcher degrees of freedom:** record how many outcomes, subgroups, windows, models, and stopping rules were tried. Do not present a selected favorable result as if it were the only analysis.
-- **Statistical assumptions:** identify independence, distributional, stationarity, and measurement assumptions; report uncertainty and sensitivity where the decision needs them.
-- **Causality:** prediction and association do not establish intervention effects. A causal claim requires a defensible design, temporal ordering, treatment and outcome definitions, confounder reasoning, and domain review.
+def to_dollars(amount: float, unit: str) -> float:
+    """Normalize a money figure to dollars from its declared unit.
 
-“Verify against database state” means more than asking the model to run the query twice. Compare row counts and key uniqueness at each join, reconcile aggregates to an independent control total, inspect units and schema metadata, and test known edge cases. If the agent writes back, read the authoritative record after the transaction. The same independent-verifier principle from coding applies, but the oracle must be engineered.
+    Args:
+        amount: The raw figure as reported by its source.
+        unit: One of ``"dollars"``, ``"thousands"``, or ``"millions"``.
 
-Research agents inherit these requirements whenever they execute code or summarize quantitative studies. Preserve whether a number was quoted, calculated, converted, or inferred. Keep original and converted units. Distinguish a paper's measured result from the agent's cross-study comparison. If two sources use different populations or definitions, do not average them merely because the column names look alike.
+    Returns:
+        The figure in dollars.
 
-Scientific-discovery agents extend the pattern rather than replacing it. Hypothesis generation is cheap; experimental validity, instrument calibration, protocol adherence, negative results, and expert vetoes remain the hard verifier. A useful co-scientist can propose hypotheses, search prior work, generate analysis code, and queue experiments. It should not silently choose favorable outcomes, modify a protocol after seeing results, or promote a simulated result as an empirical finding. The durable architecture is an evidence and experiment ledger with human-owned commit points. Frontier examples belong in Appendix C; Chapter 31 treats interaction with physical environments.
+    Raises:
+        UnitError: If the unit is not recognized.
+    """
+    factors = {"dollars": 1.0, "thousands": 1_000.0, "millions": 1_000_000.0}
+    if unit not in factors:
+        raise UnitError(f"unknown money unit: {unit!r}")
+    return amount * factors[unit]
+```
+
+```{python}
+figures = [(1200.0, "dollars"), (3.0, "thousands")]
+naive = sum(amount for amount, _ in figures)
+normalized = sum(to_dollars(amount, unit) for amount, unit in figures)
+print(f"naive sum (ignores units) = {naive:.0f}   unit-normalized = {normalized:.0f}")
+```
+
+The naive total of 1203 is off by more than triple; normalizing to dollars first gives 4200. The second band is the join fan-out — the failure the analysis called out as the one that makes analytics agents quietly wrong. A join whose right-hand key is not unique multiplies rows, and every `SUM` over the result double-counts. The cheap guard is a row-count reconciliation.
+
+```{python}
+# @save
+def reconcile_join(left_rows: int, joined_rows: int, key_unique: bool) -> None:
+    """Fail loudly when a join fanned out and will double-count aggregates.
+
+    A join that multiplies rows silently inflates every SUM taken over it. The
+    cheap guard is a row-count reconciliation: if the right-hand key is not
+    unique and the join produced more rows than it started with, an aggregate
+    over the result is not trustworthy and must be recomputed on deduplicated
+    grain.
+
+    Args:
+        left_rows: Row count of the left table before the join.
+        joined_rows: Row count after the join.
+        key_unique: Whether the join key is unique on the right table.
+
+    Raises:
+        UnitError: Reused as a rigor-gate failure when a fan-out is detected.
+    """
+    if not key_unique and joined_rows > left_rows:
+        raise UnitError(f"join fan-out: {left_rows} rows -> {joined_rows}; "
+                        f"aggregates will double-count")
+```
+
+We compute a revenue total the wrong way — joining five orders to a customer-address table where one customer has two addresses — then let the gate catch it.
+
+```{python}
+orders = [("o1", "A", 100), ("o2", "A", 50), ("o3", "B", 200), ("o4", "C", 30), ("o5", "B", 20)]
+addresses = {"A": ["addr1", "addr2"], "B": ["addr3"], "C": ["addr4"]}
+joined = [(order, addr, amount) for order, cust, amount in orders for addr in addresses[cust]]
+
+naive_total = sum(amount for _, _, amount in joined)
+correct_total = sum(amount for _, _, amount in orders)
+print(f"orders={len(orders)} joined_rows={len(joined)} "
+      f"naive SUM over join={naive_total} correct SUM over orders={correct_total}")
+try:
+    reconcile_join(len(orders), len(joined), key_unique=False)
+except UnitError as exc:
+    print("gate:", exc)
+```
+
+The naive total of 550 overstates real revenue of 400 by exactly the two duplicated customer-A orders, and the reconciliation gate catches it from the row counts alone, before the number ever reaches a chart. "Verify against database state" means this concretely: reconcile row counts and key uniqueness at each join, check units and denominators, and re-read the authoritative record after any write. The remaining bands — leakage of future or post-outcome fields, multiplicity across many tried analyses [@simmons2011falsepositive], and causal claims that association cannot support — extend the same principle: make the assumption explicit state and gate it, because the model's verifier here is weak by construction. Scientific-discovery agents sit at the far end of this spectrum: hypothesis generation is cheap, but experimental validity and expert vetoes remain the hard verifier, so the durable architecture is an evidence-and-experiment ledger with human-owned commit points.
 
 ## Escalation follows authority and reversibility {#sec-ch21-risk}
 
-An application's domain label does not determine its risk. A coding agent formatting a local notebook and a coding agent deploying authentication changes share tools but not authority. A research agent preparing a literature map and one recommending clinical treatment have different evidence and review contracts. A browser agent collecting public product descriptions and one moving money inhabit different consequence classes.
-
-Profile deployments along at least four dimensions:
+An application's domain label does not set its risk; its authority and reversibility do. A coding agent formatting a local notebook and one deploying authentication changes share tools but not consequences. So profile deployments by what a mistake can touch, not by which family they belong to.
 
 | Profile | Typical behavior | Commit rule | Dominant residual risk |
 |---|---|---|---|
-| **Ambient** | Observes context and suggests next steps | User initiates every effect | Privacy, distraction, overreliance |
+| **Ambient** | Observes context, suggests next steps | User initiates every effect | Privacy, distraction, overreliance |
 | **Proactive** | Starts bounded work from events or schedules | Auto-commit only for reversible, low-impact effects | Wrong trigger, stale context, action volume |
-| **Cyber or privileged technical** | Changes code, infrastructure, accounts, or security state | Isolated execution plus explicit authority and independent verification | Capability abuse, lateral movement, destructive error |
-| **Regulated or professional** | Informs healthcare, legal, finance, employment, or similar decisions | Qualified review and evidence retention before consequential use | Invalid advice, disparate harm, noncompliance |
+| **Cyber / privileged** | Changes code, infrastructure, accounts, security state | Isolation plus explicit authority and independent verification | Capability abuse, lateral movement, destructive error |
+| **Regulated / professional** | Informs health, legal, finance, employment decisions | Qualified review and evidence retention before use | Invalid advice, disparate harm, noncompliance |
 
-These profiles recur in Chapters 24 and 27, where controls and operations are taught. Here they answer one application-design question: where must the provisional-to-committed transition sit? Do not bury that answer in a generic confidence threshold. A model can be confident and wrong, and risk comes from the effect as well as the probability of error.
-
-Escalation is a typed outcome with a useful packet, not abandonment. Include the original goal, current state and version, actions already taken, proposed next effect, evidence and verifier results, uncertainty, remaining budget, and the exact decision requested from the human. For computer use, preserve the screen or semantic snapshot and identify the target. For research, list unsupported and disputed claims. For coding, provide the diff, test command, failures, and changed files.
-
-Conversational customer service is a useful transfer case. Its observation is dialogue plus account state; its action language is a policy-constrained tool set; its verifier is the resulting account state and policy compliance; its recovery is correction, compensation, or escalation. Benchmarks such as τ-bench made final database state and policy following explicit. The architecture is not a fourth mini-book here: it demonstrates that the same application contract transfers when natural-language interaction is the dominant observation surface.
-
-Persistence and parallelism should preserve, not blur, that packet. A fleet of coding workers needs isolated checkouts and a merge authority. Parallel research workers need shared source and claim identities. A resumed computer-use thread must re-observe the live application rather than replay stale element references. Chapter 20 owns coordination; Chapter 26 owns durable execution, retries, and fleet economics. The application rule is that a restart or handoff invalidates ephemeral observations unless the environment proves otherwise.
+These profiles recur in Chapters 24 and 27, where controls and operations are taught; here they answer one design question — where must the provisional-to-committed transition sit — and the answer is never a generic confidence threshold, because a model can be confident and wrong and risk comes from the effect as much as the error rate. Whatever the profile, escalation is a typed outcome carrying the goal, the current versioned state, the actions taken, the proposed effect, the evidence and verifier results, and the exact decision requested — the same shape as the refund packet above. Persistence and parallelism must preserve that packet rather than blur it: a fleet of coding workers needs isolated checkouts and a merge authority, parallel researchers need shared source and claim identities, and a resumed computer-use thread must re-observe the live application rather than replay a stale reference. Chapter 20 owns coordination and Chapter 26 owns durable execution; the application rule is that a restart or handoff invalidates ephemeral observations unless the environment proves otherwise.
 
 ## Choose the smallest architecture that can prove completion {#sec-ch21-choice}
 
-The mature reference architectures are valuable because they expose recurring seams, not because every product needs their maximum autonomy. Start from the postcondition and work backward.
-
-1. **Name authoritative success.** If the team cannot state what observation proves completion, keep the system advisory.
-2. **Identify the cheapest safe action vocabulary.** Prefer a typed domain tool over a shell, a semantic element over a coordinate, and a constrained query over arbitrary code when each can express the task.
-3. **Separate staging from commit.** Let the agent iterate where errors are reversible; narrow the final effect.
-4. **Bind every proposal to observed state.** Reject stale patches, source assumptions, and UI targets.
-5. **Choose a recovery mechanism before autonomy.** Revert, retract, undo, compensate, or escalate must be concrete.
-6. **Add adaptive looping only where feedback can improve the next action.** A deterministic workflow is better when the steps and branches are already known.
+The mature reference architectures are valuable because they expose recurring seams, not because every product needs their maximum autonomy. Work backward from the postcondition: if the team cannot state what observation proves completion, keep the system advisory until one is engineered. Then pick the cheapest safe action vocabulary — a typed domain tool over a shell, a semantic element over a coordinate, a constrained query over arbitrary code — separate staging from commit, bind every proposal to observed state, and choose a concrete recovery mechanism before granting autonomy.
 
 | Situation | Smallest suitable architecture |
 |---|---|
 | One known transform with a deterministic check | Ordinary function or fixed workflow |
 | Several known tools and predictable branches | Typed workflow with model decisions at narrow seams |
 | Unknown number of inspect–act–verify cycles | Bounded single-agent loop |
-| Independent read-heavy subquestions with a common evidence schema | Parallel workers behind one synthesis contract |
-| Weak verifier plus consequential, irreversible action | Draft or stage only; human commits |
+| Independent read-heavy subquestions, shared evidence schema | Parallel workers behind one synthesis contract |
+| Weak verifier plus consequential, irreversible action | Draft or stage only; a human commits |
 | No authoritative postcondition | Advisory assistant until one is engineered |
 
-Do not add planner, coder, critic, browser, and verifier personas merely to match a reference diagram. A separate verifier is valuable only when it has independent evidence or authority. A second model reading the same incomplete context can increase confidence without increasing truth. Likewise, a large tool surface is not sophistication if a smaller domain action would be easier to validate.
+Do not add planner, coder, critic, and verifier personas to match a reference diagram: a separate verifier earns its place only when it has independent evidence or authority, and a second model reading the same incomplete context raises confidence without raising truth. Test architectures through ablations of seams — repository maps versus none, edit formats, ledger-versus-transcript synthesis, semantic versus coordinate actions — holding the goal and verifier fixed. Chapter 22 supplies the evaluation mechanics; the application designer supplies the construct and the authoritative environment.
 
-Reference architectures should be tested through ablations of seams, not brand names. For coding, compare repository maps, edit formats, test selection, and repair budgets. For research, compare ledger schemas, contradiction search, source restrictions, and synthesis from ledger versus transcript. For computer use, compare semantic and coordinate actions on tasks that genuinely require each, while holding the goal and verifier fixed. Chapter 22 supplies the evaluation mechanics; the application designer supplies the construct and authoritative environment.
+## Summary
 
-::: {.callout-note .landscape-2026}
-### Landscape 2026 (dated)
+Every agent application is the same contract — observation, proposal, execution, verifier, commit, recovery — wrapped around the Chapter 16 loop, and its architecture is the provisional-to-committed boundary. We built a minimal coding agent whose executor owns every invariant and scored it on an embedded suite, watching a repair driven by a failing test, an escape rejected before write, and four of six tasks fall when the budget dropped to one. The same skeleton caught an unsupported citation, refused a stale UI control while checking state over a receipt, verified a policy-gated refund against the account, and flagged a join fan-out inflating 400 to 550. Chapter 22 turns these into defensible measurements.
 
-As of 2026-07-19, coding benchmarks are fragmenting into curated, live-updated, held-out, and longer-horizon variants; scores from SWE-bench, Verified, Live, and Pro-style task sets are not interchangeable. Recent primary reports also show that infrastructure configuration and task defects can move results enough to swamp small leaderboard differences. Deep-research products expose plan review, interruption, connected sources, citation-rich reports, and both single- and multi-agent implementations. Browser and desktop systems increasingly mix accessibility-tree control with visual fallback rather than treating either representation as sufficient.
+## Exercises
 
-**Verify live: 2026-07-19.** Recheck the [official SWE-bench repository](https://github.com/SWE-bench/SWE-bench), [SWE-bench Live paper](https://arxiv.org/abs/2505.23419), [SWE-bench Pro paper](https://arxiv.org/abs/2509.16941), [OpenAI benchmark audit](https://openai.com/index/separating-signal-from-noise-coding-evaluations/), [Anthropic infrastructure study](https://www.anthropic.com/engineering/infrastructure-noise), [OpenAI deep research documentation](https://help.openai.com/en/articles/10500283-deep-research-in-chatgpt), [Anthropic's research-system report](https://www.anthropic.com/engineering/multi-agent-research-system), and [Playwright's accessibility-snapshot documentation](https://playwright.dev/mcp/snapshots) before adopting named products, benchmark subsets, or current interface claims.
-:::
-
-## Build {#sec-ch21-build}
-
-The integrated artifact consists of [coding_agent.py](../code/ch21/coding_agent.py), the committed [six-task fixture](../code/ch21/fixtures/tasks.json), and focused [tests](../tests/test_ch21_coding_agent.py). It uses only the Python standard library. From the `newbook/` directory, run:
-
-```bash
-python -m pytest -q tests/test_ch21_coding_agent.py
-python code/ch21/coding_agent.py --max-proposals 3
-```
-
-The second command prints the complete event report as JSON and exits zero. Read it from aggregates to trajectories:
-
-1. Confirm `tasks = 6` and `resolved = 6`.
-2. Confirm eight proposals produced seven test runs. A rejected edit must not reach the test runner.
-3. Find `minimum-repair`. Its first syntactically valid patch fails a test; the second patch is proposed only after that observation and passes.
-4. Find `workspace-guard`. Its first proposal targets `../escape.py`; the executor rejects it before any write, then accepts the repository-local repair.
-5. Inspect each `execute` event. It contains a unified-diff receipt even though the accepted proposal uses a constrained exact-replacement schema.
-6. Inspect each `commit` event. It appears only after a post-edit test run passes.
-
-Now predict the effect of reducing the proposal budget, then run:
-
-```bash
-python code/ch21/coding_agent.py --max-proposals 1
-```
-
-This command intentionally exits with status `2`. Four of six tasks resolve. The repair task spends its only proposal on a plausible wrong edit, and the workspace task spends its proposal on an invalid path. The result demonstrates why a budget is semantic: “one proposal” constrains both recovery from execution feedback and recovery from rejected actions.
-
-To save the evidence packet, add `--output code/ch21/generated/results.json`. Generated output is not required by the tests and should not be treated as source. The committed fixture remains the reproducibility anchor.
-
-The tests enforce six properties:
-
-- all default tasks resolve with the expected proposal, test, and rejection counts;
-- the tight budget exposes the two tasks that need a second proposal;
-- a path traversal proposal is rejected;
-- test files are read-only;
-- an ambiguous replacement is rejected;
-- the repository map exposes structure rather than full source.
-
-The fixture keeps proposal generation deterministic so the application loop is inspectable. To connect a real model, replace only the scripted proposal adapter: give it the issue, repository map, targeted file observations, and last typed failure; require the `Edit` schema in return. Preserve the executor, test oracle, event schema, task snapshots, and budgets. Then evaluate repeated trials and uncertainty with Chapter 22 rather than comparing one successful demonstration.
-
-### Acceptance checks
-
-The build is complete when the focused tests pass, the default suite exits zero with the exact aggregate counts above, the one-proposal run exits nonzero with four resolved tasks, and no fixture writes outside a temporary directory. Review at least one diff and one failed-test observation manually to confirm that the trace explains why the policy repaired.
-
-### Honesty note
-
-This is an application-mechanism fixture, not evidence of model coding ability. Scripted proposals stand in for a model so every reader observes the same rejection and repair. Exact replacement avoids implementing a production-grade patch parser. The subprocess is bounded but is not a security sandbox, which is acceptable only because the repository content is committed and trusted. The tests are tiny and known; a six-of-six result must not be compared with SWE-bench or a product workload.
-
-## What endures, what changes {#sec-ch21-endures}
-
-**What endures.** Application engineering begins with an observation, proposal, execution, verifier, commit, and recovery contract. Keep provisional work separate from committed effects. Bind actions to the state they observed. Prefer authoritative final-state verification to action receipts or model narration. In coding, treat the repository and test environment as state. In research, build claim-level provenance before synthesis. In computer use, prefer semantic interfaces and verify the external state after action. Lower autonomy as verifiability weakens, reversibility falls, or authority grows.
-
-**What changes.** Model capability, coding scaffolds, edit formats, benchmark variants, browser drivers, accessibility tooling, visual grounding, deep-research products, multi-agent implementations, and useful test-time budgets will change. Removing the Landscape 2026 box leaves the application contracts and decision rules intact.
-
-## Exercises {#sec-ch21-exercises}
-
-1. Draw the six-part application contract for an incident-response agent. Name the authoritative verifier and recovery path for a log query, a firewall-rule proposal, and an applied rule. Explain why the same agent crosses risk profiles across those steps.
-2. Add a seventh fixture task whose first edit is syntactically valid but changes the wrong function. Predict the event counts, add the failing test and two scripted proposals, then verify the prediction without changing the loop.
-3. Replace exact replacement with a line-range edit that includes an observed file digest. Preserve path containment, read-only tests, syntax validation, and diff receipts. Write a test for stale-digest rejection and compare malformed-edit behavior with the original interface.
-4. Design an evidence-ledger schema for a market analysis containing currency conversion, conflicting market-size estimates, and a forecast. Mark which fields support citation entailment, unit reconciliation, methodology comparison, and the boundary between observed fact and inference.
-5. For a travel-booking browser agent, classify twelve actions as inspect, stage, or commit. For each commit action, name an authoritative postcondition, an observation-freshness check, and an undo or compensation path. Identify where Chapter 29's pixel perception is genuinely necessary.
-6. Take an analytics question from your work and enumerate units, population, snapshot time, filters, join keys, missingness, multiplicity, and causal assumptions. State which checks can be deterministic and which require domain review.
-7. Design a compute-controlled comparison of semantic accessibility-tree actions and pixel-coordinate actions on a web task set. Hold the task, commit policy, and final-state verifier fixed; predeclare which task slice should favor each representation. Use Chapter 22 to specify repetitions and uncertainty.
-
-## Notes and sources {#sec-ch21-sources}
-
-- Yang et al., [“SWE-agent: Agent–Computer Interfaces Enable Automated Software Engineering”](https://arxiv.org/abs/2405.15793), provides the primary evidence that repository interface design changes agent behavior and task performance.
-- Jimenez et al., [“SWE-bench: Can Language Models Resolve Real-World GitHub Issues?”](https://arxiv.org/abs/2310.06770), defines repository-level issue resolution with executable environments and tests.
-- Zhang et al., [“SWE-bench Goes Live!”](https://arxiv.org/abs/2505.23419), motivates live-updated tasks and contamination-resistant, reproducible repository environments.
-- Deng et al., [“SWE-Bench Pro: Can AI Agents Solve Long-Horizon Software Engineering Tasks?”](https://arxiv.org/abs/2509.16941), is a primary source for longer-horizon and held-out repository task design; the dated Landscape box owns its current status.
-- Nakano et al., [“WebGPT: Browser-assisted question-answering with human feedback”](https://arxiv.org/abs/2112.09332), requires models to collect references during browsing so factual support can be reviewed.
-- Du et al., [“DeepResearch Bench”](https://arxiv.org/abs/2506.11763), separates report quality from citation accuracy and effective citation coverage.
-- Zhang et al., [“How Far Are We from Genuinely Useful Deep Research Agents?”](https://arxiv.org/abs/2512.01948), reports fine-grained failures in evidence integration, verification, and resilient planning.
-- OpenAI's [Deep Research system card](https://openai.com/index/deep-research-system-card/) documents a deployed browsing-and-analysis agent's threat surfaces, including prompt injection, privacy, code execution, and hallucination.
-- Zhou et al., [“WebArena: A Realistic Web Environment for Building Autonomous Agents”](https://arxiv.org/abs/2307.13854), establishes reproducible, functional web environments and final-state task checks.
-- Koh et al., [“VisualWebArena”](https://arxiv.org/abs/2401.13649), demonstrates why visually grounded web tasks remain outside a text-only interface; pixel perception is taught in Chapter 29.
-- Xie et al., [“OSWorld”](https://arxiv.org/abs/2404.07972), defines open-ended computer tasks with environment setup and execution-based evaluators across real applications.
-- The W3C [Core Accessibility API Mappings specification](https://www.w3.org/TR/core-aam-1.2/) defines how web semantics are exposed through platform accessibility APIs.
-- Yao et al., [τ-bench](https://arxiv.org/abs/2406.12045), models customer-service interaction with domain policy, tools, a user simulator, and final database-state evaluation.
-- Simmons, Nelson, and Simonsohn, [“False-Positive Psychology”](https://doi.org/10.1177/0956797611417632), demonstrates how undisclosed flexibility across analysis choices inflates false-positive findings.
+1. **Add a task that passes for the wrong reason.** Extend `data/ch21/tasks.json` with a seventh task whose first edit is syntactically valid but changes the wrong function, so the tests still fail. Predict the event counts (`proposals`, `test_runs`, `resolved`) before running `run_suite`, add the two scripted proposals, and verify your prediction without touching the loop.
+2. **Break the oracle, and watch the guard hold.** Write a proposal that targets a `test_*.py` file to "fix" a failing test by weakening its assertion. Show that `safe_path` rejects it, then explain which of the four verifier properties (authority, specificity, freshness, independence) each of the three `safe_path` rules defends.
+3. **Make the digest earn its keep.** Using `apply_guarded_edit`, construct a case where the exact-anchor applier silently edits the *wrong* occurrence after a concurrent change while the digest-guarded applier rejects. Then measure, over ten synthetic edits with random concurrent insertions, how many each applier applies to an unseen version.
+4. **Audit a real-shaped ledger.** Design an `EvidenceRecord` set for a market analysis with a currency conversion, two conflicting market-size estimates, and a forecast. Run `citation_audit` and extend it to also flag a claim supported *only* by two records that share a single primary source (non-independent corroboration).
+5. **Classify a booking flow.** For a travel-booking browser agent, list twelve concrete actions and label each inspect, stage, or commit. For every commit action name an authoritative postcondition, a freshness check like `tree_digest`, and an undo or compensation path — and identify the one action where Chapter 29's pixel perception is genuinely required.
+6. **Gate your own analysis.** Take an analytics question from your work and enumerate its units, population, snapshot time, filters, join keys, and any causal assumption. Using `to_dollars` and `reconcile_join` as models, write one deterministic gate for each assumption that *can* be checked in code, and mark which ones need domain review instead.
+7. **Move a family across the autonomy plane.** Pick one family from @fig-ch21-autonomy-regimes and describe a concrete engineering change — a stronger verifier or a cheaper undo — that moves it into a different quadrant. State what `autonomy_regime` would then return and what new control the move obligates you to build.

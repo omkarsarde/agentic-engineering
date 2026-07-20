@@ -11,7 +11,7 @@
         "path": "invoice.py",
         "old": "return subtotal - tax",
         "new": "return subtotal + tax",
-        "reason": "The issue identifies the arithmetic operator, and the test is the final-state oracle."
+        "reason": "the issue names the operator and the test is the final-state oracle"
       }
     ]
   },
@@ -27,7 +27,7 @@
         "path": "percent.py",
         "old": "return min(value, 100)",
         "new": "return max(0, min(value, 100))",
-        "reason": "The existing upper bound is preserved while adding the missing lower bound."
+        "reason": "keep the upper bound, add the missing lower bound"
       }
     ]
   },
@@ -43,7 +43,7 @@
         "path": "tags.py",
         "old": "return tag.strip()",
         "new": "return tag.strip().lower()",
-        "reason": "The issue requires both whitespace and case normalization."
+        "reason": "the issue requires both whitespace and case normalization"
       }
     ]
   },
@@ -59,7 +59,7 @@
         "path": "stats.py",
         "old": "return sum(values) / len(values)",
         "new": "return sum(values) / len(values) if values else 0",
-        "reason": "The guard defines the requested empty-input behavior without changing non-empty inputs."
+        "reason": "guard the empty case without changing non-empty inputs"
       }
     ]
   },
@@ -75,13 +75,13 @@
         "path": "choose.py",
         "old": "return values[0]",
         "new": "return values[-1]",
-        "reason": "A deliberately plausible but wrong first proposal exercises feedback-driven repair."
+        "reason": "a plausible but wrong first guess, to exercise feedback-driven repair"
       },
       {
         "path": "choose.py",
         "old": "return values[-1]",
         "new": "return min(values)",
-        "reason": "The failing counterexample shows that position is not the requested invariant."
+        "reason": "the failing counterexample shows position is not the requested invariant"
       }
     ]
   },
@@ -97,13 +97,13 @@
         "path": "../escape.py",
         "old": "safe",
         "new": "unsafe",
-        "reason": "A malformed proposal tests whether the executor enforces workspace containment."
+        "reason": "a malformed proposal that tests workspace containment"
       },
       {
         "path": "greet.py",
         "old": "return f'Hello {name}'",
         "new": "return f'Hello {name}!'",
-        "reason": "The repository-local edit implements the requested punctuation."
+        "reason": "the repository-local edit that implements the requested punctuation"
       }
     ]
   }
