@@ -1,108 +1,249 @@
 ---
-description: "Turn agent capability into valuable, accessible, appropriately relied-on products with accountable organizations and an operated AI management system."
+description: "Turn one agent's launch review into computed evidence: the reliance matrix by cohort, the invocation-to-outcome funnel, cost per outcome under three designs, accessibility as a gate, a risk-register entry joined to the results, and the assembled launch appendix that recommends HOLD."
 ---
 
-# Agent Products, People, and Organizations [S] {#sec-ch28}
+# Agent Products, People, and Organizations {#sec-ch28}
 
-## What you need going in
+We are now ready to compute a launch decision. Chapter 27 keeps a deployed agent running — its SLOs, its incidents, its review queue. This chapter asks a different question about the same agent: *should this product exist in this form, for these people, under this organization, at this autonomy level?* We answer it by assembling one artifact, the **launch-review appendix**, out of numbers the chapter computes in front of you: (i) a plan diff and a receipt that make the agent's state legible; (ii) the reliance matrix that separates appropriate reliance from over- and under-reliance, by cohort; (iii) the invocation-to-outcome funnel, where an offline eval score and realized product value visibly diverge; (iv) cost per outcome under three product designs, with review labor charged honestly; (v) accessibility completion as a gate, not an afterthought; (vi) a NIST-style risk-register entry joined to those gate results; and (vii) the assembled appendix that reads off a recommendation. The running example is a synthetic but deliberately awkward one: an expense-triage agent that is *economically attractive and still not ready to launch*.
 
-> **Assumed:** neural-network fundamentals, product metrics, basic experimentation, software delivery, and comfort reading rates and unit economics.
->
-> **From earlier chapters:** [Chapter 1](01-operational-on-ramp.qmd#sec-ch01) introduced the autonomy ladder and agency budget; [Chapter 16](16-agent-anatomy.qmd#sec-ch16) separated workflows from agents; [Chapter 22](22-evaluation.qmd#sec-ch22) built statistical and economic evaluations; [Chapter 25](25-alignment-interpretability-governance.qmd#sec-ch25) turned safety evidence into governed claims; [Chapter 26](26-production-platform.qmd#sec-ch26) supplied cost attribution and release controls; and [Chapter 27](27-operating-agents.qmd#sec-ch27) operated SLOs, incidents, and human-review queues.
->
-> **Not required:** prior product-management, accessibility, organization-design, or management-system training. This chapter is an engineering treatment, not legal, employment, procurement, or professional-practice advice.
+The awkwardness is the lesson. A release argument is three nested claims, and it passes only if all three hold at once. The **user** claim: a person can form an accurate picture of what the agent is doing and intervene. The **product** claim: use causes a worthwhile outcome against a simpler baseline. The **organization** claim: named owners can keep the claim true through change. These do not average. Product value cannot buy back an excluded cohort; a complete policy binder cannot manufacture a useful outcome. Our expense agent will pass the money argument and fail the people argument, and the whole point of computing the evidence is that no single green dashboard can hide that.
 
-## Contents
+One honesty note before we start. Every number on these pages is computed live from a small synthetic cohort log we define in full and can read. It is representative, not a recorded production run — the tension it encodes (new reviewers over-trusting the agent, assistive-technology users abandoning a streaming flow) is one we built on purpose so the decision is reproducible. The mechanisms — the reliance cells, the funnel joins, the cost decomposition, the gate evaluation — are exactly the ones a real launch review runs; only the constants would change.
 
-- [Design trust through legible state and receipts](#sec-ch28-trust)
-- [What you will build](#sec-ch28-artifact)
-- [Measure appropriate reliance, not engagement](#sec-ch28-reliance)
-- [Make accessibility part of system correctness](#sec-ch28-accessibility)
-- [Discover value before adding autonomy](#sec-ch28-discovery)
-- [Follow the invocation-to-outcome funnel](#sec-ch28-funnel)
-- [Price outcomes, labor, and energy](#sec-ch28-economics)
-- [Organize for staged autonomy](#sec-ch28-organization)
-- [Operate AIMS through every material change](#sec-ch28-aims)
-- [Build](#sec-ch28-build)
-- [What endures, what changes](#sec-ch28-endures)
-- [Exercises](#sec-ch28-exercises)
-- [Notes and sources](#sec-ch28-sources)
+## Make the agent legible: plan diffs, receipts, and epistemic labels {#sec-ch28-trust}
 
-## Design trust through legible state and receipts {#sec-ch28-trust}
+An agent that acts on the world owes its user two objects before and after every effect, and neither is a sentence of prose. Before an effect, a **plan diff**: the exact change proposed — which object, which field, from what state to what state, under whose permission — so a person can approve the specific delta rather than a vibe. After an effect, a **receipt**: the authoritative system, the operation's identity, the committed result, a timestamp, and whether it reconciled with downstream state. A chat bubble that says "done" is not a receipt; it is the model narrating, and the model's narration is the one thing in the system we cannot audit. We build both as small typed objects so they are inspectable, testable, and impossible to fake with fluent text.
 
-An expense-triage agent reaches launch review with green technical dashboards. Its task benchmark improved, latency meets the objective, effect authorization is enforced, and the review queue stays within its service target. The meeting approves expansion in eleven minutes. Six weeks later, finance cannot show that reimbursements close faster. New reviewers accept bad categories much more often than experienced reviewers. Screen-reader users abandon the streaming review flow. The product owner assumed the risk team would request recertification after a prompt change; the risk team assumed the platform would do it. Nobody owned the whole decision.
+The evidence a plan diff carries also needs provenance. The same screen may show a fact read from an authoritative system, a value the user typed, an inference the model drew, and a question nobody has answered yet — and collapsing those into one confident paragraph is how overreliance starts. We fix a small vocabulary of **epistemic labels** and apply it to every claim.
 
-This is not one missing metric. It is a missing **socio-technical system**: the product, its users and affected people, the humans who review or repair it, the teams who change it, and the management process that decides whether its evidence still justifies its authority. Chapter 27 keeps the service operating and runs queues and incidents. This chapter asks a different question: *should this product exist in this form, for these people, under this organization, at this autonomy level?*
+```{python}
+# @save
+from __future__ import annotations
 
-Treat a launch argument as three nested rings. The user ring asks whether a person can form an accurate model of what the agent is doing and intervene. The product ring asks whether use causes a worthwhile outcome compared with a simpler baseline. The organization ring asks whether named owners can maintain the claim through changes. A release is not ready when one ring is green; it is ready only when their evidence supports the same bounded decision.
+from collections import Counter
+from dataclasses import dataclass
+from enum import Enum
 
-```{mermaid}
-%%| label: fig-ch28-three-rings
-%%| fig-cap: "Which three evidence rings must agree before an agent receives more authority?"
-%%| fig-alt: "A user evidence ring containing legibility, accessibility, and appropriate reliance feeds a product evidence ring containing outcomes, funnel, and unit economics. That feeds an organization evidence ring containing ownership, risk, and recertification. All three enter one launch decision that can ship, constrain, or hold."
-flowchart LR
-    U["User evidence<br/>legibility · accessibility<br/>appropriate reliance"] --> P["Product evidence<br/>causal outcome · funnel<br/>unit economics"]
-    P --> O["Organization evidence<br/>owner · risk treatment<br/>recertification"]
-    O --> D{"Launch decision"}
-    D -->|"all conditions pass"| SHIP["Ship bounded authority"]
-    D -->|"some conditions fail"| LIMIT["Constrain, repair, and re-evaluate"]
-    D -->|"value or control fails"| HOLD["Hold or retire"]
-    U -. "cannot be averaged away" .-> D
-    P -. "must beat a baseline" .-> D
+
+class EpistemicLabel(str, Enum):
+    """The provenance a product attaches to each claim it shows a user.
+
+    Distinguishing a sourced fact from a model inference from an unresolved
+    question is what lets a reviewer calibrate trust to evidence instead of to
+    fluent phrasing. The labels are stable strings so the same word means the
+    same thing on every screen and in every modality.
+    """
+
+    SOURCE_FACT = "source fact"
+    USER_PROVIDED = "user-provided"
+    SYSTEM_STATE = "system state"
+    MODEL_INFERENCE = "model inference"
+    ESTIMATE = "estimate"
+    UNRESOLVED = "unresolved"
 ```
 
-The invariant in @fig-ch28-three-rings is conjunctive: product value cannot compensate for an excluded cohort, and policy completeness cannot compensate for no useful outcome.
+The plan diff and the receipt are the two halves of one accountable action. We keep them as frozen dataclasses so an approval binds an exact proposal and a receipt records exactly what committed.
 
-### Concern boundaries are product architecture
+```{python}
+# @save
+@dataclass(frozen=True)
+class PlanDiff:
+    """The exact change an agent proposes, shown before any effect runs.
 
-An agent product needs more than a chat surface. Separate at least six concerns: **goal elicitation**, **planning**, **execution**, **evidence**, **intervention**, and **outcome confirmation**. Goal elicitation turns an underspecified request into a bounded objective and names what must not happen. Planning exposes consequential interpretation before effects. Execution invokes models and tools under the Chapter 17 harness. Evidence distinguishes source facts, model inferences, unresolved assumptions, and effect receipts. Intervention lets a person correct, pause, deny, or narrow authority. Outcome confirmation checks the external state that mattered.
+    A person should approve this delta, not a summary of it: the affected
+    object and field, the current and proposed state, the permission the
+    effect would exercise, and the labeled evidence behind it. Approving a
+    plan diff is narrow by construction; approving "the plan" is not.
+    """
 
-This separation is the product counterpart of mixed-initiative interaction. The person and automation can each take initiative, but initiative should move according to expected value, uncertainty, cost of interruption, and consequence—not because the agent always asks or always acts. A low-consequence, reversible formatting choice may proceed silently. A novel payee, uncertain policy interpretation, or irreversible submission should surface a decision point with the exact delta.
+    affected_object: str
+    field: str
+    from_state: str
+    to_state: str
+    permission: str
+    evidence: tuple[tuple[EpistemicLabel, str], ...]
 
-Before an action, show a **plan diff**: what the agent intends to change, from which current state to which proposed state, with affected objects and permissions. Afterward, show a **receipt**: the authoritative system, operation identity, committed result, timestamp, and reconciliation status. A prose message saying “done” is not a receipt. Nor should a product expose private chain-of-thought as an explanation. Give users the decision-relevant evidence—sources, assumptions, uncertainty, rule or tool result, and action record—without claiming that a generated rationale faithfully reveals internal computation. [Chapter 25](25-alignment-interpretability-governance.qmd#sec-ch25-traces) owns that distinction.
 
-Use stable epistemic labels. “Source fact,” “user-provided,” “system state,” “model inference,” “estimate,” and “unresolved” should retain the same meaning across screens and modalities. Calibrated numeric probabilities are useful only when validated for the task and slice. Otherwise, concrete statements such as “two required receipts are missing” are more actionable than ornamental confidence. A refusal should name the boundary and a safe next step; an uncertainty should identify what new evidence could resolve it.
+@dataclass(frozen=True)
+class Receipt:
+    """The record of an effect after it commits, tied to authoritative state.
 
-Personalization raises both usefulness and risk. Make remembered preferences inspectable, scoped, editable, exportable when appropriate, and resettable. Distinguish a temporary session choice from a durable profile and an organizational policy. Never infer a sensitive preference merely because it predicts clicks. Reset must remove the preference from every product surface that consumes it, while [Chapter 18](18-memory-experiential-learning.qmd#sec-ch18) owns deletion lineage through derived memory artifacts.
+    Unlike a generated "done" message, a receipt names the system of record,
+    the operation identity a later reconciliation can join on, the committed
+    result, when it happened, and whether downstream state agrees. It is the
+    product-level analogue of Chapter 16's effect log.
+    """
 
-## What you will build {#sec-ch28-artifact}
+    system: str
+    op_id: str
+    result: str
+    timestamp: str
+    reconciliation: str
+```
 
-::: {.callout-tip}
-### One integrated launch-review artifact
+Here is one real instance for the expense agent: it proposes writing a category to a specific record, backed by three differently-sourced pieces of evidence, and — once a reviewer approves — the receipt that comes back.
 
-You will build [`launch_metrics.py`](../code/ch28/launch_metrics.py) around one candidate expense-report triage agent. A compact fixture expands into a 500-row reviewer decision log and a 500-row usage ledger. The artifact computes the reliance matrix by cohort, the invocation-to-outcome funnel, cost per realized outcome, a review-time break-even point, an explicitly bounded energy intensity, and four predeclared launch conditions. It attaches those results to one AIMS risk-register entry and returns `SHIP` or `HOLD_FULL_LAUNCH`.
+```{python}
+proposal = PlanDiff(
+    affected_object="expense EXP-4471",
+    field="category",
+    from_state="(uncategorized)",
+    to_state="Travel",
+    permission="write:expense_category",
+    evidence=(
+        (EpistemicLabel.SOURCE_FACT, "Merchant on receipt is 'Delta Air Lines', amount 48.00 units"),
+        (EpistemicLabel.MODEL_INFERENCE, "Airfare under 50 units is most often 'Travel' for this unit"),
+        (EpistemicLabel.UNRESOLVED, "Two required itemized receipts are missing"),
+    ),
+)
+print(f"PLAN DIFF  {proposal.affected_object}")
+print(f"  {proposal.field}: {proposal.from_state} -> {proposal.to_state}  [{proposal.permission}]")
+for label, statement in proposal.evidence:
+    print(f"  - ({label.value}) {statement}")
 
-The fixture is synthetic so the decision is reproducible. Its intended tension is realistic: the candidate beats the conventional workflow on cost, yet fails overall appropriate reliance, cohort overreliance, and assistive-technology completion. The permitted next step is therefore a read-only pilot for experienced reviewers—not a vote to ignore the failing slices.
-:::
+approved = Receipt(
+    system="expense-ledger",
+    op_id="op-9f2a41",
+    result="category=Travel written to EXP-4471",
+    timestamp="2026-07-19T14:03:07Z",
+    reconciliation="ledger echo confirmed; 2 receipts still pending",
+)
+print(f"\nRECEIPT    {approved.system}  {approved.op_id}")
+print(f"  {approved.result}")
+print(f"  at {approved.timestamp}  |  reconciliation: {approved.reconciliation}")
+```
+
+Read the two objects together. The plan diff surfaces the one thing a reviewer must weigh — an inference about category resting on an *unresolved* evidence gap — instead of burying it under a confident recommendation. The receipt then closes the loop against the ledger, and its reconciliation field refuses to claim more than it can: the write committed, but two receipts are still pending. @fig-ch28-legible-state names the anatomy of both.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch28-legible-state
+%%| fig-cap: "What must an agent show around an effect? A plan diff before (labeled delta and evidence) and a receipt after (authoritative record and reconciliation) — neither of which a prose 'done' can supply."
+%%| fig-alt: "Two stacked boxes. The upper box, plan diff, lists affected object, field from-state to to-state, permission, and evidence tagged with epistemic labels. An approval arrow leads to the effect. The lower box, receipt, lists system of record, operation id, result, timestamp, and reconciliation status."
+flowchart TB
+    subgraph PD["PLAN DIFF — shown before the effect"]
+        A1["affected object + field"]
+        A2["from-state → to-state"]
+        A3["permission exercised"]
+        A4["evidence, each epistemically labeled"]
+    end
+    PD -->|"reviewer approves this exact delta"| EFF(["effect commits"])
+    EFF --> RC
+    subgraph RC["RECEIPT — shown after the effect"]
+        B1["system of record"]
+        B2["operation id (joinable)"]
+        B3["result + timestamp"]
+        B4["reconciliation status"]
+    end
+```
+
+Two design rules follow from having built these objects. Initiative should move by expected value: a low-consequence, reversible change may proceed silently, but a novel payee, an uncertain policy reading, or an irreversible submission must surface a plan diff and wait [@horvitz1999mixedinitiative]. And personalization is a labeled, resettable object like any other — a remembered preference is inspectable and scoped, a reset removes it from every surface that consumes it, and no sensitive preference is ever inferred merely because it predicts clicks. The guidelines literature validated across a product lifecycle says the same in aggregate [@amershi2019guidelines]; here it is two dataclasses and a rule about when to show them.
 
 ## Measure appropriate reliance, not engagement {#sec-ch28-reliance}
 
-Trust is a person's attitude that an agent will help achieve a goal under uncertainty. **Reliance** is observable behavior: accepting, rejecting, checking, delegating, or intervening. A product cannot directly optimize “trust” as a scalar without inviting manipulation. It can design information and control so that reliance tracks demonstrated capability.
-
-The target is **appropriate reliance**, not maximal acceptance. For a set of recommendations with externally established correctness, classify each decision into four cells:
-
-| Recommendation | Person accepts | Person rejects |
-|---|---:|---:|
-| correct | correct accept, (N_{CA}) | correct reject, (N_{CR}) |
-| wrong | wrong accept, (N_{WA}) | wrong reject, (N_{WR}) |
-
-Define
+Trust is an attitude; **reliance** is a behavior we can count — accepting, rejecting, checking, overriding. A product that optimizes "trust" as a scalar invites manipulation, so we optimize the thing we can observe and ground: reliance that *tracks the agent's actual capability* [@lee2004trust]. That means separating four outcomes, not one. For a set of recommendations whose correctness is established downstream, each reviewer decision falls into exactly one cell of a two-by-two: the recommendation was correct or wrong, and the person accepted or rejected it.
 
 $$
-R_{appropriate}=\frac{N_{CA}+N_{WR}}{N}, \qquad
-R_{over}=\frac{N_{WA}}{N_{WA}+N_{WR}}, \qquad
-R_{under}=\frac{N_{CR}}{N_{CA}+N_{CR}}.
-$$
+R_\text{app}=\frac{N_{CA}+N_{WR}}{N},\qquad
+R_\text{over}=\frac{N_{WA}}{N_{WA}+N_{WR}},\qquad
+R_\text{under}=\frac{N_{CR}}{N_{CA}+N_{CR}},
+$$ {#eq-ch28-reliance}
 
-The first rate measures agreement with correctness. The second asks how often a person accepts when the agent is wrong; the third asks how often useful recommendations are rejected. Report all three. A single “agreement with AI” number makes correct acceptance and harmful wrong acceptance look alike. Likewise, acceptance, daily active use, time in product, and satisfaction can rise while judgment worsens.
+where $N_{CA}$ is correct-accept, $N_{WR}$ wrong-reject, $N_{WA}$ wrong-accept, $N_{CR}$ correct-reject, and $N$ the total. Appropriate reliance rewards two behaviors at once: accepting good help and catching bad help. Overreliance is the share of the agent's *wrong* recommendations a person waves through; underreliance is the share of its *good* recommendations a person needlessly discards. A single "agreement with AI" number blends the harmless $N_{CA}$ with the dangerous $N_{WA}$ and hides both failure modes. So does engagement: acceptance, daily use, and satisfaction can all climb while judgment rots.
 
-Correctness needs an outcome-grounded label. Reviewer agreement alone is circular: if every reviewer accepts the same bad recommendation, agreement is high and reliance is poor. Use authoritative downstream state, independently adjudicated cases, or a delayed outcome whose limitations are recorded. Confirmed catches are especially informative: did a rejection prevent an actual defect, or merely create rework?
+We need the raw material. Our synthetic cohort log holds three groups with a deliberate structure — experienced reviewers who catch most bad recommendations, new reviewers who accept almost anything, and assistive-technology users who struggle to finish at all. Each cohort carries its four reliance counts, how many rejections were *confirmed* to have caught a real defect, its average review time, and a nested usage funnel we return to later.
 
-The artifact keeps the four cells intact rather than reducing them too early:
+```{python}
+# @save
+QUADRANTS = ("correct_accept", "correct_reject", "wrong_accept", "wrong_reject")
+STAGES = ("exposed", "invoked", "completed", "accepted_or_edited", "outcome_realized", "retained")
 
-```python
-# launch_metrics.py — one reliance slice
-def _reliance_rates(rows):
+COHORT_LOG = {
+    "experienced": {
+        "size": 200,
+        "quadrants": {"correct_accept": 160, "correct_reject": 10, "wrong_accept": 4, "wrong_reject": 26},
+        "confirmed_catches": 24, "review_seconds": 35,
+        "funnel": {"exposed": 200, "invoked": 190, "completed": 180,
+                   "accepted_or_edited": 170, "outcome_realized": 160, "retained": 145},
+    },
+    "new_reviewer": {
+        "size": 200,
+        "quadrants": {"correct_accept": 165, "correct_reject": 5, "wrong_accept": 25, "wrong_reject": 5},
+        "confirmed_catches": 5, "review_seconds": 85,
+        "funnel": {"exposed": 200, "invoked": 185, "completed": 175,
+                   "accepted_or_edited": 155, "outcome_realized": 140, "retained": 115},
+    },
+    "assistive_technology": {
+        "size": 100,
+        "quadrants": {"correct_accept": 70, "correct_reject": 10, "wrong_accept": 5, "wrong_reject": 15},
+        "confirmed_catches": 14, "review_seconds": 70,
+        "funnel": {"exposed": 100, "invoked": 85, "completed": 65,
+                   "accepted_or_edited": 55, "outcome_realized": 45, "retained": 35},
+    },
+}
+```
+
+The compact counts expand into a per-decision ledger — one row per reviewed case — so every later metric is a slice-and-count over the same 500 rows rather than a headline we have to trust. A parallel usage ledger records, per exposed case, how far it advanced through the funnel.
+
+```{python}
+# @save
+def expand_logs(cohorts: dict) -> tuple[list[dict], list[dict]]:
+    """Expand compact cohort counts into two aligned per-case ledgers.
+
+    The reviewer-decision ledger has one row per reviewed case tagged with its
+    reliance quadrant and whether its rejection was a confirmed catch; the
+    usage ledger has one row per exposed case flagged with the funnel stages it
+    reached. Working from per-case rows means every reported rate is a count
+    over a slice, which is what makes cohort breakdowns honest.
+
+    Args:
+        cohorts: The cohort log mapping each group to its counts and funnel.
+
+    Returns:
+        A tuple ``(decisions, usage)`` of two row lists.
+    """
+    decisions: list[dict] = []
+    usage: list[dict] = []
+    case_id = 0
+    for name, cohort in cohorts.items():
+        for quadrant in QUADRANTS:
+            for offset in range(cohort["quadrants"][quadrant]):
+                decisions.append({
+                    "case_id": case_id, "cohort": name, "quadrant": quadrant,
+                    "confirmed_catch": quadrant == "wrong_reject" and offset < cohort["confirmed_catches"],
+                    "review_seconds": cohort["review_seconds"],
+                })
+                case_id += 1
+        for index in range(cohort["size"]):
+            usage.append({"cohort": name, **{stage: index < cohort["funnel"][stage] for stage in STAGES}})
+    return decisions, usage
+
+
+decisions, usage = expand_logs(COHORT_LOG)
+print(f"reviewer decisions: {len(decisions)}   usage rows: {len(usage)}")
+print("one decision row:", decisions[0])
+```
+
+Now the metric of @eq-ch28-reliance, computed over any slice of decision rows. Keeping all four cells intact — rather than reducing to one agreement number too early — is the entire discipline.
+
+```{python}
+# @save
+def reliance_rates(rows) -> dict:
+    """Compute the four-cell reliance rates for one slice of decisions.
+
+    Returns appropriate reliance (correct-accept plus wrong-reject over all),
+    overreliance (accepting the agent's wrong recommendations), and
+    underreliance (rejecting its good ones), plus a confirmed-catch rate that
+    asks whether a rejection prevented a real defect or merely made rework.
+    Reporting all of these keeps a harmless correct-accept from masking a
+    dangerous wrong-accept.
+
+    Args:
+        rows: An iterable of decision rows, each carrying a ``quadrant`` key.
+
+    Returns:
+        A dict of counts and the rates from @eq-ch28-reliance.
+    """
     rows = list(rows)
     counts = Counter(row["quadrant"] for row in rows)
     correct = counts["correct_accept"] + counts["correct_reject"]
@@ -111,374 +252,614 @@ def _reliance_rates(rows):
     return {
         "n": len(rows),
         "quadrants": {name: counts[name] for name in QUADRANTS},
-        "appropriate_rate": round(
-            (counts["correct_accept"] + counts["wrong_reject"]) / len(rows), 4
-        ),
+        "appropriate_rate": round((counts["correct_accept"] + counts["wrong_reject"]) / len(rows), 4),
         "overreliance_rate": round(counts["wrong_accept"] / wrong, 4),
         "underreliance_rate": round(counts["correct_reject"] / correct, 4),
         "confirmed_catch_rate": round(catches / counts["wrong_reject"], 4),
     }
+
+
+def reliance_report(decisions: list[dict]) -> dict:
+    """Compute overall reliance and one breakdown per cohort.
+
+    Args:
+        decisions: The reviewer-decision ledger from ``expand_logs``.
+
+    Returns:
+        A dict with ``overall`` rates and a ``by_cohort`` mapping.
+    """
+    cohorts = sorted({row["cohort"] for row in decisions})
+    return {
+        "overall": reliance_rates(decisions),
+        "by_cohort": {name: reliance_rates(r for r in decisions if r["cohort"] == name) for name in cohorts},
+    }
+
+
+reliance = reliance_report(decisions)
+overall = reliance["overall"]
+print(f"overall appropriate={overall['appropriate_rate']}  "
+      f"over={overall['overreliance_rate']}  under={overall['underreliance_rate']}")
 ```
 
+The aggregate looks almost launch-ready: an appropriate rate of 0.882, with most disagreement being harmless. The reliance matrix makes the four cells concrete — and labels which cell means what.
+
 ```{python}
-#| label: fig-ch28-reliance
-#| fig-cap: "Where does the aggregate reviewer population rely appropriately, and where does it fail?"
-#| fig-alt: "A two-by-two matrix of 500 decisions. Correct recommendations were accepted 395 times and rejected 25 times. Wrong recommendations were accepted 34 times and rejected 46 times. Correct accepts and wrong rejects are labeled appropriate; wrong accepts are labeled overreliance; correct rejects are labeled underreliance."
-#| echo: false
-from pathlib import Path
-import sys
+#| label: fig-ch28-reliance-matrix
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where does the whole reviewer population rely appropriately, and where not? The diagonal (correct-accept, wrong-reject) is appropriate reliance; the off-diagonal splits into overreliance (accept a wrong recommendation) and underreliance (reject a correct one)."
+#| fig-alt: "A two-by-two matrix of 500 decisions. Correct recommendations were accepted 395 times (appropriate) and rejected 25 times (underreliance). Wrong recommendations were accepted 34 times (overreliance) and rejected 46 times (appropriate)."
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib_inline.backend_inline import set_matplotlib_formats
 
-plt.rcParams["svg.hashsalt"] = "chapter-28-inline"
+plt.rcParams["svg.hashsalt"] = "chapter-28"
 set_matplotlib_formats("svg", metadata={"Date": None})
 
-code_dir = Path("code/ch28").resolve()
-sys.path.insert(0, str(code_dir))
-from launch_metrics import build_launch_review
-
-quadrants = build_launch_review()["reliance"]["overall"]["quadrants"]
-values = np.array([
-    [quadrants["correct_accept"], quadrants["correct_reject"]],
-    [quadrants["wrong_accept"], quadrants["wrong_reject"]],
-])
-cell_labels = np.array([
-    ["appropriate", "underreliance"],
-    ["overreliance", "appropriate"],
-])
-
-fig, ax = plt.subplots(figsize=(7.4, 3.8))
+q = overall["quadrants"]
+values = np.array([[q["correct_accept"], q["correct_reject"]],
+                   [q["wrong_accept"], q["wrong_reject"]]])
+labels = np.array([["appropriate", "underreliance"], ["overreliance", "appropriate"]])
+fig, ax = plt.subplots(figsize=(6.6, 3.4))
 ax.imshow(values, cmap="Blues", vmin=0, vmax=values.max())
 ax.set_xticks([0, 1], ["Accept", "Reject"])
 ax.set_yticks([0, 1], ["Correct", "Wrong"])
 ax.set_xlabel("Reviewer decision")
 ax.set_ylabel("Recommendation correctness")
-for row in range(2):
-    for col in range(2):
-        color = "white" if values[row, col] > values.max() / 2 else "black"
-        ax.text(col, row, f"{values[row, col]}\n{cell_labels[row, col]}",
-                ha="center", va="center", color=color, fontweight="bold")
+for r in range(2):
+    for c in range(2):
+        shade = "white" if values[r, c] > values.max() / 2 else "black"
+        ax.text(c, r, f"{values[r, c]}\n{labels[r, c]}", ha="center", va="center",
+                color=shade, fontweight="bold")
 ax.set_title("Reviewer decisions (n = 500)")
 fig.tight_layout()
 plt.show()
 ```
 
-The aggregate appropriate rate in @fig-ch28-reliance is (441/500=0.882). More importantly, the new-reviewer slice accepts 25 of 30 wrong recommendations: an overreliance rate of (0.833). An average can hide exactly the population that a new rollout creates. Slice by experience, language, assistive technology, task novelty, consequence, time pressure, and any protected or operational group justified by the context. Predeclare minimum sample handling; do not publish unstable rankings of individual reviewers.
+Now the reason the aggregate lies. Averaging blends the population that already exists (experienced reviewers) with the population a rollout *creates* (new reviewers), and those behave nothing alike. We plot overreliance per cohort against the overall number.
 
-Interventions have trade-offs. Showing sources and exact action deltas can improve discrimination. Requiring a person to make an initial judgment before seeing the recommendation, request evidence, or explain a choice can reduce overreliance, but also adds effort and can reduce satisfaction. Warnings shown on every case become wallpaper. Confidence displays can anchor users when calibration is poor. Test interventions on all four cells, decision time, comprehension, accessibility, downstream defects, and distributional effects. The best interface is not the one users like most in isolation; it is the one that helps the relevant people accept good assistance and catch bad assistance at a sustainable cost.
+```{python}
+#| label: fig-ch28-reliance-cohort
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does an aggregate appropriate rate of 0.882 hide a cohort in trouble? Overreliance is near zero for experienced reviewers but 0.833 for new reviewers — the population a rollout manufactures — far above the 0.25 gate."
+#| fig-alt: "A bar chart of overreliance rate by cohort. Experienced reviewers 0.13, assistive-technology 0.25, new reviewers 0.83, with a dashed horizontal line at the 0.25 gate. An overall bar sits at 0.43. The new-reviewer bar towers over the gate line."
+by_cohort = reliance["by_cohort"]
+names = ["experienced", "assistive_technology", "new_reviewer"]
+over = [by_cohort[n]["overreliance_rate"] for n in names]
+fig, ax = plt.subplots(figsize=(6.6, 3.4))
+bars = ax.bar(names, over, color=["#2a7f9e", "#b7791f", "#b13f3f"], width=0.6)
+ax.axhline(0.25, ls="--", color="0.4")
+ax.text(2.35, 0.28, "cohort gate 0.25", fontsize=8, ha="right", color="0.3")
+ax.axhline(overall["overreliance_rate"], ls=":", color="0.55")
+ax.text(0.0, overall["overreliance_rate"] + 0.02, f"overall {overall['overreliance_rate']}", fontsize=8, color="0.4")
+for bar, value in zip(bars, over):
+    ax.text(bar.get_x() + bar.get_width() / 2, value + 0.02, f"{value}", ha="center", fontsize=9)
+ax.set_ylabel("overreliance rate")
+ax.set_ylim(0, 1)
+fig.tight_layout()
+plt.show()
+```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| reviewer-decision ledger → cohort reliance report | 43 analysis lines; 18 shown | Every decision occupies one of four exhaustive cells, and a passing aggregate cannot erase a failing cohort gate. |
+The new-reviewer bar is the chapter in one figure: 25 of their 30 wrong recommendations were accepted, an overreliance rate of 0.833, more than three times the gate. Their confirmed-catch rate tells the same story from the other side — they almost never reject anything. An interface that shows the evidence and the exact proposed write before the recommendation, or that asks for an initial judgment on high-uncertainty cases, can move these cells; a confidence badge shown on every case becomes wallpaper and can anchor a poorly-calibrated user [@bucinca2021trust]. The right way to know is to test each intervention on all four cells plus decision time and accessibility — not on satisfaction in isolation.
+
+::: {.callout-note title="In the interview"}
+**Q. Your assistant's acceptance rate and daily-active use are both up 20% after a launch. Is that good?**
+It is not evidence of anything good on its own. Acceptance and engagement rise when overreliance rises — a new cohort that waves everything through looks identical to a delighted one on those metrics. The answer they want: measure appropriate reliance against outcome-grounded correctness, split by cohort, and check overreliance and underreliance separately; a rise in acceptance with a rise in wrong-accepts is a regression, not a win. The trap is treating engagement as the goal metric, or reporting one aggregate agreement number.
 :::
 
-## Make accessibility part of system correctness {#sec-ch28-accessibility}
+## Make accessibility a correctness property {#sec-ch28-accessibility}
 
-Accessibility is not a compliance pass added after model quality. It is whether people with varied sensory, motor, cognitive, language, and situational needs can perceive state, understand consequences, operate controls, recover from error, and obtain the same outcome. For an agent, inaccessible state is also a control defect: a person cannot supervise a plan or stop an action they cannot perceive.
+Accessibility is not a compliance pass bolted on after model quality. For an agent it is a control property: a person who cannot perceive a plan cannot supervise it, and a person who cannot operate the approve control cannot stop an effect. So we measure the same funnel by access mode and gate it, exactly as we gate reliance. Our assistive-technology cohort exposes the failure: 85 of them invoke the agent, but only 65 finish the recommendation step, because the streaming review flow moves focus on every token and never announces a stable completion state.
 
-Start with the ordinary web and software baseline: semantic structure; keyboard operation; visible focus; sufficient contrast; text alternatives; captions and transcripts; labels and instructions; predictable navigation; zoom and reflow; error identification; and compatibility with assistive technologies. Then test the interaction patterns agents add:
+```{python}
+at = COHORT_LOG["assistive_technology"]["funnel"]
+completion = round(at["completed"] / at["invoked"], 4)
+floor = 0.85
+print(f"assistive invoked -> completed: {at['completed']}/{at['invoked']} = {completion}  (floor {floor})")
+print("passes accessibility gate:", completion >= floor)
+```
 
-- **Streaming output:** do not move focus on every token or flood a live region. Announce meaningful completion states and offer pause, replay, or a non-streaming view.
-- **Plans and tool calls:** represent state in semantic text, not only animation, color, indentation, or a canvas. A collapsed detail must expose whether an effect is pending.
-- **Approval:** focus the exact proposed change, its evidence, and distinct approve, deny, modify, and escalate controls. Preserve enough time to decide; refresh stale state before effect.
-- **Voice and multimodality:** provide text alternatives, captions, transcripts, and a path that does not require speech, hearing, precise pointing, or camera use.
-- **Generated interface elements:** constrain them to a tested component system. A model should not invent unlabeled controls or change keyboard order at runtime.
-- **Errors and uncertainty:** identify the field or claim, state what happened, preserve entered work, and give a correction path without requiring memory of a vanished message.
+A completion of 0.765 against a 0.85 floor is not a rounding error to ship past; it is one in five users of a supported access mode excluded from finishing a task their colleagues finish. The engineering response is to diagnose the interaction and repair it — here, a non-streaming fallback that announces completion instead of flooding a live region — and then *re-measure*, never to lower the gate after seeing the result. Suppose the repair recovers the users who abandoned specifically at the streaming step. We can project the effect honestly and check whether it would clear the gate.
 
-Conformance to a published accessibility standard is a floor, not evidence that the agent task works. Combine automated checks, manual keyboard and screen-reader testing, zoom and reflow tests, cognitive walkthroughs, and representative task studies. Automated scanners catch only classes of detectable violations. Include disabled people and assistive-technology users in discovery and evaluation, compensate expertise, and do not make one participant speak for a population.
+```{python}
+recovered = 9  # representative: users who abandoned at the streaming step, not a measured result
+repaired_completed = at["completed"] + recovered
+repaired = round(repaired_completed / at["invoked"], 4)
+print(f"projected after non-streaming fallback: {repaired_completed}/{at['invoked']} = {repaired}")
+print("would clear the 0.85 floor:", repaired >= floor)
+```
 
-Measure the same funnel and outcome by access mode. In the fixture, 85 assistive-technology users invoke the agent but only 65 complete the recommendation step, an adjacent conversion of (65/85=0.765). The predeclared floor is (0.85). Shipping because the overall completion count is acceptable would treat exclusion as a rounding error. The correct engineering response is to diagnose the interaction, repair it, and repeat the task—not lower the cohort gate after looking at the result.
+Plotting the measured flow against the projected repair puts the gate decision in one frame: one bar sits below the floor, the other just above it.
 
-Language and culture require the same seriousness. Translation quality, reading level, names, addresses, dates, currencies, formality, and policy concepts can change both comprehension and model behavior. Evaluate the end-to-end task with people who use the language in context. A fluent response is not necessarily an accurate or culturally suitable action. Give users control over language and locale; do not silently infer them from sensitive proxies.
+```{python}
+#| label: fig-ch28-access-repair
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Does the accessibility gate change the decision? The streaming flow completes 0.765 of assistive-technology invocations, below the 0.85 floor; a projected non-streaming fallback that recovers nine abandoned users would clear it — evidence to gather, not assume."
+#| fig-alt: "Two bars for assistive-technology completion rate: streaming flow at 0.765 in red, below a dashed floor at 0.85; projected non-streaming fallback at 0.871 in blue, above the floor."
+fig, ax = plt.subplots(figsize=(5.6, 3.2))
+bars = ax.bar(["streaming\n(measured)", "non-streaming\n(projected)"], [completion, repaired],
+              color=["#b13f3f", "#2a7f9e"], width=0.55)
+ax.axhline(floor, ls="--", color="0.4")
+ax.text(1.42, floor + 0.008, "floor 0.85", fontsize=8, ha="right", color="0.3")
+for bar, value in zip(bars, [completion, repaired]):
+    ax.text(bar.get_x() + bar.get_width() / 2, value + 0.01, f"{value}", ha="center", fontsize=9)
+ax.set_ylabel("invoked → completed")
+ax.set_ylim(0, 1)
+fig.tight_layout()
+plt.show()
+```
 
-Accessibility ownership must survive procurement. If a vendor supplies the model or interface, the product team still needs acceptance criteria, test access, remediation terms, change notification, and a fallback. A vendor conformance report is evidence about a named version and scope, not a transferable guarantee for your prompts, generated content, wrapper, tools, or workflow.
+The projection is labeled a projection: it tells us the repair is worth building and re-testing with real assistive-technology users, not that the cohort now passes. Accessibility ownership also has to survive procurement — a vendor's conformance report is evidence about a named version and scope, not a transferable guarantee for your prompts, generated content, wrapper, and tools; the product team still owns end-to-end task testing in its own scaffold. And the same seriousness extends to language and locale: a fluent response is not necessarily an accurate or culturally suitable *action*, so the end-to-end task is evaluated with people who use the language in context.
 
-## Discover value before adding autonomy {#sec-ch28-discovery}
+## Discover value before autonomy; declare kill criteria {#sec-ch28-discovery}
 
-Agents are attractive when the path to an outcome is variable, information-rich, and partly judgmental. Those same properties make them expensive and difficult to evaluate. Begin with the least agentic baseline capable of producing value: better instructions, search, a form, a deterministic rule, a conventional workflow, or a single model call. If the baseline solves the problem, added autonomy is complexity without value.
+Before pricing the agent we ask whether it should be an agent at all. Agents earn their complexity when the path to an outcome is variable, information-rich, and partly judgmental — the same properties that make them expensive to run and hard to evaluate. So we begin with the least agentic design that could produce the value and make it earn every added rung. For the expense task there are three candidates: a deterministic rules workflow that auto-settles the safe subset, a single-call classifier that labels every case, and the bounded agent we have been measuring. We price all three on the same denominator: cost per realized outcome, with review labor — the work the product shifts onto humans — charged in full.
 
-Write a product hypothesis in causal language:
+```{python}
+# @save
+REVIEW_HOURLY_RATE = 36.0
+BASELINE_COST_PER_OUTCOME = 1.60
 
-> For a named population performing a named job, this bounded agent intervention will improve a measurable outcome relative to a named baseline, without violating reliance, accessibility, safety, labor, or cost conditions.
+DESIGNS = {
+    "deterministic_rules": {"machine": 5.0, "review_seconds": 6000, "remediation": 0.0, "outcomes": 250},
+    "single_call_classifier": {"machine": 20.0, "review_seconds": 22500, "remediation": 48.0, "outcomes": 300},
+    "bounded_agent": {"machine": 45.0, "review_seconds": 31000, "remediation": 136.0, "outcomes": 345},
+}
 
-“Users want an AI assistant” is not a hypothesis. Neither are benchmark score, tokens generated, tool calls, chat sessions, or minutes spent. A support agent may aim to increase correctly resolved cases without repeat contact. A coding agent may reduce accepted-change lead time without increasing escaped defects. An expense agent may reduce time to correctly settled reimbursement without increasing improper categorization.
 
-Use qualitative discovery before automation: observe the job, artifacts, workarounds, handoffs, exceptions, and sources of truth. Interview affected people as well as the purchaser and operator. Map who benefits, who does extra work, who absorbs errors, who can refuse, and who can appeal. The apparent “manual bottleneck” may be a necessary negotiation, duty separation, or missing upstream data rather than an opportunity to make a model decide faster.
+def cost_per_outcome(machine: float, review_seconds: float, remediation: float,
+                     outcomes: int, rate: float = REVIEW_HOURLY_RATE) -> dict:
+    """Price one design's realized outcomes, review labor charged in full.
 
-Prototype the information and decision flow before the autonomous loop. A concierge test, Wizard-of-Oz study, read-only copilot, or offline replay can reveal whether recommendations are actionable and which context is missing. Instrument the baseline first. Without its outcome rate, time, defect, labor, and cost, the launch review cannot know whether the agent improved anything.
+    The denominator is a realized, quality-qualified outcome — not an
+    invocation or a token. Review labor (reading, checking, correcting) is the
+    hidden cost a product shifts onto humans, so it enters the numerator at the
+    reviewer's hourly rate rather than being waved away as "free" human time.
 
-Declare **kill criteria** before the pilot. Each condition needs a metric, population or slice, threshold, measurement window, owner, and response. Include value and non-negotiable constraints. For example: hold write authority if appropriate reliance is below 0.90, if any adequately sampled cohort accepts more than 25 percent of wrong recommendations, if assistive-technology completion is below 0.85, or if cost per realized outcome exceeds the conventional workflow. A threshold set after viewing results is an explanation, not a gate.
+    Args:
+        machine: Inference and retrieval cost for the window.
+        review_seconds: Total human review time over all cases.
+        remediation: Cost of cleaning up wrong recommendations that slipped through.
+        outcomes: Count of realized, quality-qualified outcomes.
+        rate: Reviewer cost per hour.
 
-Offline evaluation remains necessary but insufficient. [Chapter 22](22-evaluation.qmd#sec-ch22) establishes task quality, slice performance, judge validity, uncertainty, and powered comparisons. Product discovery asks whether invoking the system changes a real outcome. Use randomized experiments where treatment assignment and interference assumptions are credible. Otherwise use a defensible quasi-experiment, phased rollout, matched comparison, interrupted time series, or carefully bounded before/after study, and state the confounders. Never attribute every post-launch change to the agent.
+    Returns:
+        A dict of the cost components, the total, and the cost per outcome.
+    """
+    review = review_seconds * rate / 3600.0
+    total = machine + review + remediation
+    return {
+        "machine": round(machine, 2), "review_labor": round(review, 2),
+        "remediation": round(remediation, 2), "total_cost": round(total, 2),
+        "outcomes": outcomes, "cost_per_outcome": round(total / outcomes, 4),
+    }
 
-Selection effects matter. Early adopters may have easier tasks or more enthusiasm. People invoke assistance selectively, so “outcome among invoked cases” does not estimate “effect if offered” without assumptions. Novelty can temporarily inflate engagement and diligence; later, reviewers may automate their attention. Track assigned, exposed, invoked, completed, and retained populations, and preserve a contemporaneous baseline long enough to see learning and fatigue.
+
+for name, design in DESIGNS.items():
+    row = cost_per_outcome(**design)
+    print(f"{name:24} outcomes={row['outcomes']:4}  review={row['review_labor']:6}  "
+          f"total={row['total_cost']:6}  per_outcome={row['cost_per_outcome']}")
+```
+
+The printed rates already surprise; stacking each design's cost components shows *where* the money goes, and it is not the machine.
+
+```{python}
+#| label: fig-ch28-designs
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Does more autonomy lower cost per outcome? No — the bounded agent has the highest cost per realized outcome (1.42) despite the most outcomes, because review labor grows faster than coverage. All three beat the 1.60 conventional baseline; the question is what the agent's extra outcomes are worth."
+#| fig-alt: "A stacked bar chart of cost per outcome for three designs. Deterministic rules 0.26, single-call classifier 0.98, bounded agent 1.42, each split into machine, review labor, and remediation; review labor dominates the classifier and agent. A dashed line marks the 1.60 conventional baseline above all three."
+rows = {name: cost_per_outcome(**d) for name, d in DESIGNS.items()}
+order = ["deterministic_rules", "single_call_classifier", "bounded_agent"]
+short = ["rules", "classifier", "agent"]
+machine = [rows[n]["machine"] / rows[n]["outcomes"] for n in order]
+review = [rows[n]["review_labor"] / rows[n]["outcomes"] for n in order]
+remed = [rows[n]["remediation"] / rows[n]["outcomes"] for n in order]
+fig, ax = plt.subplots(figsize=(6.4, 3.6))
+ax.bar(short, machine, label="machine", color="#557a3c")
+ax.bar(short, review, bottom=machine, label="review labor", color="#b7791f")
+ax.bar(short, remed, bottom=[m + r for m, r in zip(machine, review)], label="remediation", color="#b13f3f")
+ax.axhline(BASELINE_COST_PER_OUTCOME, ls="--", color="0.4")
+ax.text(2.4, BASELINE_COST_PER_OUTCOME + 0.03, "conventional baseline 1.60", fontsize=8, ha="right", color="0.3")
+for i, n in enumerate(order):
+    ax.text(i, rows[n]["cost_per_outcome"] + 0.03, f"{rows[n]['cost_per_outcome']}", ha="center", fontsize=9)
+ax.set_ylabel("cost per realized outcome")
+ax.legend(fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+The comparison rewrites the naive story. All three designs beat the 1.60 conventional baseline, so "the agent is cheaper than doing it by hand" is true and almost meaningless. The agent is the *most* expensive of the three per outcome, at 1.42, because each rung of autonomy grew review labor faster than it grew coverage — the classifier and the agent are dominated by the yellow review band, not by machine cost. The rules workflow settles 250 cases at 0.26 each. The honest question is therefore marginal: the agent's extra outcomes over the classifier cost $(491-293)/(345-300)=4.40$ units apiece, far above the baseline. Autonomy has to *earn* that, and the way we hold it to account is to declare kill criteria before the pilot: appropriate reliance below 0.90, any adequately-sampled cohort over 0.25 overreliance, assistive completion below 0.85, or cost per outcome above the conventional baseline. A threshold chosen after seeing the result is an explanation, not a gate. These four become the code that decides the launch.
 
 ## Follow the invocation-to-outcome funnel {#sec-ch28-funnel}
 
-A product dashboard often begins at invocation because that is where the agent emits an event. The causal product story begins earlier and ends later. Define a nested funnel appropriate to the job:
+A product dashboard usually starts at invocation, because that is where the agent emits its first event. The causal story starts earlier and ends later, and the gap between them is where value leaks. We define a nested funnel — exposed, invoked, completed, accepted-or-edited, outcome-realized, retained — and count each stage as a strict subset of the one before, so a monotone drop is guaranteed and any increase is a bug.
 
-1. **eligible or exposed:** the person and task could use the intervention;
-2. **invoked:** the person or policy actually starts it;
-3. **completed:** the agent returns a usable candidate;
-4. **accepted or edited:** the candidate enters the human or system workflow;
-5. **outcome realized:** authoritative downstream evidence confirms the intended result;
-6. **retained:** the outcome or repeated use remains useful after a meaningful interval.
+```{python}
+# @save
+def _funnel_slice(rows) -> dict:
+    """Count the nested funnel stages and adjacent conversions for one slice."""
+    rows = list(rows)
+    counts = {stage: sum(row[stage] for row in rows) for stage in STAGES}
+    conversions = {STAGES[0]: 1.0}
+    for prior, stage in zip(STAGES, STAGES[1:]):
+        conversions[stage] = round(counts[stage] / counts[prior], 4)
+    return {"counts": counts, "conversion_from_previous": conversions}
 
-For counts (n_0,\ldots,n_K), adjacent conversion is (c_k=n_k/n_{k-1}), while end-to-end conversion is (n_K/n_0). Keep both. End-to-end value can fall even when model completion improves because invocation, review, integration, or downstream realization worsens.
 
-```{mermaid}
-%%| label: fig-ch28-funnel
-%%| fig-cap: "Where does the expense-agent pilot lose people between exposure and durable value?"
-%%| fig-alt: "A six-stage funnel starts with 500 exposed cases, then 460 invoked, 420 completed, 380 accepted or edited, 345 outcomes realized, and 295 retained. Each arrow labels the loss from the preceding stage. A note says the assistive-technology slice completes only 65 of 85 invoked cases."
-flowchart LR
-    E["Exposed<br/>500"] -->|"−40"| I["Invoked<br/>460"]
-    I -->|"−40"| C["Completed<br/>420"]
-    C -->|"−40"| A["Accepted or edited<br/>380"]
-    A -->|"−35"| O["Outcome realized<br/>345"]
-    O -->|"−50"| R["Retained<br/>295"]
-    AT["Assistive-technology slice<br/>65 / 85 complete"] -. "largest adjacent access loss" .-> C
+def funnel_report(usage: list[dict]) -> dict:
+    """Compute the invocation-to-outcome funnel overall and per cohort.
+
+    Each stage is a subset of the previous one, so counts never increase and
+    the end-to-end rate (outcome-realized over exposed) is the product of the
+    adjacent conversions. Keeping both the adjacent and end-to-end views is
+    what reveals that a better model-completion step can coexist with falling
+    realized value if a later stage — review, integration, downstream
+    settlement — quietly worsens.
+
+    Args:
+        usage: The usage ledger from ``expand_logs``.
+
+    Returns:
+        A dict with ``overall`` and ``by_cohort`` funnel slices.
+    """
+    cohorts = sorted({row["cohort"] for row in usage})
+    return {
+        "overall": _funnel_slice(usage),
+        "by_cohort": {name: _funnel_slice(r for r in usage if r["cohort"] == name) for name in cohorts},
+    }
+
+
+funnel = funnel_report(usage)
+counts = funnel["overall"]["counts"]
+end_to_end = round(counts["outcome_realized"] / counts["exposed"], 4)
+offline_eval = 0.90  # representative held-out benchmark completion quality
+print("funnel:", counts)
+print(f"offline eval score={offline_eval}   realized end-to-end value={end_to_end}   gap={round(offline_eval-end_to_end,4)}")
 ```
 
-@fig-ch28-funnel prevents an inference that 460 invocations equal 460 outcomes. Every stage needs an event definition, identity join, time window, and source of truth. A generated answer is completion; it is not a resolved case. A proposed expense category is not a settled reimbursement. Chapter 27's usage and effect ledgers provide operational records; this chapter maps them to product outcomes.
+Here is the divergence the chapter's title problem turns on. On a held-out benchmark the agent scores 0.90 — a good model. Followed all the way to a settled reimbursement, it realizes value on 345 of 500 exposed cases: an end-to-end rate of 0.69. The 0.21 gap is not model error; it is invocation reluctance, review friction, integration loss, and abandonment stacked on top of a competent model. Offline evaluation from Chapter 22 remains necessary — it establishes task quality, slice performance, and judge validity — but it cannot see this gap, because it never leaves the model.
 
-Instrument edits, rejection, rework, escalation, delayed reversal, appeal, and downstream harm. Edits are not simply failures: they may be the intended joint-work pattern. But copying the recommendation into another system can look like acceptance even when the user corrects it later. Join to authoritative state and define attribution windows.
+```{python}
+#| label: fig-ch28-funnel
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where does the pilot lose people between exposure and value? Each stage drops from the last; the realized end-to-end rate (0.69) sits far below the offline eval score (0.90). The assistive-technology slice loses its largest share exactly at the completion step."
+#| fig-alt: "A horizontal funnel bar chart with stages exposed 500, invoked 460, completed 420, accepted 380, outcome realized 345, retained 295. Two vertical reference lines mark offline eval 0.90 and realized 0.69 of the exposed base. An inset notes the assistive-technology completion of 65 of 85."
+stage_names = list(counts.keys())
+stage_values = list(counts.values())
+fig, ax = plt.subplots(figsize=(6.8, 3.6))
+ax.barh(range(len(stage_names)), stage_values, color="#2a7f9e")
+ax.set_yticks(range(len(stage_names)), [s.replace("_", " ") for s in stage_names])
+ax.invert_yaxis()
+for i, v in enumerate(stage_values):
+    ax.text(v + 6, i, str(v), va="center", fontsize=9)
+ax.axvline(offline_eval * counts["exposed"], ls="--", color="0.35")
+ax.text(offline_eval * counts["exposed"], -0.7, "offline eval 0.90", fontsize=8, ha="center", color="0.3")
+ax.axvline(end_to_end * counts["exposed"], ls=":", color="0.55")
+ax.text(end_to_end * counts["exposed"], 5.7, "realized 0.69", fontsize=8, ha="center", color="0.4")
+ax.set_xlabel("cases")
+fig.tight_layout()
+plt.show()
+```
 
-Review labor is a hidden funnel stage and a hidden cost. Count reading, evidence retrieval, correction, escalation, queue wait, training, quality sampling, and downstream repair. Separate queue wait from active decision time; [Chapter 27](27-operating-agents.qmd#sec-ch27-hitl) owns staffing and queue mechanics. Here, the question is whether that labor creates enough discrimination and value to justify the product design. If almost every case receives a costly approval, compare the system with a deterministic policy that automatically handles the safe subset.
-
-Experiment at the unit where treatment is assigned. A user-level assignment avoids a person switching interfaces, but team members may share outputs. A case-level assignment increases power but can leak learning across conditions. Organizational rollouts have few clusters and strong time trends. Predeclare the primary outcome, guardrails, assignment unit, sample-size logic, stopping rule, and novelty window. Use [Chapter 22](22-evaluation.qmd#sec-ch22) for interval estimates and multiple comparisons rather than manufacturing significance inside a launch dashboard.
-
-Selection into invocation should itself become a metric. Compare exposed non-invokers with invokers, record why tasks are ineligible, and sample abandoned paths. When the hardest cases avoid the tool, high success among invoked cases may be true and irrelevant. When only novices invoke it, the same aggregate may conceal a dependence risk. Product telemetry is not a substitute for the assignment and population diagram.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| usage ledger → overall and cohort funnel | 31 analysis lines; 0 shown | Counts never increase between nested stages, and every aggregate funnel retains an accessibility slice. |
-:::
+@fig-ch28-funnel forbids the inference that 460 invocations equal 460 outcomes. Every stage needs its own event definition, identity join, and source of truth: a generated answer is completion, not a settled case; a proposed category is not a reimbursement. Two loss patterns deserve instrumentation. Review labor is a hidden funnel stage — reading, evidence retrieval, correction, escalation — and we already charged it in the economics; if almost every case receives a costly approval, a deterministic policy for the safe subset may beat the whole design. And selection into invocation is itself a metric: when the hardest cases avoid the tool, high success among invoked cases can be true and irrelevant, and when only novices invoke it the same aggregate can hide a dependence risk. The controlled-experiment discipline — predeclare the primary outcome, the assignment unit, the stopping rule, and the novelty window — is what keeps a launch dashboard from manufacturing significance [@kohavi2009controlled].
 
 ## Price outcomes, labor, and energy {#sec-ch28-economics}
 
-Return on investment begins with a counterfactual: what would the organization and affected people spend, receive, and risk without this product? Use the conventional workflow as the baseline, not zero. The relevant denominator is a realized, quality-qualified outcome.
+We have the agent's cost per outcome from the design comparison; now we assemble it from the ledgers directly, add the break-even review time, and state an energy number with an explicit boundary. Return on investment is always against a counterfactual — the conventional workflow at 1.60 per outcome, not zero — and the denominator is a realized, quality-qualified outcome, with failed and abandoned attempts charged to the population that produced them.
 
-For a measurement window, define
+```{python}
+# @save
+def economics_report(cohorts: dict, decisions: list[dict], usage: list[dict]) -> dict:
+    """Assemble the bounded agent's unit economics from the ledgers.
 
-$$
-C_{outcome}=\frac{C_{inference}+C_{retrieval}+C_{review}+C_{remediation}+C_{platform}}{N_{qualified\ outcomes}}.
-$$
+    Computes cost per realized outcome (machine, review labor, and remediation
+    over realized outcomes) and the break-even average review time — the
+    longest average review compatible with the conventional baseline — so a
+    team can see how interface changes or harder cohorts move the economics.
+    Energy is reported per outcome within one stated boundary, useful for
+    regression within that boundary and not comparable across different ones.
 
-The numerator includes failed and abandoned attempts attributable to the population. `Per conversation` pricing can hide multi-call loops; per-token pricing can hide human review; infrastructure allocation can hide idle capacity; labor estimates can hide interruptions and training. [Chapter 26](26-production-platform.qmd#sec-ch26-cost) owns the metered journey ledger. This chapter adds product labor and divides by the outcome.
+    Args:
+        cohorts: The cohort log (for the energy per-exposure constant).
+        decisions: The reviewer-decision ledger.
+        usage: The usage ledger.
 
-The fixture prices 500 exposures at 0.09 machine cost units each, 31,000 review seconds at 36 units per hour, and 34 wrong accepts at 4 remediation units each. Total cost is 491 units for 345 realized outcomes, or 1.4232 per outcome, below the 1.60 baseline. That is a real pass—and still insufficient to launch because three other conditions fail.
+    Returns:
+        A dict of cost components, cost per outcome, break-even seconds, and energy.
+    """
+    outcomes = sum(row["outcome_realized"] for row in usage)
+    review_seconds = sum(row["review_seconds"] for row in decisions)
+    wrong_accepts = sum(row["quadrant"] == "wrong_accept" for row in decisions)
+    machine = round(len(usage) * 0.09, 2)
+    base = cost_per_outcome(machine, review_seconds, wrong_accepts * 4.0, outcomes)
+    non_review = base["machine"] + base["remediation"]
+    t_max = (BASELINE_COST_PER_OUTCOME * outcomes - non_review) * 3600.0 / (REVIEW_HOURLY_RATE * len(decisions))
+    base.update({
+        "baseline_cost_per_outcome": BASELINE_COST_PER_OUTCOME,
+        "average_review_seconds": round(review_seconds / len(decisions), 1),
+        "break_even_review_seconds": round(t_max, 1),
+        "energy_wh_per_outcome": round(len(usage) * 0.18 / outcomes, 4),
+        "energy_boundary": "representative allocated serving energy; excludes user devices",
+    })
+    return base
 
-Review time has a useful break-even threshold. Let (C_b) be baseline cost per outcome, (N_o) realized outcomes, (C_{nr}) all non-review cost, (r_h) reviewer cost per second, and (N_r) reviewed cases. The maximum average review duration compatible with the baseline is
 
-$$
-t_{max}=\frac{C_bN_o-C_{nr}}{r_hN_r}.
-$$
+economics = economics_report(COHORT_LOG, decisions, usage)
+print(f"cost/outcome={economics['cost_per_outcome']} (baseline {economics['baseline_cost_per_outcome']})  "
+      f"avg review={economics['average_review_seconds']}s  break-even={economics['break_even_review_seconds']}s")
+print(f"energy={economics['energy_wh_per_outcome']} Wh/outcome  ({economics['energy_boundary']})")
+```
 
-The fixture's average is 62.0 seconds and break-even is 74.2 seconds. This threshold helps a team see how interface changes or harder cohorts affect economics. It is not a target to rush people toward. Shorter decisions can increase wrong acceptance; evaluate time with reliance and outcome.
+The break-even threshold — 74.2 seconds against an actual average of 62.0 — is a diagnostic, not a target to rush people toward: shorter decisions can *raise* wrong-accepts, so review time is only ever read alongside reliance. The waterfall shows where the 491 units go and how much slack the review budget has.
 
-Outcome-based commercial pricing can align a vendor with a customer only when “outcome” is attributable, quality-qualified, deduplicated, reversible when later invalidated, and protected against gaming. Specify eligibility, attribution window, dispute process, exclusions, evidence source, and who pays for retries, escalations, human labor, and harms. A vendor should not be paid for deflecting a case that returns unresolved. Nor should a customer demand an outcome price while withholding the authoritative label.
+```{python}
+#| label: fig-ch28-waterfall
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does cost per outcome decompose, and where is break-even? Machine and remediation are small; review labor is the bulk. At 345 outcomes the total (491) divided out is 1.42, under the 1.60 baseline — with review headroom up to a 74.2s average."
+#| fig-alt: "A waterfall bar chart building total cost from machine 45, review labor 310, remediation 136 to a total of 491 units over 345 outcomes. A side annotation shows 1.42 per outcome against a 1.60 baseline and 62.0s average review against a 74.2s break-even."
+comp = [economics["machine"], economics["review_labor"], economics["remediation"]]
+comp_names = ["machine", "review\nlabor", "remediation"]
+fig, ax = plt.subplots(figsize=(6.4, 3.6))
+bottom = 0.0
+for value, name, color in zip(comp, comp_names, ["#557a3c", "#b7791f", "#b13f3f"]):
+    ax.bar(name, value, bottom=bottom, color=color)
+    ax.text(name, bottom + value / 2, f"{value:.0f}", ha="center", va="center", color="white", fontweight="bold")
+    bottom += value
+ax.bar("total", economics["total_cost"], color="#2a7f9e")
+ax.text("total", economics["total_cost"] + 8, f"{economics['total_cost']:.0f}\n= {economics['cost_per_outcome']}/outcome",
+        ha="center", fontsize=8)
+ax.set_ylabel("cost units")
+fig.tight_layout()
+plt.show()
+```
 
-Economic value is distributed. Record whose time is saved, whose workload grows, who bears errors, and whether a faster process transfers unpaid correction to users or reviewers. Include training, accessibility remediation, governance, procurement, security, incident recovery, and exit costs. A narrow departmental ROI can be negative for the organization or public.
-
-Energy intensity needs the same denominator and an explicit measurement boundary:
-
-$$
-E_{outcome}=\frac{E_{accelerator}+E_{host}+E_{idle\ allocation}+E_{facility}+E_{network?}}{N_{qualified\ outcomes}}.
-$$
-
-The question mark is deliberate: different measurements include different components. State whether energy is measured or estimated, average or marginal, which hardware and region, allocation of idle capacity, power-usage effectiveness, request shape, model and precision, cache behavior, retries, network, and user devices. Do not compare two published numbers with different boundaries. Carbon and water additionally require location and time-sensitive factors; model development and hardware life-cycle impacts are different scopes from serving.
-
-The artifact reports a synthetic allocated serving value of 0.2609 watt-hours per realized outcome and explicitly excludes user devices. It is useful for regression tests within one fixed boundary, not a claim about a vendor or a universal agent query. The highest-leverage optimization is often product-level: avoid valueless invocations, use a smaller sufficient workflow, cache safely, reduce retries, and increase qualified outcomes—not merely shorten one prompt.
-
-Professional responsibility constrains the business case. Engineers should disclose material limitations, uncertainty, conflicts, affected populations, and evidence gaps; protect confidentiality; avoid deceptive claims; and prioritize public and user welfare. Refuse a launch narrative that relabels a failing slice as “edge cases” without analysis. Escalation paths and protected dissent are system controls, not cultural luxuries.
+Two honest qualifications close the economics. Outcome-based commercial pricing aligns a vendor with a customer only when "outcome" is attributable, quality-qualified, deduplicated, reversible when later invalidated, and protected against gaming — a vendor should not be paid for deflecting a case that returns unresolved. And the energy number carries a question mark by design: 0.26 watt-hours per outcome is meaningful only inside the stated boundary (allocated serving energy, excluding user devices), so it works for regression tests within that boundary and not as a comparison against a differently-scoped published figure [@patterson2025environmental]. The highest-leverage energy optimization is usually product-level — avoid valueless invocations, use the smallest sufficient design — not shortening one prompt. Professional duty runs underneath all of it: disclose material limitations and affected populations, and refuse a launch narrative that relabels a failing slice as "edge cases" without analysis [@acm2018ethics].
 
 ## Organize for staged autonomy {#sec-ch28-organization}
 
-An agent product crosses application, model, data, platform, security, risk, accessibility, domain, operations, and legal boundaries. A committee containing all of them does not automatically create ownership. Assign one **stream-aligned product team** end-to-end responsibility for the user job, outcome, evaluation, interaction, and release. Give it a paved road from an AI platform team: gateway, model catalog, identity, policy enforcement, evaluation infrastructure, tracing, durable execution, and release evidence. Use enabling specialists to help teams acquire accessibility, safety, data, and domain capabilities rather than becoming permanent ticket queues.
+An agent product crosses application, model, data, platform, security, risk, accessibility, and legal boundaries, and a committee of all of them owns nothing. The durable pattern is a single **stream-aligned product team** with end-to-end responsibility for the user job, its outcome, its evaluation, and its release, riding a **paved road** from a platform team — gateway, model catalog, identity, policy enforcement, evaluation infrastructure, tracing, and release evidence — with enabling specialists who transfer capability rather than becoming permanent ticket queues [@skelton2019teamtopologies]. Centralize what must be consistent (identity, effect policy, required evidence fields); keep judgment near the work (the semantic cost of a wrong category is a product decision, not a platform one). **Build-versus-buy** is the same allocation in miniature: for every purchased layer you can outsource operation but not accountability, so the contract must pin evaluation access, change notice, accessibility evidence, incident duties, and an exit path — a vendor conformance report is evidence about a version, not a transferable guarantee.
 
-Centralize mechanisms that must be consistent; keep product judgments near the work. The platform can enforce identity, immutable bundle versions, effect policy, and required evidence fields. It cannot decide the semantic cost of a wrong medical summary or whether expense reviewers understand a policy exception. A risk function sets minimum governance, independently challenges high-consequence claims, and can block; it should not become the unnamed owner of product outcomes.
-
-Build-versus-buy is a responsibility allocation, not a binary architecture choice. Compare strategic differentiation, data and residency, customization, latency, scale, reliability, portability, observability, security controls, accessibility evidence, model-change notice, evaluation access, incident duties, price exposure, staffing, and exit cost. For every purchased layer, record:
-
-| Responsibility | Vendor evidence | Product-team duty |
-|---|---|---|
-| model behavior | version/change notice, evaluation access, known limits | task and slice evaluation in the actual scaffold |
-| data handling | contract, subprocessors, retention and region controls | minimization, configuration, lineage, deletion, verification |
-| availability | service objectives and incident channel | degraded product contract and business continuity |
-| accessibility | scoped conformance evidence and remediation process | end-to-end task testing in the wrapper |
-| security | control reports, vulnerability and incident terms | threat model, least privilege, effect enforcement |
-| lifecycle | deprecation and export terms | migration rehearsal, portable data and prompts, exit owner |
-
-You can outsource operation; you cannot outsource accountability for how the integrated product is used.
-
-A **golden path** is the supported route from prototype to production with sensible defaults, examples, templates, controls, and observable evidence. It should make the safe path the fast path: registered system identity, approved model alias, evaluation suite, policy-bound tools, accessible components, trace and cost schema, launch packet, and rollback. Allow exceptions through an explicit review with an owner and expiry. Measure golden-path adoption, time to first evaluated prototype, lead time to bounded production, exception age, duplicated infrastructure, and platform support load. A path nobody uses is documentation, not a platform product.
-
-Stage autonomy by evidence and consequence:
-
-| Stage | Authority | Evidence to advance | Reversion condition |
-|---|---|---|---|
-| observe | offline replay; no user effect | representative task value and failure taxonomy | corpus or population no longer representative |
-| advise | read-only recommendation | comprehension, accessibility, reliance, outcome lift | failing slice or misunderstood scope |
-| act with approval | proposed effect; explicit human authorization | reviewer discrimination, reversible receipts, stable economics | rubber stamping, stale state, or review debt |
-| bounded autonomy | allowlisted low-consequence effects | outcome SLO, invariant controls, recertified risk treatment | burn, drift, invariant breach, or material change |
-| broader autonomy | larger scope with independent oversight | sustained evidence across novelty, cohorts, and failures | any gate outside approved residual risk |
-
-Advancement is not a maturity badge. Different task classes can remain at different stages indefinitely. Reversion must be technically cheap and organizationally legitimate. An agency budget from Chapter 1 caps authority; good product evidence can spend more of that budget, but cannot erase an irreversible consequence or a weak control.
-
-Track **review debt**: decisions awaiting independent challenge, expiring exceptions, controls without owners, untested recertification triggers, stale model cards, unsupported custom infrastructure, and launch conditions temporarily waived. Like technical debt, it accumulates interest as staff and system context change. Give every item principal, owner, due date, compensating control, and repayment test. Do not turn “risk accepted” into an immortal status.
-
-Also track human capability. Heavy assistance can deskill reviewers, narrow situational awareness, and make fallback impossible. Rotate work, sample unassisted performance when ethical, rehearse degraded modes, provide feedback on caught and missed cases, and design career paths that do not reduce domain experts to exception handlers. Monitor workload, interruption, emotional burden, exposure to harmful content, decision pressure, appeal conflict, and control over pace. Chapter 27 measures the queue; organizational leadership owns whether the job is sustainable and whether incentives reward careful dissent rather than approval volume.
-
-## Operate AIMS through every material change {#sec-ch28-aims}
-
-An **AI management system** (AIMS) is the repeatable organizational machinery for policy, objectives, roles, resources, risk treatment, operation, evidence, audit, corrective action, and improvement. It is not a document folder and not a one-time launch council. [Chapter 25](25-alignment-interpretability-governance.qmd#sec-ch25-governance) established governed safety claims and regulatory interfaces. Here, the organization turns them into an operating loop.
-
-Use the NIST AI Risk Management Framework functions as a useful risk lifecycle: **Govern** establishes culture, policy, roles, accountability, and oversight across **Map**, **Measure**, and **Manage**. Map establishes context, intended purpose, affected people, dependencies, impacts, and risk tolerance. Measure selects and interprets evidence. Manage prioritizes treatment, decides whether objectives are achieved, accepts bounded residual risk through authorized roles, and monitors the decision. These functions are iterative, not a checklist sequence.
-
-Wrap that risk work in plan-do-check-act. Plan policy, objectives, scope, risk method, competence, and controls. Do the controlled development and operation. Check performance, incidents, audits, complaints, accessibility, reliance, outcomes, and control effectiveness. Act on nonconformities, root causes, changed context, and opportunities to improve. Management review supplies resources and resolves cross-team accountability; it does not rubber-stamp a packet.
-
-Begin with an inventory entry that can answer: system and owner; intended and prohibited uses; users and affected parties; autonomy and effects; models, prompts, tools, data, vendors, regions, and interfaces; outcome and guardrail metrics; risk tier and rationale; approvals; evidence bundle; deployment population; monitoring; incident and appeal path; and recertification triggers. Inventory identity must join the release bundle and operational telemetry. A spreadsheet with no release hash cannot tell which governed system ran.
-
-Risk tier determines a minimum review path. Consequence, affected scale, reversibility, vulnerability, rights impact, data sensitivity, novelty, autonomy, external exposure, and uncertainty are common inputs. A product can raise its review rigor; it cannot lower a required tier by calling an effect a “recommendation.” Document the rationale and independent challenger. Keep the full rubric in the organization's governance standard rather than embedding another ad hoc scorer in application code.
-
-A risk-register entry should state hazard, cause or scenario, affected parties, consequence, likelihood or uncertainty, existing controls, control evidence, residual risk, treatment, owner, due date, and status. Connect hazards to product conditions. “Overreliance” becomes a measurable scenario: new reviewers accept wrong categories; the control is an evidence-first review design; the evidence is the four-cell cohort matrix; the gate is a maximum wrong-accept rate. “Accessibility” becomes a task-completion scenario, not a generic promise.
-
-Every material change passes through the loop in @fig-ch28-aims. Model aliases, system prompts, tool schemas or descriptions, retrieval corpora, data policy, write scope, deployment region, affected population, vendor, interface, and risk controls can invalidate old evidence. Define triggers before change, resolve them against an immutable bundle diff, and require the appropriate delta evaluation. A typo need not rerun every study, but the owner must justify the affected evidence. Periodic recertification catches drift that no discrete release declares.
+Authority is then granted in rungs, and the rung is set per transition, not per system. @fig-ch28-ladder is the ladder our expense agent is climbing — and where it currently sits.
 
 ```{mermaid}
+%%| echo: false
+%%| label: fig-ch28-ladder
+%%| fig-cap: "What advances an agent up the autonomy ladder, and what reverts it? Each rung names the evidence to climb and the condition that sends it back down. Our expense agent is stuck at act-with-approval: the reliance and accessibility evidence for the next rung is failing."
+%%| fig-alt: "A five-rung ladder from bottom to top: observe (offline replay), advise (read-only recommendation), act with approval (proposed effect, human authorization) marked current, bounded autonomy (allowlisted low-consequence effects), broader autonomy (larger scope with independent oversight). Each rung lists evidence to advance and a reversion condition. An arrow marks the expense agent held at act-with-approval."
+flowchart TB
+    R5["broader autonomy — larger scope, independent oversight<br/><i>advance:</i> sustained evidence across cohorts · <i>revert:</i> any gate outside residual risk"]
+    R4["bounded autonomy — allowlisted low-consequence effects<br/><i>advance:</i> outcome SLO, invariant controls · <i>revert:</i> drift or invariant breach"]
+    R3["act with approval — proposed effect, human authorization — EXPENSE AGENT is here<br/><i>advance:</i> reviewer discrimination, stable economics · <i>revert:</i> rubber-stamping, review debt"]
+    R2["advise — read-only recommendation<br/><i>advance:</i> comprehension, accessibility, reliance lift · <i>revert:</i> failing slice"]
+    R1["observe — offline replay, no user effect<br/><i>advance:</i> representative task value · <i>revert:</i> corpus no longer representative"]
+    R1 --> R2 --> R3 --> R4 --> R5
+```
+
+Advancement is not a maturity badge, and reversion must be technically cheap and organizationally legitimate. Three costs accrue at these rungs and belong on the leadership dashboard even though they resist a single metric. **Review debt** — decisions awaiting independent challenge, expiring exceptions, controls without owners, launch conditions temporarily waived — accrues interest like technical debt; give every item a principal, an owner, a due date, and a repayment test, and never let "risk accepted" become an immortal status. **Deskilling** — heavy assistance narrows reviewers' situational awareness until fallback is impossible — is countered by rotating unassisted work and rehearsing degraded modes. And **reviewer wellbeing** — workload, interruption, exposure to harmful content, and whether incentives reward careful dissent over approval volume — is an organizational property Chapter 27's queue metrics measure but do not own. The maturity of an agent program is not which rung it reached; it is whether it can descend a rung on evidence without a crisis.
+
+## Operate the AIMS loop {#sec-ch28-aims}
+
+Everything so far is evidence; an **AI management system** (AIMS) is the repeatable machinery that turns evidence into an accountable decision and keeps it accountable through change. It is not a document folder and not a one-time launch council. The NIST AI Risk Management Framework gives the risk lifecycle four functions: **Govern** sets culture, roles, and accountability across **Map** (context, purpose, affected people, impacts), **Measure** (select and interpret evidence), and **Manage** (treat risk, accept bounded residual risk through authorized roles, monitor the decision) [@nist2023airmf]. Wrapped around that is the plan-do-check-act cycle of a certifiable management system: plan policy and controls, do the controlled operation, check performance and complaints and control effectiveness, act on nonconformities and changed context [@iso2023aims]. @fig-ch28-aims draws the loop every material change must re-enter.
+
+```{mermaid}
+%%| echo: false
 %%| label: fig-ch28-aims
-%%| fig-cap: "How does every material product change return through risk evidence and a launch decision?"
-%%| fig-alt: "Within a cross-cutting Govern boundary, an inventory and context map flow to measurement, risk management, and a launch review. The decision can stage, constrain, hold, or retire the system. Operation produces outcomes, complaints, audits, incidents, and change signals. Material changes loop back to inventory and mapping; monitoring loops back to measurement."
+%%| fig-cap: "How does every material product change return through risk evidence and a launch decision? Inventory and context feed measurement and risk treatment into a launch review; operation produces signals; material changes and periodic review loop back — all inside a governing boundary."
+%%| fig-alt: "Inside a Govern boundary: an inventory with an immutable bundle flows to Map (purpose, people, context), then Measure (reliance, access, funnel, cost), then Manage (treat risk, assign owner, residual), then a launch review that can operate, constrain, hold, or retire. Operation emits outcomes, complaints, incidents, and workforce evidence, which loop back to measurement, and material changes loop back to inventory."
 flowchart LR
-    subgraph G["GOVERN — policy · roles · competence · accountability · resources"]
-        I["Inventory + immutable bundle"] --> M["MAP<br/>purpose · people · context · impact"]
-        M --> E["MEASURE<br/>value · reliance · access · safety · cost"]
-        E --> R["MANAGE<br/>treat risk · assign owner · record residual"]
-        R --> L{"Launch review"}
-        L -->|"pass bounded conditions"| O["Operate at approved autonomy"]
-        L -->|"condition, hold, or retire"| C["Repair or reduce scope"]
+    subgraph G["GOVERN — policy · roles · accountability"]
+        I["inventory +<br/>immutable bundle"] --> M["MAP<br/>purpose · people · impact"]
+        M --> E["MEASURE<br/>reliance · access · funnel · cost"]
+        E --> R["MANAGE<br/>treat risk · owner · residual"]
+        R --> L{"launch review"}
+        L -->|"conditions pass"| O["operate at approved rung"]
+        L -->|"hold / constrain / retire"| C["repair or reduce scope"]
         C --> I
-        O --> S["Outcomes · complaints · audits<br/>incidents · workforce evidence"]
+        O --> S["outcomes · complaints<br/>incidents · workforce"]
         S -->|"monitoring"| E
-        S -->|"material change or periodic review"| I
+        S -->|"material change"| I
     end
 ```
 
-The launch review is a decision record, not a presentation. It names scope, evidence period and population, baseline, unresolved uncertainty, failed and passed conditions, residual risks, accountable owner, independent reviewer, decision, permitted autonomy, expiry, rollback, monitoring, and recertification triggers. Conditions should be machine-checkable where possible and human-judged where necessary. The code evaluates four quantitative gates but does not pretend to automate risk tier, residual-risk acceptance, professional judgment, or accessibility diagnosis.
+The function that makes this concrete is the **risk register**: each hazard tracked from control to evidence to gate to residual owner. This is where Chapter 25's governed safety claims become an operating object, because the register's evidence column is not a promise — it is the metric we just computed, and its status is decided by the gate result. First the gate evaluation the register joins against.
 
-```python
-# launch_metrics.py — exact gate-evaluation core
-limits = fixture["kill_criteria"]
-max_cohort = max(
-    item["overreliance_rate"] for item in reliance["by_cohort"].values()
-)
-assistive_completion = funnel["by_cohort"]["assistive_technology"][
-    "conversion_from_previous"
-]["completed"]
-checks = (
-    ("appropriate_reliance", reliance["overall"]["appropriate_rate"],
-     limits["minimum_appropriate_rate"], ">="),
-    ("cohort_overreliance", max_cohort,
-     limits["maximum_cohort_overreliance"], "<="),
-    ("assistive_completion", assistive_completion,
-     limits["minimum_assistive_completion"], ">="),
-    ("cost_per_outcome", economics["cost_per_outcome"],
-     economics["baseline_cost_per_outcome"], "<="),
-)
-return [
-    {"gate": name, "observed": observed, "threshold": threshold,
-     "passed": observed >= threshold if operator == ">=" else observed <= threshold}
-    for name, observed, threshold, operator in checks
-]
+```{python}
+# @save
+KILL_CRITERIA = {"minimum_appropriate_rate": 0.90, "maximum_cohort_overreliance": 0.25,
+                 "minimum_assistive_completion": 0.85}
+
+
+def evaluate_gates(reliance: dict, funnel: dict, economics: dict, kill: dict = KILL_CRITERIA) -> list[dict]:
+    """Evaluate the four predeclared launch gates against computed evidence.
+
+    The gates are conjunctive: reliance, cohort overreliance, accessibility
+    completion, and cost per outcome must all pass, and a passing economic gate
+    cannot buy back a failing reliance or accessibility gate. Each check records
+    what was observed and the predeclared threshold so the decision is a record,
+    not a presentation.
+
+    Args:
+        reliance: The reliance report.
+        funnel: The funnel report.
+        economics: The economics report.
+        kill: The predeclared thresholds.
+
+    Returns:
+        One dict per gate with observed value, threshold, operator, and pass flag.
+    """
+    max_cohort = max(c["overreliance_rate"] for c in reliance["by_cohort"].values())
+    assistive = funnel["by_cohort"]["assistive_technology"]["conversion_from_previous"]["completed"]
+    checks = (
+        ("appropriate_reliance", reliance["overall"]["appropriate_rate"], kill["minimum_appropriate_rate"], ">="),
+        ("cohort_overreliance", max_cohort, kill["maximum_cohort_overreliance"], "<="),
+        ("assistive_completion", assistive, kill["minimum_assistive_completion"], ">="),
+        ("cost_per_outcome", economics["cost_per_outcome"], economics["baseline_cost_per_outcome"], "<="),
+    )
+    return [{"gate": n, "observed": o, "threshold": t, "operator": op,
+             "passed": o >= t if op == ">=" else o <= t} for n, o, t, op in checks]
+
+
+gates = evaluate_gates(reliance, funnel, economics)
+for g in gates:
+    print(f"{g['gate']:22} {g['observed']:>8}  {g['operator']} {g['threshold']:<6} "
+          f"{'PASS' if g['passed'] else 'FAIL'}")
 ```
 
-When a condition fails, do not average it into an overall readiness score. Choose among repair and repeat, narrow population, lower autonomy, add a time-bound compensating control, continue a non-effectful pilot, or retire. Record who can approve each choice. The fixture permits read-only use only for experienced reviewers while the team repairs the interface and repeats cohort evaluation. That is a conditioned product decision, not an operational incident response.
+Now the register entry as a data object. Each hazard names a control, and its evidence is a specific metric this chapter computed; its status is not asserted by a human but *derived* from whether the joined gate passed. That derivation is the whole point of an operating loop: the risk register cannot drift out of sync with the evidence, because it reads the evidence.
 
-Internal audit asks whether the management system is implemented and effective: samples can be traced from inventory to bundle, evidence, decision, operation, and recertification; owners exist; exceptions expire; and corrective actions close. Management review asks whether objectives, resources, competence, performance, complaints, audits, changes, residual risks, and opportunities require a policy or investment change. Both need independence proportionate to consequence.
+```{python}
+# @save
+@dataclass(frozen=True)
+class RiskRegisterEntry:
+    """One hazard tracked from control to evidence to gate to residual owner.
+
+    The entry ties a named hazard to the control that treats it, the computed
+    metric that is its evidence, the launch gate that decides it, and the owner
+    accountable for the residual. Because ``status`` is derived from the gate
+    result rather than typed by hand, the register stays synchronized with the
+    measurement instead of becoming a stale spreadsheet.
+    """
+
+    risk_id: str
+    hazard: str
+    control: str
+    evidence: str
+    gate: str
+    residual: str
+    owner: str
+    status: str
+
+
+def assemble_risk_register(gates: list[dict]) -> list[RiskRegisterEntry]:
+    """Join predeclared hazards to their gate outcomes into register entries.
+
+    Args:
+        gates: The gate evaluations from ``evaluate_gates``.
+
+    Returns:
+        One ``RiskRegisterEntry`` per hazard, its status closed only if its
+        gate passed and its residual marked for treatment otherwise.
+    """
+    passed = {g["gate"]: g["passed"] for g in gates}
+    template = [
+        ("R-EXP-017a", "New reviewers accept wrong categories without checking evidence",
+         "Evidence-first review: show the proposed write and receipt before the recommendation",
+         "cohort reliance matrix (overreliance by cohort)", "cohort_overreliance", "expense-product-director"),
+        ("R-EXP-017b", "Streaming interface prevents assistive-technology users from completing review",
+         "Non-streaming fallback with announced completion states",
+         "invoked→completed conversion by access mode", "assistive_completion", "expense-product-director"),
+        ("R-EXP-017c", "Aggregate appropriate reliance below the launch floor",
+         "Evidence legibility and predeclared cohort gates",
+         "overall appropriate-reliance rate", "appropriate_reliance", "enterprise-ai-risk"),
+    ]
+    entries = []
+    for risk_id, hazard, control, evidence, gate, owner in template:
+        ok = passed.get(gate, False)
+        entries.append(RiskRegisterEntry(
+            risk_id=risk_id, hazard=hazard, control=control, evidence=evidence, gate=gate,
+            residual="within tolerance" if ok else "exceeds tolerance — treatment required",
+            owner=owner, status="CLOSED" if ok else "OPEN"))
+    return entries
+
+
+for entry in assemble_risk_register(gates):
+    print(f"{entry.risk_id} [{entry.status}] gate={entry.gate}")
+    print(f"   hazard:   {entry.hazard}")
+    print(f"   evidence: {entry.evidence}")
+    print(f"   residual: {entry.residual}  (owner: {entry.owner})")
+```
+
+All three hazards stay OPEN, because all three joined gates failed — the register is telling us, from the evidence rather than from anyone's opinion, that the treatment is not yet effective. The last step assembles the whole appendix and reads a recommendation off it.
+
+```{python}
+# @save
+def build_launch_review(cohorts: dict | None = None) -> dict:
+    """Assemble the launch-review appendix from the chapter's own metrics.
+
+    Runs the whole pipeline — expand the ledgers, compute reliance, funnel, and
+    economics, evaluate the conjunctive gates, and join the risk register — and
+    recommends SHIP only if every gate passed. The recommendation is therefore
+    a function of computed evidence, not a vote, which is what lets another
+    reviewer reproduce it exactly.
+
+    Args:
+        cohorts: The cohort log, or the chapter default when omitted.
+
+    Returns:
+        A dict holding the row counts, reliance, funnel, economics, gates, risk
+        register, the recommendation, and the list of failed conditions.
+    """
+    cohorts = cohorts or COHORT_LOG
+    decisions, usage = expand_logs(cohorts)
+    reliance = reliance_report(decisions)
+    funnel = funnel_report(usage)
+    economics = economics_report(cohorts, decisions, usage)
+    gates = evaluate_gates(reliance, funnel, economics)
+    failed = [g["gate"] for g in gates if not g["passed"]]
+    return {
+        "log_rows": {"reviewer_decisions": len(decisions), "usage_ledger": len(usage)},
+        "reliance": reliance, "funnel": funnel, "economics": economics, "gates": gates,
+        "risk_register": assemble_risk_register(gates),
+        "recommendation": "SHIP" if not failed else "HOLD_FULL_LAUNCH",
+        "failed_conditions": failed,
+    }
+
+
+def render_appendix(report: dict) -> str:
+    """Format the launch-review appendix as the plain text a reviewer reads.
+
+    Args:
+        report: The dict from ``build_launch_review``.
+
+    Returns:
+        A fixed-width block: row counts, each gate with its verdict, the review
+        and energy economics, and the recommendation.
+    """
+    econ = report["economics"]
+    lines = [f"reviewer decision rows       {report['log_rows']['reviewer_decisions']:>8}",
+             f"usage-ledger rows            {report['log_rows']['usage_ledger']:>8}"]
+    for g in report["gates"]:
+        verdict = "PASS" if g["passed"] else "FAIL"
+        lines.append(f"{g['gate']:<26} {g['observed']:>8}   {verdict} ({g['operator']} {g['threshold']})")
+    lines += [f"average review time          {econ['average_review_seconds']:>8} s",
+              f"break-even review time       {econ['break_even_review_seconds']:>8} s",
+              f"serving energy per outcome   {econ['energy_wh_per_outcome']:>8} Wh",
+              f"recommendation               {report['recommendation']:>8}"]
+    return "\n".join(lines)
+
+
+report = build_launch_review()
+print(render_appendix(report))
+```
+
+That block is the real output of the code you just read — not a hand-typed table, and not a JSON dump nobody reads. It says the quiet part plainly: the money argument passes, and the launch is still held, because three conjunctive gates fail and a passing economic gate cannot compensate for an excluded cohort. The decision that follows is not "average the score down and ship a yellow" — it is to choose among repair-and-repeat, narrow the population, lower the rung, or retire. Here the permitted next step is a read-only pilot for experienced reviewers while the team repairs the evidence-first and non-streaming interactions and re-measures the cohorts.
+
+That decision *is* the launch-review packet, and every field of the Appendix B template now points at something the chapter computed rather than at prose: the **product claim** (recommend a category, write only after approval, reduce cost per correctly-settled reimbursement); the **scope** (candidate release, pilot unit, one reversible write, measurement window, and the 1.60 baseline); the **AIMS record** (inventory identity, risk `R-EXP-017`, the three joined register entries, owner, and independent reviewer); the **reliance, accessibility, and economics evidence** (the matrix, the completion gate, the funnel, and the cost decomposition); and the **decision** (three failed conditions, one passed, HOLD full launch, permit the read-only pilot, with an expiry, a rollback, and the recertification triggers a model-alias, prompt, tool-schema, corpus, write-scope, region, or population change would fire). The packet is complete when another reviewer can reproduce the counts, trace every condition to its owner, and understand why the economically attractive candidate is not authorized. Chapter 32 reuses exactly this conditioned-decision discipline rather than inventing a new launch process.
 
 ::: {.callout-note .landscape-2026}
 ### Landscape 2026 (dated) {#sec-ch28-landscape}
 
-**Verify live: 2026-07-19. Appendix C owner: accessibility law and standards, AI management frameworks, commercial pricing, capability benchmarks, and inference environmental accounting.** [WCAG 2.2](https://www.w3.org/TR/WCAG22/) is the W3C-recommended web accessibility target; the [European Accessibility Act](https://digital-strategy.ec.europa.eu/en/news/eu-becomes-more-accessible-all) has applied to covered products and services since 2025-06-28. In April 2026, the U.S. Department of Justice [extended the Title II web/mobile rule deadlines](https://www.ada.gov/title-ii-web-rule/) to 2027-04-26 for larger public entities and 2028-04-26 for smaller entities and special district governments. Sector, jurisdiction, entity, and product scope require counsel.
-
-[NIST AI RMF 1.0 is under revision](https://airc.nist.gov/airmf-resources/airmf/5-sec-core/); its current Govern, Map, Measure, and Manage Core and Playbook remain voluntary risk-management resources. [ISO/IEC 42001:2023](https://www.iso.org/standard/42001) is the current certifiable AIMS standard. Certification scope and a risk framework are not proof that a particular product is safe or valuable.
-
-Current examples of outcome-based agent pricing include vendor offerings such as [Sierra](https://sierra.ai/blog/outcome-based-pricing-for-ai-agents) and [Intercom](https://www.intercom.com/help/en/articles/8344190-pricing-faqs); definitions and terms change. [GDPval](https://openai.com/index/gdpval/) is one current attempt to evaluate economically valuable work products, but product ROI still requires deployment outcomes. Published inference-energy estimates, including [Google's production measurement](https://cloud.google.com/blog/products/infrastructure/measuring-the-environmental-impact-of-ai-inference) and [Mistral's life-cycle work](https://mistral.ai/news/our-contribution-to-a-global-environmental-standard-for-ai/), use differing workloads and boundaries. Verify the current method before comparison.
+**Verify live: 2026-07-19.** [WCAG 2.2](https://www.w3.org/TR/WCAG22/) is the current W3C web-accessibility target; the [European Accessibility Act](https://digital-strategy.ec.europa.eu/en/) has applied to covered products since 2025-06-28, and in April 2026 the U.S. Department of Justice [extended the ADA Title II web-rule deadlines](https://www.ada.gov/) to 2027-04-26 and 2028-04-26 by entity size. Jurisdiction and product scope require counsel. [NIST AI RMF 1.0](https://airc.nist.gov/) (Govern/Map/Measure/Manage) and [ISO/IEC 42001:2023](https://www.iso.org/standard/42001) are the current voluntary risk framework and certifiable AIMS standard; a certification scope is not proof a product is safe or valuable. Outcome-based agent pricing (e.g. vendor offerings billing per resolved case) and published inference-energy figures use differing definitions and boundaries — verify the method before comparing. Appendix C tracks these anchors.
 :::
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| reliance + funnel + economics + risk entry → launch decision | 201 nonblank artifact lines; gate core shown | A passing economic gate cannot compensate for failed reliance or accessibility, and any material change has a named recertification path. |
-:::
+## Summary
 
-## Build {#sec-ch28-build}
+We turned a launch decision into computed evidence. From one synthetic cohort log we built the objects that make an agent accountable: a plan diff and receipt with epistemic labels; the reliance matrix that split appropriate reliance from over- and under-reliance and showed a 0.882 aggregate hiding a 0.833 new-reviewer cohort; an accessibility gate a streaming flow fails at 0.765; three product designs whose cost per outcome (0.26, 0.98, 1.42) proved autonomy raises unit cost; a funnel where a 0.90 offline eval realized only 0.69 of value; and a risk register whose status is derived from conjunctive gates. The assembled appendix recommends HOLD — money passing, people failing. Chapter 32 defends a full build with the same discipline.
 
-The build is one launch-review rehearsal. From `newbook/`, run:
+## Exercises
 
-```bash
-python -m pytest -q tests/test_ch28_launch_metrics.py
-python code/ch28/launch_metrics.py \
-  --fixture code/ch28/fixtures/expense_triage.json
-python code/ch28/launch_metrics.py --enforce
-```
-
-The final command intentionally exits with status 2 because the full launch is held. Its quantitative appendix should contain:
-
-```text
-reviewer decision rows                 500
-usage-ledger rows                      500
-appropriate reliance                 0.8820   FAIL (minimum 0.9000)
-maximum cohort overreliance           0.8333   FAIL (maximum 0.2500)
-assistive invoked→completed           0.7647   FAIL (minimum 0.8500)
-cost per realized outcome             1.4232   PASS (baseline 1.6000)
-average review time                   62.0 s
-break-even average review time        74.2 s
-allocated serving energy/outcome      0.2609 Wh (synthetic stated boundary)
-recommendation                        HOLD_FULL_LAUNCH
-```
-
-Now assemble the launch-review packet using the Appendix B template. Keep it to a decision surface, with detailed evidence linked rather than pasted:
-
-1. **Product claim.** For internal expense reviewers, recommend a category and write it only after approval; reduce cost per correctly realized categorization relative to the conventional workflow.
-2. **Scope.** Candidate release, pilot business unit, reviewer populations, one reversible write, explicit prohibited uses, measurement window, and baseline.
-3. **AIMS record.** Inventory identity, risk `R-EXP-017`, high tier and rationale, hazards, owners, independent reviewer, controls, residual uncertainty, and seven recertification triggers from the fixture.
-4. **Reliance plan.** Four-cell correctness source, overall and cohort gates, confirmed catches, decision-time interpretation, minimum sample policy, and the interface changes to test.
-5. **Accessibility plan.** End-to-end tasks, access modes, standards baseline, manual and participant testing, completion gate, failure diagnosis, owner, and remediation evidence.
-6. **Value and economics.** Baseline, funnel, attribution method, qualified outcome, cost components, break-even review time, distribution of labor, and fixed environmental boundary.
-7. **Decision.** Record the three failed conditions and one passed condition. Hold full launch and the write action. Permit only the read-only experienced-reviewer pilot while repairing the evidence-first and assistive-technology interaction.
-8. **Expiry and next review.** Name the change bundle, sample and duration required for repeat evaluation, decision owner, independent challenger, rollback, and date after which the exception expires.
-
-Do not “fix” the exercise by changing thresholds or deleting the cohort. Propose at least two interaction variants: one that shows the evidence and proposed write before the category recommendation, and one that requires an initial category judgment on high-uncertainty cases. Predict effects on all four reliance cells, active review time, assistive completion, and cost. Then specify the powered comparison in Chapter 22 terms and the exact evidence that would restore write authority.
-
-The packet is complete when another reviewer can reproduce the counts, trace every condition to its predeclared owner and response, distinguish measured fact from judgment, and understand why the economically attractive candidate is not authorized for full launch. Chapter 32 reuses that conditioned-decision discipline in the capstone review rather than inventing a new launch process.
-
-## What endures, what changes {#sec-ch28-endures}
-
-**What endures.** Treat an agent as a socio-technical product with user, product, and organization evidence. Make goal, plan, evidence, effects, and receipts legible. Optimize appropriate reliance rather than acceptance. Make accessibility an end-to-end correctness property and gate slices. Test a causal outcome against the least agentic baseline. Follow the funnel past invocation, price qualified outcomes including review and remediation, and state environmental boundaries. Give a stream-aligned team outcome ownership, a platform paved road, independent challenge, staged autonomy, review-debt accounting, and sustainable human work. Operate inventory, risk, evidence, launch decision, monitoring, audit, and recertification as one AIMS loop.
-
-**What changes.** Interface conventions, model capabilities, agent frameworks, commercial pricing, environmental measurements, benchmarks, accessibility guidance, laws, vendors, standards editions, and certification practices will change. The dated Landscape box quarantines those claims. Removing it leaves the launch argument, equations, organizational boundaries, and conditioned decision intact.
-
-## Exercises {#sec-ch28-exercises}
-
-1. Add `language` and `task_novelty` to the synthetic reviewer ledger. Construct Simpson's paradox: the aggregate appropriate-reliance rate rises while every adequately sampled novice-language slice falls. Define which slices gate launch and how you prevent unstable small-sample rankings.
-2. Design three review interfaces for the expense agent: recommendation-first, evidence-first, and independent-judgment-first. State a mechanism hypothesis for each, define measures for all four reliance cells, comprehension, time, satisfaction, and assistive operation, then write the experiment and stopping rule.
-3. Audit a streaming agent interface against a current accessibility standard and with keyboard, screen reader, zoom/reflow, voice alternative, reduced motion, timeout, and error-recovery tasks. Produce five reproducible failures, severity and affected task, a remediation owner, and an automated or manual regression oracle.
-4. Replace the expense agent with a deterministic rules workflow, a single-call classifier, and a bounded agent. Build a counterfactual cost/outcome table including inference, retrieval, review, remediation, platform, governance, accessibility, and exit costs. Choose the least agentic option that meets the outcome and guardrails.
-5. Extend `launch_metrics.py` with confidence intervals and a predeclared minimum cohort sample rule without collapsing gates into a readiness score. Add a delayed reversal label so that an initially “realized” outcome can later become remediation; update the funnel and economics tests.
-6. Draw the team topology for a regulated multilingual agent product. Assign outcome, interaction, model, data, platform, security, accessibility, risk acceptance, incident, vendor, and recertification duties. Identify two responsibilities that cannot be outsourced and two golden-path exceptions with owners and expiry.
-7. Write the complete Appendix B launch packet for candidate 4. Then simulate a system-prompt change and a new deployment region. Produce the immutable diff, identify which evidence remains valid, specify delta evaluations, run the launch decision again, and record the management-system corrective action if the trigger was initially missed.
-
-## Notes and sources {#sec-ch28-sources}
-
-- Horvitz, [“Principles of Mixed-Initiative User Interfaces”](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/11/chi99horvitz.pdf), supplies the expected-value framing for allocating initiative. Amershi et al., [“Guidelines for Human-AI Interaction”](https://www.microsoft.com/en-us/research/publication/guidelines-for-human-ai-interaction/), derive and validate lifecycle-spanning interaction guidelines.
-- Lee and See, [“Trust in Automation: Designing for Appropriate Reliance”](https://user.engineering.uiowa.edu/~csl/publications/pdf/leesee04.pdf), distinguish calibrated reliance from misuse and disuse. Microsoft's [appropriate-reliance playbook](https://learn.microsoft.com/en-us/ai/playbook/technology-guidance/overreliance-on-ai/overreliance-on-ai) provides a maintained engineering treatment. Buçinca et al., [“To Trust or to Think”](https://arxiv.org/abs/2102.09692), show that cognitive-forcing interventions can reduce overreliance while imposing subjective and heterogeneous costs.
-- The W3C [Web Content Accessibility Guidelines](https://www.w3.org/TR/WCAG22/) provide a technical accessibility baseline. Legal applicability and deadlines require the current official jurisdictional sources linked in the dated Landscape box and qualified counsel.
-- Kohavi et al., [“Practical Guide to Controlled Experiments on the Web”](https://link.springer.com/article/10.1007/s10618-008-0114-1), establish the product-experiment foundations. [Experiment Guide](https://experimentguide.com/) is a maintained companion collection.
-- The NIST AI RMF [Core](https://airc.nist.gov/airmf-resources/airmf/5-sec-core/) and [Playbook](https://airc.nist.gov/airmf-resources/playbook/) define the Govern, Map, Measure, and Manage frame; NIST explicitly presents the Playbook as voluntary guidance rather than an ordered checklist. ISO's [AI management systems overview](https://www.iso.org/artificial-intelligence/ai-management-systems) explains the plan-do-check-act management-system cycle.
-- Skelton and Pais's [Team Topologies material](https://teamtopologies.com/s/Finding-software-boundaries-for-fast-flow-Team-Topologies-and-Domain-Driven-Design-mini-book-MB81-v1.pdf) supplies stream-aligned, platform, and enabling-team concepts used here.
-- The [ACM Code of Ethics and Professional Conduct](https://www.acm.org/binaries/content/assets/about/acm-code-of-ethics-and-professional-conduct.pdf) grounds the duties to contribute to welfare, avoid harm, be honest about limitations, respect privacy, and build robustly secure systems.
-- Environmental comparisons require method disclosure. Patterson et al., [“Measuring the Environmental Impact of Delivering AI at Google Scale”](https://arxiv.org/abs/2508.15734), provide one production accounting method; the dated Landscape box links maintained summaries and a contrasting life-cycle treatment.
+1. **Simpson's paradox by construction.** Add a `language` field to `COHORT_LOG` splitting each cohort into two locales, and choose counts so the *overall* appropriate rate rises above 0.90 while every novice-locale slice falls below it. Which slices should gate the launch, and how do you prevent unstable rankings when a slice is too small to be adequately sampled?
+2. **Move the four reliance cells.** Consider three review interfaces — recommendation-first, evidence-first, and initial-judgment-first.
+    a. For each, state a mechanism hypothesis and its predicted effect on all four cells of `reliance_rates`, on decision time, and on assistive completion.
+    b. Design the powered experiment and stopping rule you would run to choose among them, naming the assignment unit and the novelty window.
+    c. Which single metric, if it moved the wrong way, would make you abandon the winning interface even if appropriate reliance improved?
+3. **Charge review honestly.** In `cost_per_outcome`, sweep `REVIEW_HOURLY_RATE` and the agent's `review_seconds` and find the frontier where the bounded agent's cost per outcome crosses the 1.60 baseline. Separately, compute the *marginal* cost of the agent's outcomes over the classifier's and argue when that marginal figure, not the average, should decide.
+4. **Extend the gate without collapsing it.** Add a delayed-reversal label so an initially "realized" outcome can later become remediation, and update `economics_report` and `evaluate_gates` accordingly. Add a minimum-cohort-sample rule to `evaluate_gates` that abstains (rather than passes) when a cohort is too small — without reducing the four gates to a single readiness score.
+5. **Make the register drive the decision.** Extend `RiskRegisterEntry` and `assemble_risk_register` so that a passing gate whose evidence is older than a recertification window reopens the entry. Then simulate a system-prompt change: which register entries reopen, which evidence remains valid, and what does `build_launch_review` now recommend?
+6. **Discover the cheaper design.** Using `DESIGNS`, find the outcome count at which the deterministic rules workflow, extended to cover more cases, would settle enough value to make the bounded agent's marginal cost indefensible. State the coverage and guardrail conditions under which you would ship rules and cancel the agent.
+7. **Draw the org and its debts.** For a regulated multilingual version of this product, assign outcome, interaction, model, data, platform, accessibility, risk-acceptance, incident, vendor, and recertification duties across a stream-aligned team, a platform team, and enabling specialists. Identify two responsibilities that cannot be outsourced under build-versus-buy, and name one review-debt item, one deskilling risk, and one reviewer-wellbeing metric each with an owner and a repayment or mitigation test.
