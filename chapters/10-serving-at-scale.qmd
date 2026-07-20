@@ -1,512 +1,1185 @@
 ---
-description: "Turn single-request inference into an SLO-qualified service by scheduling work, managing KV state, validating numerical shortcuts, and budgeting reasoning under load."
+description: "Turn single-request inference into an SLO-qualified service: simulate continuous batching, page the KV cache, price prefix reuse, model speculative decoding, quantize a real toy model, mask logits to a grammar, and budget reasoning under load."
 ---
 
-# Serving at Scale: Engines, Caching, Quantization, and Production Test-Time Compute [F+S] {#sec-ch10}
+# Serving at Scale: Engines, Caching, Quantization, and Production Test-Time Compute {#sec-ch10}
 
-## What you need going in {#sec-ch10-prerequisites}
+We are now ready to turn one model's forward pass into a service that many callers share at once, and to measure every trade that turn requires. We build one deterministic serving lab, in fragments, across the chapter: a load sweep that shows throughput and *goodput* diverging; a continuous-batching scheduler that fills the holes a fixed batch leaves; a paged-memory allocator that reclaims the fragmentation a contiguous KV cache strands; a prefix cache with a hit-rate break-even; a speculative-decoding model whose speedup we sweep against acceptance rate; an honest int8 quantization of the tiny GPT we trained in Chapter 2, measured for size and drift; a grammar mask applied to that model's real logits; and a reasoning-budget sweep that shows accuracy saturating while tokens keep accruing. Each mechanism recalls something earlier: the KV-cache arithmetic of @sec-ch03, the two latency phases of a request from @sec-ch09, and the marginal-value view of extra compute from @sec-ch08. Serving is where those mechanisms meet contention.
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter 3, The Canonical KV-Cache Equation](03-attention-position-long-context.qmd#sec-ch03-kv-equation) derived how cache storage grows with layers, tokens, heads, head dimension, and precision. [Chapter 9, One request has two latency phases](09-inference-behavior.qmd#sec-ch09-request) separated prefill, time to first token, decode, and time per output token. [Chapter 8, Allocate compute by marginal value](08-reasoning-test-time-compute.qmd#sec-ch08-allocation) treated extra samples and reasoning as a quality decision. This chapter turns those mechanisms into a concurrent service.
->
-> **Not required:** access to an accelerator, Kubernetes, an inference engine, a quantized checkpoint, or prior experience operating a model server. The default build is a deterministic CPU simulation; an optional adapter measures a real OpenAI-compatible endpoint.
+The lab is a CPU simulation with synthetic workloads and one small real model. It validates equations and decision logic; it does not benchmark an accelerator, an engine, or a provider. Every number below is reproduced by the cell that prints it.
 
-## Contents {#sec-ch10-contents}
+## Goodput is the number a serving system optimizes {#sec-ch10-goodput}
 
-- [Goodput: the objective a serving system optimizes](#sec-ch10-goodput)
-- [What you will build](#sec-ch10-will-build)
-- [Continuous batching and paged KV](#sec-ch10-scheduler)
-- [Prefix caching and cache economics](#sec-ch10-prefix-cache)
-- [Speculation and constraints trade compute for serial steps](#sec-ch10-fast-decode)
-- [Quantization is a validation problem](#sec-ch10-quantization)
-- [Disaggregate when interference exceeds transfer](#sec-ch10-disaggregation)
-- [Parallelism and multi-tenancy share more than weights](#sec-ch10-tenancy)
-- [Choose an engine by its feature lattice](#sec-ch10-engines)
-- [Production test-time compute needs a budget](#sec-ch10-ttc)
-- [Landscape 2026 (dated)](#sec-ch10-landscape)
-- [Build](#sec-ch10-build)
-- [What endures, what changes](#sec-ch10-endures)
-- [Exercises](#sec-ch10-exercises)
-- [Notes and sources](#sec-ch10-sources)
+A model endpoint reports record token throughput after a deployment change. At the same time, interactive users see more long pauses before the first token, and streaming freezes behind large prompts. Both observations are true. The server completed more work per second by accepting larger batches, but too many individual requests missed their latency contract. Throughput rewarded work that users experienced as late.
 
-## Goodput: the objective a serving system optimizes {#sec-ch10-goodput}
-
-A model endpoint reports record token throughput after a deployment change. At the same time, interactive users see more long pauses before the first token, and streaming occasionally freezes behind large prompts. Both observations can be true. The server completed more work per second by accepting larger batches, but too many individual requests missed the latency contract. Throughput rewarded work that users considered late.
-
-This chapter builds the ability to explain and control that failure. The objective is **goodput**: the rate of requests that complete while satisfying every declared service-level objective (SLO). Let a measurement window have duration $W$ seconds and contain requests indexed by $i$. Let $T_i^{first}$ be request $i$'s time to first token (TTFT), $T_i^{token}$ its time per output token (TPOT), and let $S^{first}$ and $S^{token}$ be their respective limits. A two-SLO goodput is
+The objective that resolves the contradiction is **goodput**: the rate of requests that finish while satisfying *every* declared service-level objective (SLO). Let a window of $W$ seconds contain requests indexed by $i$, each with a time to first token $T_i^{\text{first}}$ and a time per output token $T_i^{\text{token}}$, against limits $S^{\text{first}}$ and $S^{\text{token}}$. Two-SLO goodput is
 
 $$
-G(S^{first},S^{token})=
-\frac{1}{W}\sum_i
-\mathbf{1}\!\left[T_i^{first}\le S^{first}
-\;\land\;
-T_i^{token}\le S^{token}\right]
-\quad\text{requests/second}.
-$$
+G = \frac{1}{W}\sum_i \mathbf{1}\!\left[T_i^{\text{first}}\le S^{\text{first}}\ \wedge\ T_i^{\text{token}}\le S^{\text{token}}\right]\quad\text{requests/second.}
+$$ {#eq-ch10-goodput}
 
-The indicator contributes one only when both conditions hold. A production contract might add availability, output validity, or task quality. Reporting each pass rate separately can hide that different requests fail each objective. The window and workload distribution are part of the definition.
+The indicator contributes one only when both conditions hold. Reporting each pass rate separately hides that *different* requests fail each objective; the conjunction is the point. Time to first token and time per output token keep their boundaries from @sec-ch09 — end-to-end TTFT includes admission, queueing, tokenization, prefill, and the first decode step, so a fast isolated forward pass does not imply a fast service.
 
-TTFT and TPOT retain the boundaries from Chapter 9. End-to-end TTFT includes admission, queueing, tokenization, prefill, the first decode step, detokenization, and network delivery unless a narrower boundary is stated. TPOT describes gaps after the first token; tail inter-token latency is often more revealing than an average. The serving layer adds queueing and interference, so a fast isolated forward pass does not imply a fast service.
-
-Goodput is a function of offered load. Batching initially improves useful work per invocation. Past a knee, queues grow, KV memory fills, preemption rises, and the qualified fraction collapses. Capacity is therefore a goodput-versus-arrival-rate curve for a pinned workload, accompanied by token lengths, concurrency, cancellations, cache pattern, and decoding policy.
-
-Figure @fig-ch10-request-path locates each decision. Components may share a process, but authentication, routing, scheduling, execution, KV ownership, streaming, and measurement remain distinct responsibilities.
+Goodput is a function of offered load. @fig-ch10-request-path locates where load turns into latency: every component on the path can add queueing or change a request's state.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch10-request-path
-%%| fig-cap: "Which serving component can change a request's latency or state?"
+%%| fig-cap: "Which serving component can change a request's latency or state? Authentication, routing, scheduling, execution, KV ownership, and streaming stay distinct responsibilities even when they share a process."
 flowchart LR
-    U(["Caller request"]) -->|"identity, prompt, SLO"| G["Gateway: authenticate and admit"]
-    G -->|"model and tenant route"| R["KV- and load-aware router"]
-    R -->|"queued request"| S["Iteration scheduler"]
-    S -->|"token budget and block table"| E(["Inference engine and kernels"])
-    E <-->|"allocate, read, append"| K[("Paged KV pool")]
-    E -->|"token IDs and timing"| D["Safe detokenizer and streamer"]
-    D -->|"text events"| U
-    S -.->|"queue, preemption, SLO counters"| M[["Measurements"]]
-    K -.->|"hits, evictions, bytes"| M
-    D -.->|"TTFT and token gaps"| M
+    U(["request: prompt, SLO"]) --> G["gateway: admit"]
+    G --> R["KV- and load-aware router"]
+    R --> S["iteration scheduler"]
+    S --> E(["engine and kernels"])
+    E <--> K[("paged KV pool")]
+    E --> D["detokenize and stream"]
+    D --> U
+    S -.->|"queue, preemption"| M[["measurements"]]
+    K -.->|"hits, evictions"| M
+    D -.->|"TTFT, token gaps"| M
 ```
 
-Locate every optimization on this path and name its invariant. Batching can damage TTFT, cache affinity can overload a replica, and speculation can consume contested compute. Chapter 26 owns monetary cost and fleet provisioning; this chapter supplies their goodput mechanics.
+To see goodput and throughput diverge we build a small slot-based simulator. Requests arrive as a Poisson process at rate `rate`; the server holds `slots` decode streams and advances one step per unit time; a waiting request queues until a slot frees. Its queue wait is a proxy for TTFT. This is the systems analogue of training a model and plotting the loss: we drive the mechanism with a synthetic workload and read the curve it produces.
 
-## What you will build {#sec-ch10-will-build}
+```{python}
+# @save
+import numpy as np
 
-::: {.callout-tip title="The serving decision lab"}
-You will run one integrated, engine-free build rooted at [`code/ch10/serving_lab.py`](../code/ch10/serving_lab.py). Its deterministic fixture schedules one burst of variable-length requests with fixed and continuous batching, constructs tenant-scoped prefix-cache keys, calculates cache break-even, verifies speculative accept/reject sampling, measures grammar-mask distortion, quantizes an outlier-heavy vector at three block sizes, evaluates prefill/decode disaggregation, and allocates a synthetic reasoning-token budget.
 
-The build emits makespan, slot utilization, SLO-qualified goodput, cache blocks and tail waste, reuse break-even, speculative acceptance and target-distribution error, removed probability mass, quantization RMSE and effective bits per value, transfer-versus-interference decisions, and a reasoning quality/cost curve. [`render_metrics.py`](../code/ch10/render_metrics.py) generates the chapter's numeric SVG from the same record. Success means all six mechanism tests pass and every displayed number is reproducible.
+def sweep_load(rates, slots=8, mean_service=20.0, ttft_slo=30,
+               horizon=4000, seed=0):
+    """Measure throughput and goodput of a slot server across arrival rates.
 
-[`openai_compatible_adapter.py`](../code/ch10/openai_compatible_adapter.py) is an optional network seam. It measures first-content latency, stream-event gaps, total time, and endpoint-reported output tokens without becoming a second build. The deterministic path never imports it for network access.
+    A fixed pool of ``slots`` decode streams advances one step per unit time.
+    Requests arrive by a Poisson process; each waits in a FIFO queue for a free
+    slot, and its queue wait is charged as time-to-first-token. Goodput counts
+    only completions whose admission delay met ``ttft_slo``, so it can fall even
+    as throughput climbs toward the pool's capacity of ``slots / mean_service``
+    requests per step (@eq-ch10-goodput).
+
+    Args:
+        rates: Arrival rates (requests per step) to sweep.
+        slots: Concurrent decode streams the server can run.
+        mean_service: Mean decode length; service is uniform on ``[1, 2*mean)``.
+        ttft_slo: Admission-delay budget, in steps, that a completion must meet.
+        horizon: Simulated steps per rate.
+        seed: Seed for the arrival and service draws.
+
+    Returns:
+        One dict per rate with ``throughput``, ``goodput`` (both per step), and
+        the ``qualified`` fraction of completions that met the SLO.
+    """
+    rows = []
+    rng = np.random.default_rng(seed)
+    for rate in rates:
+        gaps = rng.exponential(1.0 / rate, size=int(rate * horizon * 1.4) + 100)
+        arrivals = np.floor(np.cumsum(gaps)).astype(int)
+        arrivals = arrivals[arrivals < horizon]
+        service = rng.integers(1, 2 * int(mean_service), size=len(arrivals))
+        active, queue, done, ok, cursor = [], [], 0, 0, 0
+        for step in range(horizon):
+            while cursor < len(arrivals) and arrivals[cursor] == step:
+                queue.append((int(arrivals[cursor]), int(service[cursor])))
+                cursor += 1
+            active = [(fin, arr) for (fin, arr) in active if fin > step]
+            while queue and len(active) < slots:
+                arrival, length = queue.pop(0)
+                ok += (step - arrival) + 1 <= ttft_slo
+                active.append((step + length, arrival))
+                done += 1
+        rows.append({"rate": rate, "throughput": done / horizon,
+                     "goodput": ok / horizon, "qualified": ok / max(1, done)})
+    return rows
+```
+
+The pool's capacity is `slots / mean_service` = 8 / 20 = 0.4 requests per step. We sweep from well below to twice that and print the two rates side by side.
+
+```{python}
+capacity = 8 / 20.0
+rates = [round(capacity * f, 3) for f in (0.3, 0.5, 0.7, 0.85, 1.0, 1.15, 1.35, 1.6, 2.0)]
+knee = sweep_load(rates)
+print(f"{'rate':>6} {'throughput':>11} {'goodput':>8} {'qualified':>10}")
+for row in knee:
+    print(f"{row['rate']:>6} {row['throughput']:>11.3f} "
+          f"{row['goodput']:>8.3f} {row['qualified']:>10.3f}")
+```
+
+Throughput rises with load and then flattens at the capacity of 0.4: the server never completes more than it can. Goodput does something else entirely. It climbs while the queue stays short, peaks near 0.32 just below capacity, then *collapses* as the queue explodes — at the highest rate, the server is fully busy yet almost no completion meets its SLO. That gap between the two curves, drawn in @fig-ch10-goodput-knee, is the whole subject of the chapter.
+
+```{python}
+#| label: fig-ch10-goodput-knee
+#| fig-cap: "Why does goodput fall while throughput keeps rising? Throughput saturates at the pool capacity (0.4 req/step, dashed) and stays there. Goodput peaks just below capacity and then collapses as admission delay blows past the SLO. Optimizing the first curve while ignoring the second is the failure the chapter opens with."
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+import matplotlib.pyplot as plt
+
+xs = [r["rate"] for r in knee]
+fig, ax = plt.subplots(figsize=(6.6, 3.6))
+ax.plot(xs, [r["throughput"] for r in knee], "s-", color="#2a7f9e", label="throughput")
+ax.plot(xs, [r["goodput"] for r in knee], "o-", color="#b13f3f", label="goodput (SLO-qualified)")
+ax.axhline(0.4, ls="--", color="#555", lw=1)
+ax.axvline(xs[knee.index(max(knee, key=lambda r: r["goodput"]))], ls=":", color="#b13f3f", lw=1)
+ax.set_xlabel("offered load (requests / step)")
+ax.set_ylabel("completions / step")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
+
+Capacity is therefore not a single number but this curve, pinned to a workload: token lengths, concurrency, cancellations, cache pattern, and decoding policy all move the knee. @sec-ch26 owns monetary cost and fleet provisioning; this chapter supplies the mechanics that set where the knee sits. Every optimization that follows is an attempt to push the red curve right without letting it fall.
+
+::: {.callout-note title="In the interview"}
+**Q.** Your dashboard shows record tokens per second after a batching change, but users are complaining. What do you measure, and what is likely wrong?
+
+**A.** Report goodput, not throughput: the fraction of requests meeting TTFT *and* TPOT, per SLO, as a function of offered load. Larger batches raised throughput by pushing the system past the goodput knee — queue wait and preemption now break the latency contract for many requests. The trap is reporting mean latency; the tail is where the SLO fails, so show the qualified fraction and the p99 inter-token gap.
 :::
 
-## Continuous batching and paged KV {#sec-ch10-scheduler}
+## Continuous batching and paged KV turn variation into schedulable work {#sec-ch10-batching}
 
-A fixed batch of four decode requests has remaining lengths 2, 12, 4, and 10 tokens. After the two-token request finishes, its slot sits unused until the twelve-token request finishes. If every batch member reserves its maximum sequence-sized KV region, short requests also leave holes in device memory. Compute capacity and memory capacity are stranded for different versions of the same reason: variable-length requests are treated as fixed rectangles.
-
-For a static batch of size $B$ with output lengths $L_1,\ldots,L_B$, a simple slot utilization is
+A fixed batch of four decode requests has remaining lengths 2, 12, 4, and 10 tokens. After the two-token request finishes, its slot sits idle until the twelve-token request finishes. Compute is stranded not because the server is slow but because variable-length requests are being treated as one fixed rectangle. For a static batch of size $B$ with output lengths $L_1,\dots,L_B$, slot utilization is
 
 $$
-U_{static}=\frac{\sum_{i=1}^{B}L_i}{B\max_i L_i}.
-$$
+U_{\text{static}}=\frac{\sum_{i=1}^{B}L_i}{B\max_i L_i},
+$$ {#eq-ch10-ustatic}
 
-The numerator is useful request-steps. The denominator is the slots available while the longest member runs. This equation ignores kernel efficiency and prefill, but it exposes length skew. Grouping similar lengths improves the ratio only when arrival rate and waiting-time budgets permit delaying requests to form those groups.
+the useful request-steps over the slots held while the longest member runs. Length skew drives it down. **Continuous batching**, also called iteration-level or in-flight batching, makes admission a per-step decision: after each decode step the scheduler removes finished requests and admits waiting ones into the freed slots [@yu2022orca]. We implement both policies and compare them on one burst of twelve requests into four slots.
 
-**Continuous batching**, also called iteration-level or in-flight batching, makes admission a per-iteration decision. After each decode step, the scheduler removes completed or cancelled requests and admits waiting work into the freed capacity. Orca established iteration-level scheduling with selective batching; its durable contribution is the scheduling boundary, not one queue policy. A production scheduler usually enforces a token budget because one long prefill and many one-token decode steps have very different work despite being the same number of requests.
+```{python}
+# @save
+REQUEST_LENGTHS = [2, 12, 4, 10, 3, 9, 5, 8, 6, 7, 2, 11]
 
-The scheduler also needs a KV admission bound, fairness policy, cancellation path, and response when unknown output outgrows its reservation. Preemption may swap KV, discard it for recomputation, or reject work. Count preemptions, recomputed tokens, swapped bytes, queue age, and deadline misses; repeatedly evicting long requests can produce high utilization and poor goodput.
 
-Long prefills create another head-of-line problem. **Chunked prefill** divides a prompt into bounded chunks interleaved with decode. Smaller chunks protect TPOT but add overhead and may delay that prompt's TTFT. Chunk size is an SLO dial, not a copied constant.
+def static_schedule(lengths, batch_size):
+    """Run fixed batches that each wait for their longest member to finish.
 
-Memory becomes schedulable when the KV cache is paged. A request sees logical KV blocks in token order; a block table maps them to noncontiguous physical frames. Frames are allocated only as tokens arrive. External fragmentation from requiring one contiguous maximum-length region disappears, while internal waste is bounded by less than one block per live sequence for a conventional tail block. The attention kernel follows the block table when reading keys and values. This is device-memory management inspired by virtual memory; it does not imply that an operating system is faulting model state to disk.
+    Requests are grouped in arrival order; a group occupies all ``batch_size``
+    slots until its longest member completes, so short members leave idle slots
+    (the loss @eq-ch10-ustatic quantifies).
 
-Paged blocks support copy-on-write: branches share immutable full prefix blocks but receive private frames when appending to a partial tail. Figure @fig-ch10-paged-kv separates logical order from physical placement.
+    Args:
+        lengths: Decode length of each request, in steps.
+        batch_size: Number of slots the batch fills.
+
+    Returns:
+        A dict of per-request ``starts`` and ``finishes``, the total
+        ``makespan_steps``, and slot ``utilization``.
+    """
+    starts, finishes, elapsed = [0] * len(lengths), [0] * len(lengths), 0
+    for base in range(0, len(lengths), batch_size):
+        group = lengths[base:base + batch_size]
+        for offset, length in enumerate(group):
+            starts[base + offset] = elapsed
+            finishes[base + offset] = elapsed + length
+        elapsed += max(group)
+    return {"starts": starts, "finishes": finishes, "makespan_steps": elapsed,
+            "utilization": sum(lengths) / (batch_size * elapsed)}
+```
+
+The continuous scheduler keeps a waiting queue and refills a slot the instant its request completes, so a finished short request is immediately replaced rather than leaving a hole.
+
+```{python}
+# @save
+def continuous_schedule(lengths, batch_size):
+    """Refill each decode slot as soon as its current request completes.
+
+    Admission is decided every step: finished requests leave and waiting ones
+    enter the freed slots, so slot occupancy stays near ``batch_size`` until the
+    queue drains. This is iteration-level batching; its win over
+    ``static_schedule`` is the point of @eq-ch10-ustatic.
+
+    Args:
+        lengths: Decode length of each request, in steps.
+        batch_size: Number of concurrent slots.
+
+    Returns:
+        A dict of per-request ``starts`` and ``finishes``, the total
+        ``makespan_steps``, and slot ``utilization``.
+    """
+    starts, finishes = [-1] * len(lengths), [-1] * len(lengths)
+    remaining, active, waiting, step = lengths[:], [], list(range(len(lengths))), 0
+    while waiting and len(active) < batch_size:
+        request = waiting.pop(0); starts[request] = step; active.append(request)
+    used = 0
+    while active:
+        used += len(active)
+        for request in active:
+            remaining[request] -= 1
+        step += 1
+        for request in [r for r in active if remaining[r] == 0]:
+            finishes[request] = step; active.remove(request)
+        while waiting and len(active) < batch_size:
+            request = waiting.pop(0); starts[request] = step; active.append(request)
+    return {"starts": starts, "finishes": finishes, "makespan_steps": step,
+            "utilization": used / (batch_size * step)}
+```
+
+Goodput needs an SLO test per request. We charge time to first token as the admission step plus one, and time per output token as elapsed steps over tokens produced. With a TTFT budget of 16 steps and a TPOT budget of 1.05, we count how many requests qualify under each policy.
+
+```{python}
+# @save
+def goodput(schedule, lengths, ttft_slo=16, tpot_slo=1.05):
+    """Count requests meeting both latency SLOs, and the per-step goodput.
+
+    A request qualifies when its admission delay is within ``ttft_slo`` and its
+    steps-per-token stays within ``tpot_slo``. This is @eq-ch10-goodput applied
+    to a finished schedule, and it is what separates the two policies even when
+    both eventually complete every request.
+
+    Args:
+        schedule: A dict from ``static_schedule`` or ``continuous_schedule``.
+        lengths: Decode length of each request, in steps.
+        ttft_slo: Admission-delay budget, in steps.
+        tpot_slo: Time-per-output-token budget, in steps.
+
+    Returns:
+        A dict with the ``qualified`` count and ``per_step`` goodput.
+    """
+    qualified = 0
+    for start, finish, length in zip(schedule["starts"], schedule["finishes"], lengths):
+        if start + 1 <= ttft_slo and (finish - start) / length <= tpot_slo:
+            qualified += 1
+    return {"qualified": qualified, "per_step": qualified / schedule["makespan_steps"]}
+```
+
+We run both policies on the burst and print makespan, utilization, and goodput.
+
+```{python}
+static = static_schedule(REQUEST_LENGTHS, 4)
+continuous = continuous_schedule(REQUEST_LENGTHS, 4)
+for name, sched in (("static", static), ("continuous", continuous)):
+    g = goodput(sched, REQUEST_LENGTHS)
+    print(f"{name:>11}: makespan {sched['makespan_steps']:>2}  "
+          f"util {sched['utilization']:.3f}  qualified {g['qualified']:>2}/12  "
+          f"goodput {g['per_step']:.3f}")
+```
+
+Continuous batching finishes the burst in 26 steps instead of 32, lifts utilization from 0.62 to 0.76, and — the number that matters — qualifies all twelve requests instead of eight. To see *why* four requests fail under static batching, print their admission steps.
+
+```{python}
+print("static admission steps:    ", static["starts"])
+print("continuous admission steps:", continuous["starts"])
+```
+
+Under static batching the third group of four requests is not admitted until step 21, so its time to first token is 22 — past the 16-step budget. Those four requests complete, but late. Continuous batching admits its last request at step 15, inside the budget. The holes the fixed batch leaves are exactly the requests that miss the SLO. @fig-ch10-batching-gantt shades them.
+
+```{python}
+#| label: fig-ch10-batching-gantt
+#| fig-cap: "How does continuous batching fill the holes a fixed batch leaves? Each row is a decode slot; each bar a request, shaded if it misses the 16-step TTFT budget. Static batching (top) idles slots between groups and admits the last four requests too late; continuous refill (bottom) keeps the slots busy and every request qualifies."
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+def slot_rows(sched, batch_size):
+    rows = [[] for _ in range(batch_size)]
+    order = sorted(range(len(REQUEST_LENGTHS)), key=lambda i: (sched["starts"][i], i))
+    free = list(range(batch_size))
+    busy = {}
+    for i in sorted(order, key=lambda i: sched["starts"][i]):
+        s, f = sched["starts"][i], sched["finishes"][i]
+        for slot, end in list(busy.items()):
+            if end <= s:
+                free.append(slot); del busy[slot]
+        slot = free.pop(0); busy[slot] = f
+        rows[slot].append((i, s, f))
+    return rows
+
+fig, axes = plt.subplots(2, 1, figsize=(7.2, 3.8), sharex=True)
+for ax, (title, sched) in zip(axes, [("static batching", static), ("continuous batching", continuous)]):
+    for slot, bars in enumerate(slot_rows(sched, 4)):
+        for i, s, f in bars:
+            miss = s + 1 > 16
+            ax.barh(slot, f - s, left=s, height=0.7,
+                    color="#b13f3f" if miss else "#8fb8c9", edgecolor="#222")
+    ax.set_title(title, fontsize=10, loc="left")
+    ax.set_ylabel("slot")
+axes[1].set_xlabel("step")
+axes[0].axvline(16, ls=":", color="#333", lw=1)
+axes[1].axvline(16, ls=":", color="#333", lw=1)
+fig.tight_layout()
+plt.show()
+```
+
+Continuous batching solves the *compute* holes. Variable length also strands *memory*: if every slot reserves a KV region sized for the longest possible sequence, short requests waste most of it. Memory becomes schedulable when the KV cache is **paged**. A request sees logical KV blocks in token order; a block table maps them to noncontiguous physical frames allocated only as tokens arrive [@kwon2023vllm]. We measure the waste directly, comparing a naive allocator that reserves `max_len` per sequence against a paged allocator that reserves whole blocks.
+
+```{python}
+# @save
+import math
+
+
+def kv_fragmentation(lengths, block_size, max_len):
+    """Compare KV memory reserved by contiguous vs paged allocation.
+
+    A contiguous allocator reserves ``max_len`` tokens per sequence regardless
+    of true length, stranding the difference; a paged allocator reserves whole
+    ``block_size`` blocks, so its only waste is the partial final block of each
+    sequence — bounded by less than one block per live sequence.
+
+    Args:
+        lengths: True token length of each live sequence.
+        block_size: Tokens per KV block.
+        max_len: Maximum sequence length the contiguous allocator reserves.
+
+    Returns:
+        A dict of tokens ``used``, tokens reserved by each allocator, each
+        waste fraction, and the contiguous-over-paged reservation ratio.
+    """
+    used = sum(lengths)
+    naive = len(lengths) * max_len
+    paged = sum(math.ceil(length / block_size) * block_size for length in lengths)
+    return {"used": used, "naive_reserved": naive, "paged_reserved": paged,
+            "naive_waste": 1 - used / naive, "paged_waste": 1 - used / paged,
+            "naive_over_paged": naive / paged}
+```
+
+We drive it with a realistic mix of live sequence lengths against a 256-token maximum and 16-token blocks.
+
+```{python}
+live = [17, 5, 130, 44, 9, 88, 3, 61, 200, 12, 150, 7]
+frag = kv_fragmentation(live, block_size=16, max_len=256)
+print(f"tokens live: {frag['used']}")
+print(f"contiguous reserves {frag['naive_reserved']} tokens "
+      f"({frag['naive_waste']:.1%} wasted)")
+print(f"paged      reserves {frag['paged_reserved']} tokens "
+      f"({frag['paged_waste']:.1%} wasted)")
+print(f"contiguous uses {frag['naive_over_paged']:.2f}x the KV memory")
+```
+
+For a realistic length mix the contiguous allocator wastes 76% of its reserved KV and holds 3.7 times the memory the paged allocator needs. That saved memory is more concurrent sequences, which is more goodput at the same hardware. Paged blocks also make prefix sharing cheap: two sequences that begin with the same tokens point their block tables at the *same* physical frames for the shared prefix and get private frames only when they diverge — copy-on-write for KV. @fig-ch10-paged-kv separates the logical order from the physical placement that makes this possible.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch10-paged-kv
-%%| fig-cap: "How can two sequences share an immutable prefix without requiring contiguous KV memory?"
+%%| fig-cap: "How can two sequences share an immutable prefix without contiguous KV memory? Logical blocks (left) stay in token order; the block table maps shared prefix blocks to the same physical frames and gives each branch a private frame only on append."
 flowchart LR
-    subgraph A["Sequence A logical blocks"]
+    subgraph A["sequence A (logical)"]
         A0["prefix 0"] --> A1["prefix 1"] --> A2["private tail A"]
     end
-    subgraph B["Sequence B logical blocks"]
+    subgraph B["sequence B (logical)"]
         B0["prefix 0"] --> B1["prefix 1"] --> B2["private tail B"]
     end
-    subgraph P["Physical KV frames"]
-        F7[("frame 7: prefix 0")]
-        F2[("frame 2: tail B")]
-        F9[("frame 9: prefix 1")]
-        F4[("frame 4: tail A")]
-    end
-    A0 -->|"block-table entry"| F7
-    B0 -->|"shared read-only entry"| F7
-    A1 -->|"block-table entry"| F9
-    B1 -->|"shared read-only entry"| F9
+    F7[("frame 7")]
+    F9[("frame 9")]
+    F4[("frame 4")]
+    F2[("frame 2")]
+    A0 --> F7
+    B0 --> F7
+    A1 --> F9
+    B1 --> F9
     A2 -->|"copy on append"| F4
     B2 -->|"copy on append"| F2
 ```
 
-Block size trades metadata and kernel locality against tail waste and reuse granularity. Small blocks reduce waste but enlarge tables; large blocks do the reverse. Select with goodput over realistic length distributions, not memory utilization alone.
+## Prefix caching pays off past a hit-rate threshold {#sec-ch10-prefix-cache}
 
-```python
-# code/ch10/serving_lab.py — changed regions: static_schedule, continuous_schedule
-static = static_schedule([2, 12, 4, 10, 3, 9, 5, 8, 6, 7, 2, 11], 4)
-continuous = continuous_schedule([2, 12, 4, 10, 3, 9, 5, 8, 6, 7, 2, 11], 4)
+An agent sends the same system instructions, tool schemas, and policy text on every turn. Recomputing their keys and values each time is pure waste — unless one request changed a timestamp near the front of the prompt, in which case the reuse silently misses. A different deployment gets frequent hits but accidentally lets two tenants share a prefix entry. Prefix caching is valuable only when *identity*, *placement*, and *economics* are all correct.
 
-assert continuous["utilization"] > static["utilization"]
-assert continuous["makespan_steps"] < static["makespan_steps"]
+A **prefix cache** keeps KV blocks after their request finishes so a later request with the exact same token prefix and model state can skip that prefill. "Exact" is mechanical: semantically equal text with different token IDs is a miss, and equal token IDs computed under a different model, tokenizer, template, or adapter are not interchangeable. The cache key must cover every input that changes the KV values. We hash the token IDs and bind them to the revisions that produced them.
+
+```{python}
+# @save
+import hashlib
+import json
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class CacheKey:
+    """Identity fields that together make a cached prefix safe to reuse.
+
+    Reuse is sound only when every input that could change the cached keys and
+    values matches. The tenant field is policy, not mathematics: it keeps a hit
+    from becoming a cross-tenant presence oracle even when the token IDs are
+    identical.
+    """
+
+    tenant: str
+    model_revision: str
+    tokenizer_revision: str
+    template_revision: str
+    adapter_revision: str
+    prefix_hash: str
+
+
+def make_cache_key(tenant, token_ids, *, model="model-r1", tokenizer="tok-r1",
+                   template="tmpl-r1", adapter="base"):
+    """Hash exact token IDs with every state-changing revision into a CacheKey.
+
+    Args:
+        tenant: Trust domain the prefix belongs to.
+        token_ids: The exact prefix token IDs; any difference is a miss.
+        model, tokenizer, template, adapter: Revisions whose change would make
+            the cached keys and values invalid for a new request.
+
+    Returns:
+        A ``CacheKey`` whose equality decides whether reuse is permitted.
+    """
+    digest = hashlib.sha256(json.dumps(token_ids, separators=(",", ":")).encode()).hexdigest()
+    return CacheKey(tenant, model, tokenizer, template, adapter, digest[:16])
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `serving_lab.py` after scheduling and paging | 76 lines | Freed slots are refilled at iteration boundaries; full prefix blocks may be shared, but each branch owns its partial tail. |
-:::
+The same prefix reuses within a tenant and refuses to reuse across tenants.
 
-## Prefix caching and cache economics {#sec-ch10-prefix-cache}
-
-An agent sends the same system instructions, tool schemas, and policy text on every turn. The service recomputes their keys and values each time because one request changed a timestamp near the front of the prompt. A different deployment gets frequent cache hits, but accidentally lets two tenants share a prefix entry. Prefix caching is valuable only when identity, placement, and economics are all correct.
-
-A **prefix cache** retains KV blocks after their original request no longer needs them, allowing a later request with the exact same token prefix and model state to skip the corresponding prefill. “Exact” is mechanical. Semantically equivalent text with different token IDs is a miss. Equal token IDs computed under different model weights, tokenizer behavior, position treatment, prompt template, multimodal input, or adapter are not interchangeable.
-
-The cache key must therefore cover every input that can change KV values. The lab uses
-
-$$
-K=(tenant,model,tokenizer,template,adapter,H(token\ IDs)).
-$$
-
-The tenant component is policy, not mathematics. Explicit cross-tenant sharing of public immutable prefixes needs its own trust domain and auditable opt-in. Default isolation prevents a hit from becoming a presence oracle or state leak.
-
-Caching has a break-even point. Let $C$ be the cost to recompute a prefix, $C_w$ the cost of the first computation plus writing the cache entry, $C_r$ the cost of one later read, and $r$ the number of future reuses. Without caching, total cost is $(1+r)C$. With caching, it is $C_w+rC_r$. When $C_r<C$, caching wins if
-
-$$
-r>\frac{C_w-C}{C-C_r}.
-$$
-
-“Cost” may be milliseconds on the critical path, accelerator-seconds, energy, or an internal price, but every term must use the same unit. If a remote read is slower than recomputation, no reuse count repairs the critical-path latency unless the read can be overlapped or frees a more constrained resource. The fixture assigns $C=1$, $C_w=1.25$, and $C_r=0.10$ cost units, producing a threshold of 0.278 future reuses. Because reuse arrives in whole events, the first reuse pays back the write in that fixture.
-
-For eviction, approximate value density as expected reuse probability times recomputation saved, divided by retained bytes. Least-recently-used is cheap when recency predicts reuse but fails on periodic jobs, scans, and large popular prefixes. Size- and recomputation-aware policies protect denser entries; pinned bytes need quotas.
-
-A radix tree exposes shared paths; parent-linked block hashes expose equivalent reuse. Neither places work across replicas. A **KV-aware router** balances reusable length against queue depth, free frames, and deadline. Always choosing the largest hit can create a hot replica, so route on predicted completion or SLO risk.
-
-Hierarchical KV caches extend the working set to host memory, peers, storage, or a shared service, adding transfer and coordination. Track usable-hit bytes, read latency, transferred bytes, recomputed tokens, and TTFT; lookup hit rate alone can mislead. Compressed or low-precision KV also enters Section @sec-ch10-quantization's validation ladder.
-
-Prompt ordering affects reuse, but Chapter 13 owns that caller-side layout and compaction. The server hashes what it receives and never assumes semantic equivalence.
-
-```python
-# code/ch10/serving_lab.py — changed regions: make_cache_key, cache_breakeven
-key_a = make_cache_key("tenant-a", list(range(45)))
-key_b = make_cache_key("tenant-b", list(range(45)))
-
-assert key_a != key_b
-assert abs(cache_breakeven(1.0, 1.25, 0.10) - 5 / 18) < 1e-12
+```{python}
+prefix = list(range(45))
+same = make_cache_key("tenant-a", prefix) == make_cache_key("tenant-a", prefix)
+cross = make_cache_key("tenant-a", prefix) == make_cache_key("tenant-b", prefix)
+print(f"same tenant, same prefix -> reuse: {same}")
+print(f"different tenant, same prefix -> reuse: {cross}")
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `serving_lab.py` after prefix economics | 40 lines | Reuse requires complete cache identity, and a cache write is admitted only against comparable compute, read, and expected-reuse costs. |
-:::
-
-## Speculation and constraints trade compute for serial steps {#sec-ch10-fast-decode}
-
-Autoregressive decode waits for one target-model decision before constructing the next input. Two serving techniques reduce the cost of that serial boundary in different ways. Speculative decoding guesses several future tokens and verifies them together. Constrained decoding removes illegal next tokens before sampling. Both can improve a target metric, and both can waste work when their assumptions are wrong.
-
-In exact **speculative sampling**, a fast draft distribution $q$ proposes a token $x$, and the target distribution $p$ accepts it with probability
+Identical prefixes reuse within a tenant and refuse to reuse across tenants — the isolation is in the key, not in a downstream check. Given a correct key, the remaining question is economic. Let $C$ be the cost to recompute a prefix, $C_w$ the cost to compute it once and write the cache entry, $C_r$ the cost of one later read, and $r$ the number of future reuses. Without caching the total is $(1+r)C$; with caching it is $C_w + rC_r$. When $C_r < C$, caching wins once
 
 $$
-a(x)=\min\!\left(1,\frac{p(x)}{q(x)}\right).
+r > \frac{C_w - C}{C - C_r}.
+$$ {#eq-ch10-breakeven}
+
+Rather than a single break-even count, the more useful production view is the *steady-state* one: at hit rate $h$, each request pays $C_r$ with probability $h$ and $C_w$ with probability ${1-h}$. We plot that effective cost against the baseline of always recomputing.
+
+```{python}
+# @save
+def cache_breakeven(compute, write, read):
+    """Return the future reuses a cache write needs to beat recomputation.
+
+    Implements @eq-ch10-breakeven. A read no cheaper than recomputation can
+    never pay off on the critical path, so the function reports infinity.
+
+    Args:
+        compute: Cost to recompute the prefix.
+        write: Cost to compute once and store the entry.
+        read: Cost of one later cache read.
+
+    Returns:
+        The reuse count above which caching is cheaper, or ``inf``.
+    """
+    if read >= compute:
+        return math.inf
+    return max(0.0, (write - compute) / (compute - read))
+
+
+def effective_cost(hit_rate, compute=1.0, write=1.25, read=0.10):
+    """Average per-request prefix cost at a given cache hit rate.
+
+    A hit pays ``read``; a miss pays ``write`` (compute plus store). The result
+    is compared against the no-cache baseline of ``compute`` per request.
+
+    Args:
+        hit_rate: Fraction of requests served from cache.
+        compute: No-cache recompute cost (the baseline).
+        write: Miss cost: first compute plus writing the entry.
+        read: Hit cost.
+
+    Returns:
+        The mean cost per request under caching.
+    """
+    return (1 - hit_rate) * write + hit_rate * read
+```
+
+We sweep the hit rate and find where the cached cost first drops below the recompute baseline.
+
+```{python}
+hits = [i / 40 for i in range(41)]
+costs = [effective_cost(h) for h in hits]
+crossing = (1.25 - 1.0) / (1.25 - 0.10)          # cost(h) == baseline of 1.0
+print(f"break-even reuse count (C=1, Cw=1.25, Cr=0.10): {cache_breakeven(1.0, 1.25, 0.10):.3f}")
+print(f"caching beats recompute above hit rate ~{crossing:.2f}")
+```
+
+Below a hit rate of about 0.22 the write overhead on misses makes caching *more* expensive than recomputing; above it, reuse pays for the writes. @fig-ch10-prefix-cost draws the line. This is the same back-of-envelope cost arithmetic @sec-ch33 systematizes for design interviews: a cache is only worth its bookkeeping once the hit rate clears its break-even.
+
+```{python}
+#| label: fig-ch10-prefix-cost
+#| fig-cap: "When does a prefix cache actually save money? Effective per-request cost falls linearly with hit rate; below the crossing (~0.22) the write overhead on misses loses to plain recomputation (dashed baseline). Hit rate, not cache size, is the number to instrument."
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+fig, ax = plt.subplots(figsize=(6.6, 3.4))
+ax.plot(hits, costs, "-", color="#2a7f9e", label="cached (effective cost)")
+ax.axhline(1.0, ls="--", color="#b13f3f", lw=1, label="no cache (baseline)")
+ax.axvline(crossing, ls=":", color="#555", lw=1)
+ax.set_xlabel("cache hit rate")
+ax.set_ylabel("cost per request (units)")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
+
+Eviction decides which entries survive under pressure. Approximate an entry's **value density** as expected reuse probability times recomputation saved, divided by bytes retained — a 4000-token shared system prompt reused often is far denser than a one-off 200-token prompt, even though least-recently-used treats them alike. LRU is cheap when recency predicts reuse but fails on periodic jobs, scans, and large popular prefixes; size- and recomputation-aware scores protect the dense entries, and pinned prefixes need quotas. A radix tree over token IDs exposes shared paths so a router can prefer the replica holding the longest reusable prefix [@zheng2024sglang], though always routing to the largest hit can create a hot replica — route on predicted completion, not raw hit length. Caller-side prompt ordering that maximizes reuse belongs to @sec-ch13; the server hashes what it receives.
+
+## Speculative decoding trades compute for serial steps {#sec-ch10-speculation}
+
+Autoregressive decode waits for one target-model decision before it can build the next input. **Speculative decoding** hides that serial latency: a cheap draft model proposes several tokens at once, and the target verifies them in a single parallel pass, keeping the longest correct prefix [@leviathan2023]. The verification is exact. A draft proposes token $x$ from its distribution $q$; the target accepts it with probability $a(x)=\min(1,\,p(x)/q(x))$, and on rejection resamples from the normalized residual $(p-q)_+$. This correction reproduces the target distribution $p$ exactly [@chen2023speculative], and the expected one-token acceptance is
+
 $$
+\sum_x q(x)\,a(x)=\sum_x \min(p(x),q(x))=1-\operatorname{TV}(p,q),
+$$ {#eq-ch10-accept}
 
-On rejection, sample from normalized residual $(p-q)_+$, where $(v)_+=\max(v,0)$. This correction emits distribution $p$. The expected one-token acceptance is
+one minus the total-variation distance between draft and target. We implement one draw and verify the identity empirically over 40,000 samples.
 
-$$
-\sum_x q(x)a(x)=\sum_x\min(p(x),q(x))=1-\operatorname{TV}(p,q),
-$$
+```{python}
+# @save
+import random
 
-where $\operatorname{TV}$ is total-variation distance. For a block, the target scores several proposals in parallel, accepts the valid prefix, then corrects if needed. Exactness covers the target distribution under compatible processors, not identical random traces or latency.
 
-Speedup is accepted tokens per verification divided by all added work. Draft compute, KV, shape-dependent verification, and rejected proposals consume resources. At saturation, an isolated latency win can reduce fleet goodput. Measure proposal acceptance, draft/verification time, memory, and goodput. Draft models, prediction heads, prompt lookup, and n-grams share this accounting boundary.
+def categorical(probs, rng):
+    """Draw one index from a categorical distribution with a seeded generator.
 
-**Constrained decoding** starts from a language recognizer rather than a predictor. A finite-state machine (FSM) represents regular constraints such as fixed choices and many lexical patterns. A context-free grammar (CFG) adds a stack, allowing nested structures such as balanced arrays and objects. At each step, the runtime advances a parser state, determines which token byte strings can continue a valid parse, masks every other token, renormalizes, and samples. Tokenization makes this harder than checking characters after generation: one token can contain several characters, split a delimiter, or cross a grammar transition.
+    Args:
+        probs: A probability vector summing to one.
+        rng: A ``random.Random`` supplying the uniform draw.
 
-Masks can be compiled and cached by parser state; deterministic literals may jump forward without a model call. An empty allowed set indicates an unsatisfiable schema or implementation error. Dropping the constraint changes the contract.
+    Returns:
+        The sampled index.
+    """
+    draw, total = rng.random(), 0.0
+    for index, probability in enumerate(probs):
+        total += probability
+        if draw <= total:
+            return index
+    return len(probs) - 1
 
-A grammar guarantees syntax, not truth, authorization, or business validity. Chapters 17 and 24 validate values and authorize effects. If illegal tokens hold mass $m$, masking removes $m$ and renormalizes; the lab removes 0.60. This is exact for the *constrained* distribution, not unconstrained generation. Because format restrictions can impair reasoning, evaluate designs that separate deliberation from a small validated final object.
 
-```python
-# code/ch10/serving_lab.py — changed regions: speculative_draw, constrained_distribution
+def speculative_draw(target, draft, rng):
+    """Sample one exact target token through speculative accept/reject.
+
+    Implements @eq-ch10-accept: a draft proposal is accepted with probability
+    ``min(1, target/draft)``; on rejection the token is resampled from the
+    positive residual ``(target - draft)+``. The emitted distribution equals
+    ``target`` regardless of the draft's quality — the draft changes speed, not
+    correctness.
+
+    Args:
+        target: The target model's next-token distribution.
+        draft: The draft model's proposal distribution.
+        rng: A ``random.Random`` for the proposal and accept draws.
+
+    Returns:
+        A ``(token, accepted)`` pair; ``accepted`` is False when the residual
+        path was taken.
+    """
+    candidate = categorical(draft, rng)
+    if rng.random() <= min(1.0, target[candidate] / draft[candidate]):
+        return candidate, True
+    residual = [max(p - q, 0.0) for p, q in zip(target, draft)]
+    mass = sum(residual)
+    return categorical([value / mass for value in residual], rng), False
+```
+
+We draw 40,000 samples and check the empirical acceptance and the emitted distribution against the target.
+
+```{python}
 target, draft = [0.52, 0.28, 0.15, 0.05], [0.42, 0.32, 0.18, 0.08]
-token, accepted = speculative_draw(target, draft, random.Random(731))
-masked = constrained_distribution([0.60, 0.25, 0.15], {1, 2})
-
-assert abs(sum(masked["distribution"]) - 1) < 1e-12
+counts, accepts, rng = [0] * 4, 0, random.Random(731)
+for _ in range(40_000):
+    token, accepted = speculative_draw(target, draft, rng)
+    counts[token] += 1; accepts += accepted
+empirical = [c / 40_000 for c in counts]
+alpha = sum(min(p, q) for p, q in zip(target, draft))
+tv = sum(abs(a - b) for a, b in zip(empirical, target)) / 2
+print(f"predicted acceptance 1-TV: {alpha:.4f}   empirical accept rate: {accepts/40_000:.4f}")
+print(f"total variation of emitted vs target: {tv:.5f}  (exact => ~0)")
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `serving_lab.py` after fast decoding | 62 lines | Speculative rejection restores the target distribution; grammar masking returns a normalized nonempty constrained distribution and reports removed mass. |
-:::
+The empirical acceptance matches ${1-\text{TV}=0.90}$ and the emitted distribution reproduces the target to within sampling noise: exactness holds. But exactness is not speedup. For a draft block of $\gamma$ proposed tokens with per-token acceptance $\alpha$, the expected number accepted before the first rejection is the geometric sum
+
+$$
+E(\alpha,\gamma)=\sum_{k=0}^{\gamma}\alpha^{k}=\frac{1-\alpha^{\gamma+1}}{1-\alpha}.
+$$ {#eq-ch10-spectokens}
+
+Speedup is those accepted tokens divided by the *added* work: one target verification plus $\gamma$ draft steps, each costing some fraction of a target step. When the fleet is idle the draft is nearly free; under contention the draft competes for the same accelerator and its per-token cost rises.
+
+```{python}
+# @save
+def expected_accepted_tokens(alpha, block):
+    """Expected tokens accepted per verification for a draft block (@eq-ch10-spectokens).
+
+    Args:
+        alpha: Per-token acceptance probability (``1 - TV`` of @eq-ch10-accept).
+        block: Number of tokens the draft proposes before verification.
+
+    Returns:
+        The geometric-sum expectation ``(1 - alpha**(block+1)) / (1 - alpha)``.
+    """
+    return sum(alpha ** k for k in range(block + 1))
+
+
+def speculative_speedup(alpha, block, draft_cost):
+    """Speedup of speculative decoding relative to plain autoregressive decode.
+
+    Divides expected accepted tokens by the added work of one verification plus
+    ``block`` draft steps at ``draft_cost`` each. A cheap draft (idle fleet)
+    gives a large speedup; an expensive draft (saturated fleet) can push the
+    ratio below one, so an isolated latency win becomes a goodput loss.
+
+    Args:
+        alpha: Per-token acceptance probability.
+        block: Draft block length.
+        draft_cost: Cost of one draft token as a fraction of a target step.
+
+    Returns:
+        The speedup factor; below 1.0 means speculation is a net loss.
+    """
+    return expected_accepted_tokens(alpha, block) / (1 + block * draft_cost)
+```
+
+We compare the idle-fleet and saturated-fleet regimes across a range of acceptance rates.
+
+```{python}
+for a in (0.6, 0.75, 0.85, 0.9, 0.95):
+    low = speculative_speedup(a, 4, draft_cost=0.05)
+    saturated = speculative_speedup(a, 4, draft_cost=0.85)
+    print(f"acceptance {a:.2f}: idle-fleet speedup {low:.2f}x   "
+          f"saturated-fleet speedup {saturated:.2f}x")
+```
+
+At acceptance 0.90 with a draft block of four, an idle fleet sees a 3.4x speedup; a saturated fleet sees 0.93x — a net *loss*, because the draft's extra work now steals from the target. Only at very high acceptance does speculation stay positive under contention. @fig-ch10-spec-speedup shows the two regimes and where the saturated curve crosses one.
+
+```{python}
+#| label: fig-ch10-spec-speedup
+#| fig-cap: "How does speculative decoding trade compute for serial steps? Speedup rises with draft acceptance, but the added draft work matters. On an idle fleet (cheap draft) it always helps; on a saturated fleet (draft contends for the accelerator) it stays below 1.0 until acceptance is very high. Exact sampling does not guarantee a speedup."
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+grid = [a / 100 for a in range(40, 98)]
+fig, ax = plt.subplots(figsize=(6.6, 3.6))
+ax.plot(grid, [speculative_speedup(a, 4, 0.05) for a in grid], "-", color="#2a7f9e", label="idle fleet (draft cost 0.05)")
+ax.plot(grid, [speculative_speedup(a, 4, 0.85) for a in grid], "-", color="#b13f3f", label="saturated fleet (draft cost 0.85)")
+ax.axhline(1.0, ls="--", color="#555", lw=1)
+ax.set_xlabel("draft acceptance rate")
+ax.set_ylabel("speedup vs plain decode")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
 
 ## Quantization is a validation problem {#sec-ch10-quantization}
 
-A four-bit checkpoint occupies less storage than its sixteen-bit parent, yet serves fewer requests per second. Its engine dequantizes weights through an unfused fallback kernel, while an important tool-selection task regresses even though perplexity barely moves. “Four bit” described storage, not the complete numerical and execution contract.
+A four-bit checkpoint occupies less storage than its parent yet serves fewer requests per second because its engine dequantizes through an unfused kernel, and an important tool-selection task regresses even though perplexity barely moves. "Four bit" described storage, not the numerical and execution contract. **Quantization** approximates high-precision values with a smaller representation, and a recipe is specified along independent axes: *what* is quantized (weights, activations, KV, communication buffers), the numerical family and width, the scale granularity (tensor, channel, group, block), when scales are chosen (static or per-input), the accumulator precision, and the kernel and hardware support. W4A16 means four-bit weights and sixteen-bit activations; weight-only recipes target decode's weight-bandwidth bottleneck.
 
-**Quantization** approximates high-precision values with a smaller representation. Describe a recipe along several independent axes:
-
-- what is quantized: weights, activations, KV cache, or communication buffers;
-- numerical family and width: integer, floating point, or another codebook;
-- scale granularity: tensor, channel, group, row, or block;
-- when scales are selected: offline/static or per-input/dynamic;
-- accumulator and output precision; and
-- kernel, hardware, and model-architecture support.
-
-W4A16 means four-bit weights and sixteen-bit activations; W4A4 compresses both. Weight-only recipes target decode weight bandwidth. Activation quantization enables lower-precision matrix multiplication but faces input-dependent outliers. KV error may accumulate with context length.
-
-For symmetric integer quantization of a block $x$, choose scale $s>0$ and signed integer bound $Q$. The lab uses
+For symmetric integer quantization of a tensor row $x$ with $b$ bits, choose a per-row scale $s = \max_i|x_i| / Q$ with $Q=2^{b-1}-1$, then
 
 $$
-q_i=\operatorname{clip}\!\left(\operatorname{round}(x_i/s),-Q,Q\right),
-\qquad \hat{x}_i=sq_i.
-$$
+q_i=\operatorname{clip}(\operatorname{round}(x_i/s),\,-Q,\,Q),\qquad \hat{x}_i=s\,q_i.
+$$ {#eq-ch10-symquant}
 
-With $b$ bits, a common symmetric bound is $Q=2^{b-1}-1$. Smaller blocks give each local range its own scale and reduce damage from distant outliers. They also store more scale metadata. If each block contains $g$ values, value width is $b$ bits, and each scale uses $b_s$ bits, a basic storage estimate is
+We apply this to a real model: the tiny GPT trained in @sec-ch02. First we retrain a small one on a structured toy corpus so its next-token accuracy is measurable, then we quantize its weights and read the damage honestly.
 
-$$
-b_{effective}=b+\frac{b_s}{g}
-$$
+```{python}
+import sys
+sys.path.insert(0, "code/ch02")
+import _generated as ch02              # the TinyGPT we built in Chapter 2
+import torch
 
-bits per value, before alignment, zero points, global scales, and container overhead. “Four bit” can therefore mean 4.06, 4.25, 5.0, or another effective width depending on block size and metadata.
+corpus_rng = random.Random(7)
+nouns = ["apple", "book", "cup", "lamp", "chair", "phone", "shoe", "clock"]
+colors = ["red", "blue", "green", "gray"]
+corpus = " ".join(f"the {corpus_rng.choice(colors)} {corpus_rng.choice(nouns)} "
+                  f"has value {corpus_rng.randint(1, 9)} ." for _ in range(700))
+tokenizer = ch02.BytePairTokenizer.train(corpus, vocab_size=288)
+ids = torch.tensor(tokenizer.encode(corpus), dtype=torch.long)
+config = ch02.GPTConfig(vocab_size=tokenizer.vocab_size, block_size=48,
+                        d_model=64, n_heads=4, n_layers=2)
+print(f"corpus {len(corpus)} chars -> {ids.numel()} tokens, vocab {tokenizer.vocab_size}")
+```
 
-Outliers motivate several recipes. Weight-only methods use approximate second-order information or protect activation-salient channels. Activation-aware methods can migrate scale difficulty: for invertible diagonal $D$,
+We train for 250 steps — enough for the toy model to learn the corpus's rigid structure — and record its held-out next-token accuracy in full precision.
 
-$$
-XW=(XD^{-1})(DW).
-$$
+```{python}
+torch.manual_seed(0)
+model = ch02.TinyGPT(config)
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-3)
+batches = torch.Generator().manual_seed(0)
+split = int(0.9 * ids.numel())
+train_ids, val_ids = ids[:split], ids[split:]
+model.train()
+for step in range(250):
+    xb, yb = ch02.next_token_batch(train_ids, config.block_size, 32, batches)
+    _, loss, _ = model(xb, yb)
+    optimizer.zero_grad(); loss.backward(); optimizer.step()
+model.eval()
+with torch.inference_mode():
+    xb, yb = ch02.next_token_batch(val_ids, config.block_size, 96, torch.Generator().manual_seed(1))
+    reference_logits, _, _ = model(xb)
+    reference_acc = (reference_logits.argmax(-1) == yb).float().mean().item()
+print(f"trained loss {loss.item():.3f}  held-out next-token accuracy {reference_acc:.3f}")
+```
 
-Rescaling eases activation range while moving it into offline-calibrated weights. Other recipes isolate, decompose, or rotate outliers. The full-precision algebra may be exact; quantization creates the approximation. Calibration must match deployed data and shapes.
+Now the quantizer. We quantize every two-dimensional weight per row with @eq-ch10-symquant, load the result into a fresh model, and compare. Because the represented values are the dequantized $\hat{x}$, this measures exactly the numerical error a weight-only integer kernel would incur.
 
-Validate from representation to service: loading and scale layout; optimized kernels for real shapes and feature combinations; layer error and perplexity diagnostics; task, tool, structured-output, long-context, safety, and calibration metrics; then cold/warm latency, memory, energy, and goodput. Predeclare detectable quality regressions.
+```{python}
+# @save
+import torch
 
-The lab places two outliers in 256 synthetic values and applies symmetric four-bit quantization. Blocks of 16, 64, and 256 yield RMSE 0.455, 0.978, and 1.415 fixture units, while their simple effective widths are 5.00, 4.25, and 4.06 bits per value. The smaller block buys fidelity with metadata. These values teach the trade-off; they do not rank production formats.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `serving_lab.py` after block quantization | 26 lines | A finer scale block reduces this outlier fixture's RMSE while increasing scale metadata per value. |
-:::
+def quantize_tensor(weight, bits):
+    """Symmetric per-row integer quantization of a 2-D weight (@eq-ch10-symquant).
 
-## Disaggregate when interference exceeds transfer {#sec-ch10-disaggregation}
+    Each row gets its own scale from its largest magnitude, so an outlier in one
+    row cannot inflate the step size of another. The returned tensor holds the
+    dequantized values a real integer kernel would compute against.
 
-A decode stream produces a token every few milliseconds until a long prompt enters the same worker. The prompt's prefill turns one scheduler iteration into a large compute job, and every active stream stalls. Chunking reduces the stall but cannot give prefill and decode different hardware shapes or independent scaling. Separating the phases removes interference, then adds a KV transfer to the critical path.
+    Args:
+        weight: A 2-D floating-point weight tensor.
+        bits: Integer width; the signed bound is ``2**(bits-1) - 1``.
 
-In **prefill/decode disaggregation**, a prefill worker processes the prompt and materializes its KV state. That state moves to a decode worker, which generates output and streams it to the caller. Prefill is commonly more compute-oriented; decode is commonly more memory-bandwidth- and KV-capacity-oriented. Separate pools can use different parallel widths, batch policies, and replica counts, and can scale according to input-token and output-token demand.
+    Returns:
+        The dequantized tensor, same shape and dtype as ``weight``.
+    """
+    qmax = 2 ** (bits - 1) - 1
+    scale = weight.abs().amax(dim=-1, keepdim=True).clamp_min(1e-12) / qmax
+    return torch.clamp(torch.round(weight / scale), -qmax, qmax) * scale
 
-The split is not automatically faster. Let $\Delta I$ be latency or capacity recovered by removing prefill/decode interference and $\Delta S$ the benefit of phase-specialized hardware or batching. Let $T_{KV}$ be nonoverlapped KV-transfer time, $T_R$ routing and coordination, $T_Q$ extra queue imbalance, and $T_F$ expected failure/retry cost. A useful admission inequality is
 
-$$
-\Delta I+\Delta S>T_{KV}+T_R+T_Q+T_F.
-$$
+def model_storage(model, bits):
+    """Return (fp32_bytes, quantized_bytes) counting each weight once.
 
-If $M_{KV}$ bytes must cross a path with effective bandwidth $B_{eff}$ bytes per second, then $T_{KV}\ge M_{KV}/B_{eff}$ before protocol overhead. Long prompts create more interference to remove but also more KV state to transfer. Layer-wise streaming can overlap transfer with prefill; shared memory or a remote cache may avoid a full copy; congestion can make effective bandwidth much lower than a link's headline. Measure the critical path rather than substituting a fabric specification.
+    Quantized 2-D weights cost ``bits/8`` bytes plus a 16-bit per-row scale;
+    everything else stays 32-bit. Tied weights are deduped by identity so a
+    shared embedding and LM head are not charged twice.
 
-Figure @fig-ch10-disaggregation makes ownership transitions explicit. The router needs cancellation semantics spanning both pools. A decode failure after successful prefill should not automatically recompute the prompt if a valid, authorized KV object remains available. Conversely, a stale or partial KV object must never be treated as complete.
+    Args:
+        model: The module to size.
+        bits: Integer width applied to 2-D float weights.
+
+    Returns:
+        A ``(fp32_bytes, quantized_bytes)`` tuple.
+    """
+    seen, fp32, quant = set(), 0, 0
+    for _, p in model.named_parameters():
+        if id(p) in seen:
+            continue
+        seen.add(id(p))
+        fp32 += p.numel() * 4
+        if p.dim() == 2 and p.dtype.is_floating_point:
+            quant += p.numel() * bits // 8 + p.shape[0] * 2
+        else:
+            quant += p.numel() * 4
+    return fp32, quant
+```
+
+We size the model, then run the int8 and int4 ladder: quantize every weight, reload, and read accuracy, KL divergence from the full-precision distribution, and maximum logit drift.
+
+```{python}
+reference_probs = reference_logits.softmax(-1)
+fp32_bytes, _ = model_storage(model, 8)
+print(f"full precision: {fp32_bytes} bytes, accuracy {reference_acc:.3f}")
+for bits in (8, 4):
+    quantized = ch02.TinyGPT(config)
+    quantized.load_state_dict({name: (quantize_tensor(p, bits)
+                                      if p.dim() == 2 and p.dtype.is_floating_point else p.clone())
+                               for name, p in model.state_dict().items()})
+    quantized.eval()
+    with torch.inference_mode():
+        q_logits, _, _ = quantized(xb)
+        q_acc = (q_logits.argmax(-1) == yb).float().mean().item()
+        q_probs = q_logits.softmax(-1)
+        kl = (reference_probs * (reference_probs.clamp_min(1e-9).log()
+              - q_probs.clamp_min(1e-9).log())).sum(-1).mean().item()
+        drift = (reference_logits - q_logits).abs().max().item()
+    _, q_bytes = model_storage(model, bits)
+    print(f"int{bits}: accuracy {q_acc:.3f}  KL {kl:.4f}  max logit drift {drift:.3f}  "
+          f"{fp32_bytes / q_bytes:.2f}x smaller")
+```
+
+Per-row int8 is nearly lossless at this scale: accuracy is unchanged, the KL divergence from the full-precision distribution is essentially zero, and the model is 3.9 times smaller. Int4 is where "validation problem" earns its name — the same model loses accuracy and its logits drift by several units, all from halving the width again. The lesson is not that int8 is safe and int4 is not in general; it is that *only measurement tells you*, and the metric that moved (a tool-selection task) may not be the one you watched (perplexity).
+
+Outliers are why finer granularity helps. A single large value in a block forces a coarse scale on all its neighbors. We show this with a 256-value vector carrying two planted outliers, quantized to four bits at three block sizes.
+
+```{python}
+# @save
+def quantize_blockwise(values, bits, block_size):
+    """Symmetric integer quantization applied independently to each block.
+
+    A smaller block gives each local range its own scale, so a distant outlier
+    can no longer coarsen a whole tensor's step size — at the cost of storing
+    one more scale per block (the effective-width overhead ``b_s / g``).
+
+    Args:
+        values: The sequence to quantize.
+        bits: Integer width.
+        block_size: Values sharing one scale.
+
+    Returns:
+        A ``(reconstructed, rmse)`` pair.
+    """
+    qmax, restored = 2 ** (bits - 1) - 1, []
+    for base in range(0, len(values), block_size):
+        block = values[base:base + block_size]
+        scale = max(abs(v) for v in block) / qmax or 1.0
+        restored.extend(max(-qmax, min(qmax, round(v / scale))) * scale for v in block)
+    rmse = math.sqrt(sum((a - b) ** 2 for a, b in zip(values, restored)) / len(values))
+    return restored, rmse
+```
+
+We build a 256-value signal, plant two outliers, and quantize it to four bits at three block sizes.
+
+```{python}
+signal = [2 * math.sin(i / 11) + 0.3 * math.cos(i / 3) for i in range(256)]
+signal[47], signal[181] = 38.0, -29.0
+blocks = [(bs, quantize_blockwise(signal, 4, bs)[1], 4 + 16 / bs) for bs in (16, 64, 256)]
+for bs, rmse, eff in blocks:
+    print(f"block {bs:>3}: RMSE {rmse:.3f}  effective bits/value {eff:.3f}")
+```
+
+At block 16 each outlier contaminates only fifteen neighbors and the RMSE is a third of the whole-tensor case, but the stored scales push the effective width to 5.0 bits — "four bit" is really 4.06, 4.25, or 5.0 depending on granularity. @fig-ch10-quant-blocks makes the trade visible. Activation-aware recipes attack the same outliers differently: SmoothQuant migrates difficulty from activations into weights with the identity $XW=(XD^{-1})(DW)$ for a diagonal $D$, rescaling activations into a friendlier range while folding the inverse into offline-calibrated weights [@xiao2023smoothquant]; weight-only methods like GPTQ and AWQ instead protect the salient channels [@frantar2023gptq; @lin2024awq]. The algebra is exact; the quantization is where the approximation enters, so calibration data and shapes must match deployment.
+
+```{python}
+#| label: fig-ch10-quant-blocks
+#| fig-cap: "Why does a finer quantization block survive an outlier? Left: the signal with two planted outliers. Right: four-bit reconstruction error falls sharply as the block shrinks, because a local scale stops a distant outlier from coarsening its neighbors — but each block stores another scale, so effective width rises."
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 3.2))
+ax1.plot(signal, color="#333", lw=0.8)
+ax1.set_title("signal with 2 outliers", fontsize=10)
+ax1.set_xlabel("index"); ax1.set_ylabel("value")
+sizes = [b[0] for b in blocks]
+ax2.plot(sizes, [b[1] for b in blocks], "o-", color="#b13f3f")
+for bs, rmse, eff in blocks:
+    ax2.annotate(f"{eff:.2f} bits", (bs, rmse), textcoords="offset points", xytext=(6, 6), fontsize=8)
+ax2.set_title("4-bit error vs block size", fontsize=10)
+ax2.set_xlabel("block size (values)"); ax2.set_ylabel("RMSE")
+fig.tight_layout()
+plt.show()
+```
+
+## Constrained decoding masks the tokens a grammar forbids {#sec-ch10-constrained}
+
+Callers want structured output — JSON that parses, an enum value, a schema-valid object. **Constrained decoding** guarantees it by construction: at each step the runtime advances a parser, computes which tokens can continue a valid parse, masks the rest to probability zero, renormalizes, and samples. A finite-state machine covers regular constraints (fixed choices, lexical patterns); a context-free grammar adds a stack for nested structures [@dong2024xgrammar]. The mechanics are a mask and a renormalization; if illegal tokens hold mass $m$, masking removes $m$ and the survivors are rescaled to sum to one.
+
+```{python}
+# @save
+def constrained_distribution(probs, allowed):
+    """Mask disallowed tokens to zero and renormalize the survivors.
+
+    This is exact for the *constrained* distribution: it is the target
+    distribution conditioned on the grammar's allowed set. The reported removed
+    mass is how strongly the model wanted a token the grammar forbids.
+
+    Args:
+        probs: The model's next-token distribution.
+        allowed: Indices the grammar permits at this parser state.
+
+    Returns:
+        A dict with the renormalized ``distribution`` and the ``removed_mass``.
+
+    Raises:
+        ValueError: If the allowed set holds no probability (unsatisfiable).
+    """
+    kept = sum(probs[i] for i in allowed)
+    if kept == 0:
+        raise ValueError("grammar admits no token here")
+    return {"distribution": [p / kept if i in allowed else 0.0 for i, p in enumerate(probs)],
+            "removed_mass": 1 - kept}
+```
+
+A toy three-token distribution shows the mechanics: forbid one token and the survivors renormalize.
+
+```{python}
+toy = constrained_distribution([0.60, 0.25, 0.15], {1, 2})
+print(f"toy: removed {toy['removed_mass']:.2f} of the mass, "
+      f"renormalized sums to {sum(toy['distribution']):.3f}")
+```
+
+The toy vector removes 0.60 of the mass and rebalances the rest. The genuinely hard part is not the mask but tokenization: the parser reasons about *characters*, while the model emits *tokens*, and one token can span several characters, split a delimiter, or cross a grammar transition. We see this directly in the tokenizer we just trained.
+
+```{python}
+sample = "the red cup has value 8 ."
+pieces = [tokenizer.token_bytes[i].decode("latin-1") for i in tokenizer.encode(sample)]
+print(f"{len(sample)} characters -> {len(pieces)} tokens:")
+print(pieces)
+```
+
+A single token, `"p has value "`, bundles the tail of one word with three whole words — a "must emit a digit next" rule cannot be enforced by picking "digit tokens" alone, because the model's natural continuations hide digits inside larger tokens. Now we apply a real grammar mask to the real model. After the prompt `the red apple has value `, the grammar requires a bare digit; we intersect that with the model's actual next-token logits.
+
+```{python}
+digit_tokens = [i for i in range(tokenizer.vocab_size)
+                if tokenizer.token_bytes[i].decode("latin-1").isdigit()]
+context = torch.tensor([tokenizer.encode("the red apple has value ")])
+with torch.inference_mode():
+    logits, _, _ = model(context)
+distribution = logits[0, -1].softmax(-1).tolist()
+free_top = tokenizer.token_bytes[max(range(len(distribution)),
+                                     key=distribution.__getitem__)].decode("latin-1")
+masked = constrained_distribution(distribution, set(digit_tokens))
+con_top = tokenizer.token_bytes[max(range(len(masked["distribution"])),
+                                    key=masked["distribution"].__getitem__)].decode("latin-1")
+print(f"{len(digit_tokens)} digit tokens in vocab")
+print(f"unconstrained top token: {free_top!r}   removed mass under grammar: {masked['removed_mass']:.3f}")
+print(f"constrained top token: {con_top!r}")
+```
+
+Here the trained model already learned that a digit follows `value`, so the grammar removes almost none of the mass and picks the same token — when the model respects the grammar, the constraint is nearly free. Point the same mask at a context where the model wants prose and the removed mass jumps toward one, and the constrained sample is drawn from the rare surviving tokens. @fig-ch10-grammar-mask traces the pipeline, including the tokenization boundary that makes it subtle.
 
 ```{mermaid}
+%%| echo: false
+%%| label: fig-ch10-grammar-mask
+%%| fig-cap: "How does a grammar mask turn a parser state into an allowed-token set? The parser's allowed byte-strings must be intersected with the model's vocabulary, where a single token can straddle a grammar transition, before masking, renormalizing, and sampling."
+flowchart LR
+    P["parser state"] --> A["allowed byte-strings"]
+    A --> X["intersect with vocab<br/>(a token may cross the boundary)"]
+    X --> M["mask logits -> -inf"]
+    M --> N["renormalize survivors"]
+    N --> S(["sample a valid token"])
+    S -->|"advance parser"| P
+```
+
+A grammar guarantees syntax, not truth or authorization — @sec-ch17 and @sec-ch24 validate values and authorize effects. And because format restrictions can crowd out reasoning, a common design separates a long deliberation from a small validated final object.
+
+## Disaggregation, eviction, and the memory-bandwidth split {#sec-ch10-disaggregation}
+
+A decode stream produces a token every few milliseconds until a long prompt enters the same worker. That prompt's prefill turns one scheduler iteration into a large compute job, and every active stream stalls behind it. Two controls address this. **Chunked prefill** slices a long prompt into bounded chunks interleaved with decode, capping the stall at the cost of some overhead [@agrawal2024sarathi]. **Prefill/decode disaggregation** goes further: a prefill worker materializes the KV state and hands it to a separate decode worker, so the two phases run on hardware sized for their different bottlenecks — prefill is compute-bound, decode is memory-bandwidth- and KV-capacity-bound [@zhong2024distserve; @patel2024splitwise].
+
+The split is not free. Removing interference recovers latency $\Delta I$ and specialization gains $\Delta S$, but adds KV-transfer time $T_{KV}$, routing and coordination $T_R$, queue imbalance $T_Q$, and expected failure cost $T_F$. Disaggregate only when
+
+$$
+\Delta I+\Delta S > T_{KV}+T_R+T_Q+T_F,
+$$ {#eq-ch10-disagg}
+
+and note that $T_{KV}\ge M_{KV}/B_{\text{eff}}$: moving more KV bytes across a slower path can erase the gain. We apply the inequality to two fixtures.
+
+```{python}
+# @save
+def disaggregation_decision(kv_gib, interference_saved_ms, bandwidth_gibps=200.0,
+                            coordination_ms=2.8):
+    """Decide whether phase disaggregation beats a co-located worker (@eq-ch10-disagg).
+
+    Charges KV transfer as ``kv_gib / bandwidth`` plus fixed coordination, and
+    compares that overhead against the interference latency removing prefill
+    from the decode path recovers. Longer prompts save more interference but
+    also move more KV, so the decision can flip with prompt size.
+
+    Args:
+        kv_gib: KV state to transfer between pools, in GiB.
+        interference_saved_ms: Latency recovered by removing co-location.
+        bandwidth_gibps: Effective transfer bandwidth, GiB/s.
+        coordination_ms: Routing, handshake, and expected-retry overhead.
+
+    Returns:
+        A dict with the transfer and total overhead, and the ``disaggregate``
+        verdict.
+    """
+    transfer_ms = kv_gib / bandwidth_gibps * 1000
+    overhead_ms = transfer_ms + coordination_ms
+    return {"kv_gib": kv_gib, "transfer_ms": transfer_ms, "overhead_ms": overhead_ms,
+            "interference_saved_ms": interference_saved_ms,
+            "disaggregate": interference_saved_ms > overhead_ms}
+```
+
+We apply it to a small-KV short prompt and a large-KV long prompt.
+
+```{python}
+for name, kv, saved in (("short prompt", 0.25, 3.0), ("long prompt", 4.0, 35.0)):
+    d = disaggregation_decision(kv, saved)
+    print(f"{name}: saves {saved} ms, pays {d['overhead_ms']:.2f} ms "
+          f"-> disaggregate: {d['disaggregate']}")
+```
+
+The short prompt saves 3 ms of interference but pays 4 ms to move its small KV plus coordinate — a loss. The long prompt saves 35 ms and pays 23 ms even with a larger transfer — a win. A static prefill/decode ratio fails when traffic composition shifts, so controllers reassign roles or route short prompts through co-located workers. @fig-ch10-disaggregation shows where the coordination and transfer cost lands.
+
+```{mermaid}
+%%| echo: false
 %%| label: fig-ch10-disaggregation
-%%| fig-cap: "Where does a disaggregated request pay coordination and KV-transfer cost?"
+%%| fig-cap: "Where does a disaggregated request pay coordination and KV-transfer cost? The prefill pool publishes authorized KV; the decode pool becomes ready only after validating it; the router owns cancellation across both pools so a decode failure need not recompute a valid prefill."
 sequenceDiagram
     participant C as Caller
     participant R as SLO-aware router
     participant P as Prefill pool
-    participant K as KV transport or shared tier
+    participant K as KV transport
     participant D as Decode pool
-    C->>R: prompt, identity, deadline
+    C->>R: prompt, deadline
     R->>P: admit prefill
-    P->>P: chunked or full prefill
-    P->>K: publish complete KV blocks + identity
-    K->>D: transfer or expose authorized KV
-    D-->>R: ready only after KV validation
-    D-->>C: first and subsequent tokens
-    alt cancellation or deadline expiry
-        R-->>P: cancel unfinished prefill
-        R-->>D: cancel decode and release frames
-        R-->>K: expire request-scoped handle
+    P->>K: publish KV + identity
+    K->>D: transfer authorized KV
+    D-->>R: ready after KV validation
+    D-->>C: stream tokens
+    alt deadline expiry
+        R-->>P: cancel prefill
+        R-->>D: release frames
     end
 ```
 
-Chunked prefill and disaggregation are complementary controls. An aggregated worker can chunk to cap decode stalls. A prefill pool can chunk for fairness among long prompts and to overlap KV transfer. Tiny chunks increase launch and scheduling overhead; huge chunks recreate head-of-line blocking. Tune against TTFT and TPOT together.
+The same memory-pressure logic drives KV **eviction and compression**: under load the server must free frames, and the value-density score from @sec-ch10-prefix-cache decides what to drop — evict the cheap-to-recompute, rarely-reused entries first, and consider low-precision KV (the quantization ladder above, now applied to the cache) before discarding state that a long context will need again. Long-context serving is this problem at scale: KV grows linearly with tokens (@sec-ch03), so ring or chunked-context schemes and aggressive eviction are how a fixed KV pool serves sequences longer than it could hold at full precision.
 
-Capacity planning often describes $xP yD$: $x$ prefill replicas feeding $y$ decode replicas. The ratio depends on input/output lengths, prefix-hit rates, reasoning budgets, parallel topology, and SLOs. Static ratios fail when traffic composition changes, so a controller may reassign roles or route selected short prompts through aggregated workers. The lab's simple inequality rejects disaggregation for a 0.25 GiB KV fixture that saves 3 ms but pays 4.05 ms, and accepts it for a 4 GiB fixture that saves 35 ms while paying 22.8 ms. Both results depend on declared synthetic bandwidth and coordination costs.
+## Multi-tenant serving shares more than weights {#sec-ch10-tenancy}
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `serving_lab.py` after phase splitting | 13 lines | A request is disaggregated only when measured interference saved exceeds KV transfer and coordination in the same latency unit. |
-:::
-
-## Parallelism and multi-tenancy share more than weights {#sec-ch10-tenancy}
-
-When one model does not fit or one replica cannot meet demand, “use more GPUs” leaves the important choice unspecified. Parallel strategies move different data at different frequencies. Serving magnifies their communication costs because decode repeatedly runs small, latency-sensitive steps rather than large training batches.
+When one model does not fit or one replica cannot meet demand, "use more GPUs" hides the real choice. Parallel strategies move different data at different frequencies, and serving magnifies their cost because decode runs many small latency-sensitive steps rather than a few large training batches.
 
 | Strategy | What is divided | Serving advantage | Dominant serving risk |
 |---|---|---|---|
-| Data parallel replicas | requests, with complete model copies | independent scaling and failure domains | load and prefix-cache imbalance |
-| Tensor parallelism (TP) | tensors within each layer | makes each layer fit; combines device bandwidth | collective communication on every layer and decode step |
-| Pipeline parallelism (PP) | consecutive layer groups | crosses nodes with fewer, larger transfers than TP | pipeline bubbles, stage imbalance, and per-request latency |
-| Expert parallelism (EP) | mixture-of-experts expert weights | distributes a sparse model's expert memory and work | token all-to-all, hot experts, and synchronization at imbalance |
+| Data-parallel replicas | requests, full model copies | independent scaling and failure domains | load and prefix-cache imbalance |
+| Tensor parallelism | tensors within each layer | makes a layer fit; pools device bandwidth | collective on every layer and decode step |
+| Pipeline parallelism | consecutive layer groups | crosses nodes with fewer, larger transfers | pipeline bubbles and per-request latency |
+| Expert parallelism | mixture-of-experts weights | distributes a sparse model's expert memory | token all-to-all and hot experts |
 
-TP shards matrix work and reduces partial results with collectives, favoring fast scale-up links; communication eventually dominates small decode steps. PP sends activations between layer stages but irregular microbatches leave bubbles. EP routes tokens to experts; sparse activation lowers arithmetic, not expert storage or all-to-all cost, and hot experts set batch time.
+Mixture-of-experts serving is the case where these interact hardest: expert parallelism spreads expert weights across devices, but sparse activation lowers arithmetic, *not* the all-to-all communication or the expert storage, and a hot expert sets the batch's step time. Benchmark the actual topology; an oversubscribed interconnect erases the arithmetic saving.
 
-Serving carries KV state and deadlines instead of optimizer state. Parallel width changes KV placement, cache reuse, verification shapes, and failure radius. Benchmark the actual topology and collectives; an oversubscribed boundary can erase arithmetic gains.
+**Multi-LoRA** tenancy shares the expensive base $xW$ while applying per-tenant low-rank $xAB$ terms on the fly, so one replica serves thousands of adapters without a merged weight matrix per tenant; grouped kernels batch the heterogeneous adapter terms [@sheng2024slora]. But sharing a base model, process, accelerator, or cache widens the security boundary, and the sharpest serving-specific risk is a *timing side channel*: a cache hit is fast and a miss is slow, so if the cache key omits the tenant, one tenant can detect another's prefix by timing a lookup. We demonstrate the leak and its fix.
 
-Multi-LoRA shares expensive $xW$ while applying adapter-specific low-rank $xAB$ terms on the fly, avoiding a merged $W$ per tenant. Adapters can page from host, and grouped kernels batch heterogeneous terms, as Punica and S-LoRA show. Account for rank, load latency, residency, and TP compatibility.
+```{python}
+# @save
+def shared_prefix_leak(include_tenant):
+    """Show whether a prefix cache leaks cross-tenant presence by hit timing.
 
-Sharing a base model, process, accelerator, or cache expands the security boundary. A minimum serving contract includes:
+    Tenant B warms a prefix; tenant A then probes the same token IDs. A hit is
+    cheap and a miss is expensive, so if the cache key omits the tenant, tenant
+    A's fast probe reveals that tenant B used the prefix — a presence oracle.
+    Binding the tenant into the key (as ``make_cache_key`` does) turns the probe
+    into a miss and closes the channel.
 
-- cache keys containing tenant policy and every model/tokenizer/template/adapter revision;
-- authenticated adapter identity, integrity verification, and an authorization check before load;
-- quotas for KV bytes, prefix entries, active sequences, speculative work, and reasoning tokens;
-- explicit release and zeroization behavior for host buffers and accelerator allocations;
-- isolation tests for local/scratch memory, not only global device memory;
-- constant-work or coarse-bucket mitigations where cache hits, adapter loads, or queue timing reveal sensitive presence; and
-- attestation when the threat model requires proof of the loaded software/firmware measurement.
+    Args:
+        include_tenant: Whether the cache key includes the tenant identity.
 
-Attestation establishes a measured starting stack, not correct authorization or absence of memory and timing leaks. Zeroization must cover cancellation, crashes, and eviction. Stronger tenants may require separate devices, nodes, encryption domains, or deployments.
+    Returns:
+        A dict with the probe's ``hit`` result and whether presence ``leaked``.
+    """
+    prefix = list(range(60))
+    cache = {}
 
-LeftoverLocals recovered data across GPU process boundaries on affected implementations. A container boundary is not evidence that device-local memory is scrubbed. Chapter 24 owns the full threat model; serving owns these shared-state facts.
+    def key(tenant):
+        return (tenant, tuple(prefix)) if include_tenant else tuple(prefix)
 
-## Choose an engine by its feature lattice {#sec-ch10-engines}
+    cache[key("tenant-b")] = "warm"                 # tenant B warms the prefix
+    hit = key("tenant-a") in cache                  # tenant A probes it
+    return {"probe_hit": hit, "leaked_presence": hit}
+```
 
-An engine wins a public throughput benchmark, so a team selects it for a service that needs one quantized mixture-of-experts model, two LoRA adapters, grammar constraints, prefix caching, tensor parallelism, and speculative decoding at the same time. Each feature appears in documentation. Their combination falls back to an unfused path or is unsupported. Feature checklists are one-dimensional; deployments occupy intersections.
+We run both key policies and see which one lets tenant A detect tenant B's prefix.
 
-A **feature lattice** is the set of combinations that work for a pinned model, hardware topology, engine revision, and request shape. Engine selection begins with a workload card:
+```{python}
+for policy in (False, True):
+    result = shared_prefix_leak(include_tenant=policy)
+    label = "tenant-scoped key" if policy else "prefix-only key"
+    print(f"{label:>18}: probe hit {result['probe_hit']!s:>5}  "
+          f"leaks presence: {result['leaked_presence']}")
+```
 
-| Workload dimension | Values to pin before comparison |
-|---|---|
-| Model | architecture, exact revision, tokenizer/template, dense or MoE, modalities |
-| Numbers | weight, activation, accumulator, and KV formats; quantization recipe |
-| Requests | input/output length distributions, concurrency, arrival process, priorities |
-| Semantics | sampler/processors, grammar/schema, stop handling, determinism requirement |
-| State | prefix reuse, session affinity, remote KV, adapters, maximum live KV |
-| Scale | accelerator type, memory, interconnect, TP/PP/EP/replica layout, disaggregation |
-| Operations | metrics, traces, cancellation, draining, rollout, failure recovery, support horizon |
+With a prefix-only key, tenant A's probe hits tenant B's entry and the timing reveals presence; the tenant-scoped key makes it a miss and closes the channel. This is one demonstrated control; the full threat model — residual KV recovery from unscrubbed device memory [@sorensen2024leftoverlocals], adapter integrity and authorization, cache zeroization on cancellation and crash, encrypted remote KV, and accelerator attestation — belongs to @sec-ch24, which serving must implement but does not own. The minimum serving contract is: tenant-scoped keys over every revision, quotas on KV bytes and adapters, and explicit zeroization on release.
 
-The PagedAttention work associated with vLLM supplies a useful reference architecture: iteration scheduling plus block-managed KV allows high-concurrency autoregressive serving without contiguous per-sequence reservations. That mechanism is durable. An engine comparison still needs to verify model-specific attention kernels, graph capture, compilation, quantization layouts, distributed collectives, grammar integration, speculative strategy, and adapter kernel support.
+To measure a real endpoint against these mechanics, an OpenAI-compatible route gives interface portability. The seam below times first content and inter-event gaps; it is a measurement probe, not a load generator, and it is the one cell in this chapter that needs a network.
 
-Optimized engines specialize by shape. Kernel fusion avoids round trips to device memory. CUDA graphs or analogous capture mechanisms reduce launch overhead for supported static patterns. Compilers specialize operations and layouts. These optimizations create warm-up time and shape coverage boundaries. A rare batch size, long context, adapter rank, or processor can trigger recompilation or fallback. Record warm-up policy and count fallback paths. An OpenAI-compatible HTTP route provides interface portability, not identical tokenization, sampler order, stop behavior, usage accounting, or streaming events.
+```{python}
+#| eval: false
+import time, urllib.request
 
-Not every language model has the autoregressive execution assumed so far. A diffusion language model may iteratively revise masked positions with bidirectional attention and commit several positions in parallel. A conventional causal KV cache cannot be reused unchanged when previously hidden states can change. Scheduling units become denoising steps or blocks rather than one appended token. Approximate caches and confidence-guided commits introduce quality/throughput controls. Treat such models as a different engine capability, not as a new checkpoint behind an autoregressive server flag.
-
-Cluster orchestration sits above the model engine. A multi-node replica needs gang placement and topology awareness so all shards start on compatible links. Readiness begins after weights, kernels, and communication groups are usable, not when a container starts. Scale-down drains streams and releases or migrates KV state. Rolling a model, tokenizer, template, quantization recipe, or adapter changes cache identity. Autoscaling signals should include queued input/output tokens, active KV bytes, cache hits, preemptions, and SLO risk; CPU utilization misses the constrained resource.
-
-The evaluation procedure is direct: create a matrix whose rows are workload slices and whose columns are required feature combinations. Run correctness gates first, then sweep offered load and measure goodput, memory, warm-up, and failure recovery. Headline benchmark results can shortlist engines. Only the pinned lattice can select one.
+def profile_endpoint(base_url, model, prompt, max_tokens=64):
+    """Time first-content latency and stream gaps for an OpenAI-compatible route."""
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}],
+                       "max_tokens": max_tokens, "temperature": 0, "stream": True}).encode()
+    request = urllib.request.Request(base_url.rstrip("/") + "/v1/chat/completions",
+                                     data=body, headers={"Content-Type": "application/json"})
+    start, first = time.perf_counter(), None
+    with urllib.request.urlopen(request) as response:
+        for line in response:
+            if line.startswith(b"data:") and b"content" in line and first is None:
+                first = time.perf_counter() - start
+    return {"ttft_seconds": first}
+```
 
 ## Production test-time compute needs a budget {#sec-ch10-ttc}
 
-A reasoning model improves a difficult planning task when allowed to think longer, so a service enables the highest reasoning setting for every request. Simple requests now occupy decode slots and KV frames for many more tokens. Queueing pushes hard requests past their deadlines, and total successful work falls. More compute improved isolated accuracy while reducing production utility.
-
-Chapter 8 treated test-time compute as search and verification. In serving, **reasoning budget** is a reservation: reasoning tokens, effort tier, deadline, candidates, or tool calls. These are not interchangeable. Completion limits can truncate answers, effort can be opaque, and verifier stopping does not bound each attempted trajectory.
-
-Hidden reasoning still consumes decode steps and holds state when only a final answer or summary returns. Use reported reasoning usage or empirical latency/token distributions by tier. Do not log private chain of thought for observability: summaries are generated output, not execution proof. Chapter 25 owns faithfulness; telemetry should prefer budgets, timings, tool events, verifier outcomes, and evidence.
-
-A budget policy compares marginal value with marginal system cost. For one more reasoning allocation, let $\Delta p$ be the estimated increase in task success, $V$ the value of success, $\Delta n$ additional generated tokens, $c_n$ their direct unit cost, $\Delta h$ added KV/slot holding time, $c_h$ its capacity shadow price, and $D$ expected harm from delay. Continue only while
+A reasoning model improves a hard planning task when it thinks longer, so a service enables the highest reasoning tier for every request. Simple requests now hold decode slots and KV frames for hundreds of extra tokens; queueing pushes hard requests past their deadlines; total successful work falls. More compute improved isolated accuracy while reducing production goodput. @sec-ch08 treated test-time compute as search and verification; in serving, a **reasoning budget** is a reservation — tokens, effort tier, deadline, candidates — that must be priced against its cost. A budget policy continues spending only while marginal value exceeds marginal system cost:
 
 $$
-\Delta p\,V > \Delta n\,c_n+\Delta h\,c_h+D.
-$$
+\Delta p\,V > \Delta n\,c_n + \Delta h\,c_h + D,
+$$ {#eq-ch10-budget}
 
-The shadow price $c_h$ rises near saturation, making budgets load- and difficulty-aware. Start cheap, escalate when a classifier or verifier predicts value, and enforce hard deadlines and token ceilings. Record tier, stop reason, outcome, and queue conditions; lower budgets under overload before rejecting all traffic.
+where $\Delta p$ is the gain in task success, $V$ its value, $\Delta n$ the extra tokens at unit cost $c_n$, $\Delta h$ the added KV holding time at capacity shadow price $c_h$, and $D$ the harm from delay. The shadow price $c_h$ rises near the goodput knee, so the right budget is load-aware. We measure the value side with a toy reasoner whose accuracy follows the coverage law of @sec-ch08: more thinking means more sampled candidates and a higher chance of hitting the answer — until an overthinking tail, where the model second-guesses a found answer.
 
-Tools expose holding cost. Keeping KV through a tool wait avoids recomputation but pins memory; eviction requires re-prefill; a slower tier pays transfer. Decide from expected wait, state size, reuse, and queue pressure. Cancellation spans tool, model, and KV lease. Stable tool definitions also create reusable prefixes.
+```{python}
+# @save
+def budget_forcing_sweep(budgets, trials=4000, candidates=40, tokens_per_thought=8,
+                         derail_rate=0.0016, seed=0):
+    """Sweep a toy reasoner's accuracy against a thinking-token budget.
 
-Inference-time **budget forcing** stops or extends a trace; s1 used it as an experimental control. Training-time Length Controlled Policy Optimization teaches requested lengths. Truncation can cut solutions, continuation can overthink, and trained controllers need separate evaluation. None guarantees monotonic quality.
+    Each thought samples one candidate; coverage rises as the budget buys more
+    samples (the @sec-ch08 coverage law). Past a point an overthinking term
+    switches away from a found answer with probability growing in the budget, so
+    accuracy saturates and then declines while tokens keep accruing — the shape
+    that forces @eq-ch10-budget to stop early. Budget forcing is the truncation
+    at each swept budget; the curve is illustrative, not a model measurement.
 
-The lab's synthetic curve rises from score 0.631 at 32 reasoning tokens to 0.774 at 256, then declines to 0.771 at 512 while score per thousand tokens falls throughout. It represents saturation and an overthinking tail, not a model measurement. A production curve must be estimated by task slice, outcome severity, and load. The serving decision is to purchase marginal success, not to maximize visible reasoning length.
+    Args:
+        budgets: Thinking-token budgets to sweep.
+        trials: Independent tasks per budget.
+        candidates: Answer-space size; per-sample hit probability is ``1/candidates``.
+        tokens_per_thought: Tokens each sampled candidate costs.
+        derail_rate: Overthinking rate; derail probability is ``1 - exp(-rate*budget)``.
+        seed: Seed for the sampling.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `serving_lab.py` after reasoning allocation | 10 lines | The budget sweep exposes diminishing marginal quality and permits a higher token budget to reduce synthetic score. |
-:::
+    Returns:
+        One dict per budget with ``accuracy`` and accuracy ``per_1k`` tokens.
+    """
+    rng = random.Random(seed)
+    rows = []
+    for budget in budgets:
+        samples = max(1, budget // tokens_per_thought)
+        correct = 0
+        for _ in range(trials):
+            found = any(rng.random() < 1.0 / candidates for _ in range(samples))
+            if found and rng.random() < 1 - math.exp(-derail_rate * budget):
+                found = False
+            correct += found
+        accuracy = correct / trials
+        rows.append({"budget": budget, "accuracy": accuracy,
+                     "per_1k": accuracy * 1000 / budget})
+    return rows
+```
 
-## Landscape 2026 (dated) {#sec-ch10-landscape}
+We sweep a range of budgets and print accuracy and its per-token efficiency.
+
+```{python}
+sweep = budget_forcing_sweep([32, 64, 128, 256, 384, 512, 768])
+print(f"{'budget':>7} {'accuracy':>9} {'acc/1k tokens':>14}")
+for row in sweep:
+    print(f"{row['budget']:>7} {row['accuracy']:>9.3f} {row['per_1k']:>14.3f}")
+```
+
+Accuracy climbs from 0.10 at 32 tokens to a peak near 0.39 at 384, then *declines* as overthinking sets in, while accuracy per thousand tokens falls monotonically the whole way. The marginal-value stop is well before the peak: the jump from 256 to 384 tokens buys almost nothing and 384 to 512 is negative. @fig-ch10-ttc-budget marks where the budget should stop.
+
+```{python}
+#| label: fig-ch10-ttc-budget
+#| fig-cap: "Where is the marginal-value stop for reasoning tokens? Accuracy (left axis) saturates near 384 tokens and then declines as the toy reasoner overthinks; accuracy per thousand tokens (right axis) falls throughout. A service should purchase marginal success, not maximize visible thinking length."
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+budgets = [r["budget"] for r in sweep]
+fig, ax = plt.subplots(figsize=(6.6, 3.6))
+ax.plot(budgets, [r["accuracy"] for r in sweep], "o-", color="#b13f3f", label="accuracy")
+peak = max(sweep, key=lambda r: r["accuracy"])["budget"]
+ax.axvline(peak, ls=":", color="#555", lw=1)
+ax.set_xlabel("thinking-token budget"); ax.set_ylabel("accuracy", color="#b13f3f")
+twin = ax.twinx()
+twin.plot(budgets, [r["per_1k"] for r in sweep], "s--", color="#2a7f9e", label="accuracy / 1k tokens")
+twin.set_ylabel("accuracy per 1k tokens", color="#2a7f9e")
+fig.tight_layout()
+plt.show()
+```
+
+Inference-time **budget forcing** enforces exactly this stop by truncating or extending a trace; s1 studied it as an experimental control [@muennighoff2025s1], and training-time length control teaches requested lengths directly [@aggarwal2025l1]. Neither guarantees monotonic quality — truncation can cut a solution, continuation can overthink — so a served policy starts cheap, escalates only when a verifier predicts value, and enforces a hard deadline. Hidden reasoning still consumes decode steps and KV even when only a summary returns, so telemetry should track budgets, timings, and verifier outcomes rather than logging private chains of thought, whose faithfulness @sec-ch25 owns.
+
+## Landscape 2026: local inference and the hardware floor {#sec-ch10-landscape}
 
 ::: {.landscape-2026}
-**Verified on 2026-07-19.** Current [vLLM prefix-caching documentation](https://docs.vllm.ai/en/latest/design/prefix_caching/) describes block hashing with LoRA, multimodal, and cache-salt identity. [SGLang's paper](https://papers.nips.cc/paper_files/paper/2024/file/724be4472168f31ba1c9ac630f15dec8-Paper-Conference.pdf) describes radix-tree reuse and cache-aware scheduling. The [TensorRT-LLM model-feature matrix](https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/models/supported-models.md) exposes combination support. [`llama.cpp` server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) covers portable local CPU/GPU serving. Treat them as peers with different targets and inspect pinned matrices.
+**Verified on 2026-07-19.** The mechanisms above are engine-independent; the products that implement them, and the hardware they target, move quarterly.
 
-The [OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf) defines MXFP4 with an eight-bit scale per 32 FP4 values: nominally 4.25 bits/value before packing. [NVIDIA NVFP4 documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/features/low_precision_training/nvfp4/nvfp4.html) uses an FP8 scale per 16 FP4 values plus a tensor FP32 scale: nominally 4.5 bits/value plus amortized global scale. [TensorRT-LLM's matrix](https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/features/quantization.md) shows hardware/model dependence. Nominal width predicts neither quality nor speed.
+- **Local inference.** [`llama.cpp`](https://github.com/ggml-org/llama.cpp) and its GGUF k-quant formats serve quantized models on CPU and consumer GPUs; [MLX](https://github.com/ml-explore/mlx) targets Apple silicon's unified memory; [Ollama](https://github.com/ollama/ollama) and [LM Studio](https://lmstudio.ai) package local serving. Unified-memory laptops now hold models that needed a data-center GPU in 2023; the binding constraint is memory bandwidth, not FLOPs.
+- **Quantization formats.** The [OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf) defines MXFP4 (an 8-bit scale per 32 FP4 values, ~4.25 bits/value); [NVIDIA NVFP4](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/features/low_precision_training/nvfp4/nvfp4.html) uses an FP8 scale per 16 values. Nominal width predicts neither quality nor speed without kernel support.
+- **Serving engines.** [vLLM](https://docs.vllm.ai), [SGLang](https://github.com/sgl-project/sglang), and [TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM) implement paging, prefix caching, speculation, and disaggregation to different depths; the combination you need may fall on an unfused path. Inspect the pinned feature matrix, not the headline benchmark.
+- **Provider reasoning surfaces.** Hosted reasoning-effort controls, their defaults, visibility, cache interaction, and prices vary by provider and change often; exposed reasoning is not evidence of faithfulness.
 
-[LeaderWorkerSet](https://github.com/kubernetes-sigs/lws) represents multi-host replicas, and the [Gateway API Inference Extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension) supplies inference-aware selection. [llm-d](https://github.com/llm-d/llm-d) and [NVIDIA Dynamo](https://docs.dynamo.nvidia.com/dynamo/dev/getting-started/introduction) compose routing, tiered KV, disaggregation, and orchestration around engines. APIs and maturity require live audit.
-
-Current official [OpenAI model documentation](https://developers.openai.com/api/docs/models) exposes model-specific reasoning-effort controls and notes that higher effort can increase latency and output use. Levels, defaults, visibility, cache behavior, and prices vary. Open-weight controls differ; exposed reasoning is not evidence of faithfulness.
-
-Diffusion-language-model serving remains an emerging, separate execution path. [Fast-dLLM](https://arxiv.org/abs/2505.22618) studies approximate KV reuse and confidence-aware parallel decoding for bidirectional diffusion models. Its reported results are paper-specific, not a general replacement for autoregressive engine measurements.
-
-**Verify live:** engine/model/kernel combination support; quantization scale layouts and hardware requirements; prefix-cache isolation and hash inputs; speculative strategies; grammar coverage; multi-LoRA and parallelism combinations; disaggregated KV protocols; Kubernetes API maturity; reasoning-effort names, usage accounting, and caching; local-server hardware backends; versions, licenses, security advisories, and benchmark configurations.
+**Verify live:** engine feature-combination support; quantization scale layouts and hardware requirements; prefix-cache isolation and hash inputs; speculative and disaggregated-KV protocols; provider reasoning-effort names, usage accounting, and caching; local-server backends; versions, licenses, and security advisories.
 :::
 
-## Build {#sec-ch10-build}
+## Summary
 
-Run the deterministic build from the `newbook` directory:
+Serving optimizes goodput — completions that meet every SLO — not raw throughput, and the two diverge past a load knee we drew by simulation. Continuous batching fills the slots a fixed batch idles; paged KV reclaims the memory a contiguous cache strands and enables prefix sharing. Prefix caching pays off only above a hit-rate break-even. Speculative decoding is exact but speeds a request up only when the draft is cheap. Quantization is a validation problem: per-row int8 barely moved our tiny GPT while int4 drifted. Constrained decoding masks logits to a grammar across a tricky tokenization boundary. Disaggregation, eviction, tenancy isolation, and reasoning budgets each trade one resource for another; @sec-ch11 serves customized variants of these models.
 
-```bash
-python code/ch10/serving_lab.py
-python code/ch10/render_metrics.py
-python -m unittest discover -s code/ch10 -p "test_*.py" -v
-```
+## Exercises
 
-All twelve requests arrive at step zero into four slots. Synthetic SLOs are TTFT at most 16 steps and TPOT at most 1.05; steps are abstract units. Fixed batches await their longest member, while continuous scheduling refills completed slots.
+1. **Move the goodput knee.** Using `sweep_load`, sweep `slots` and `mean_service` as well as `rate`. (a) Confirm the capacity `slots / mean_service` predicts where throughput saturates. (b) Find the arrival rate at which goodput peaks for two different `ttft_slo` values and explain why a tighter SLO moves the knee left. (c) Add a second SLO on completion time and show a workload where the two-SLO goodput is far below either single-SLO rate.
 
-| Policy | Makespan (steps) | Slot utilization | Requests satisfying both SLOs | Goodput (requests/step) |
-|---|---:|---:|---:|---:|
-| Fixed batches | 32 | 0.617 | 8 | 0.250 |
-| Continuous refill | 26 | 0.760 | 12 | 0.462 |
+2. **Verify the scheduler by hand.** For the twelve-request burst, redraw the four slots for all 26 continuous-batching steps and recompute each start, finish, and the TTFT/TPOT test. Then permute the request order to raise static-batch utilization, and state which queueing assumption your permutation quietly violates.
 
-For 45 tokens in blocks of 16, two branches share two blocks and own thirteen-token tails, using four frames instead of six. Cross-tenant reuse fails. Cache break-even is 0.278 future reuses.
+3. **Break speculative speedup without breaking exactness.** With `speculative_speedup`, sweep block length, acceptance, and draft cost. Predict the acceptance at which the saturated-fleet curve crosses 1.0 before running it, then add a statistical test that the emitted distribution still equals the target — showing a configuration whose isolated latency improves while saturated goodput falls.
 
-Over 40,000 deterministic speculative draws, theoretical/empirical acceptance is 0.900/0.901 and target total variation is 0.00365. Synthetic low-load and saturated rates are 3.413 and 0.931 times baseline: exactness does not imply speedup. Grammar masking removes 0.60 mass.
+4. **Push the quantization until it breaks.** Extend `quantize_tensor` to int3 and int2 and re-run the ladder on the trained model. Report accuracy, KL, and max logit drift at each width, and identify the width where held-out accuracy first drops more than one point. Then quantize *only* the embedding, or *only* the attention weights, and show which matters more.
 
-| Quantization block | RMSE (fixture units) | Simple effective bits/value |
-|---:|---:|---:|
-| 16 | 0.455 | 5.000 |
-| 64 | 0.978 | 4.250 |
-| 256 | 1.415 | 4.062 |
+5. **Measure the constraint tax.** Build a context where the model wants prose and apply the digit grammar. Report the removed mass, then compare the constrained sample's validity and the unconstrained sample's validity over many draws. Construct a grammar whose allowed set is empty at some state and show that `constrained_distribution` raises rather than emitting garbage.
 
-Figure @fig-ch10-build-metrics separates occupied capacity from qualified work, exposes scale granularity, and shows why reasoning needs a marginal-value stop.
+6. **Price a load-aware reasoning budget.** Using `budget_forcing_sweep`, treat the accuracy curve as $\Delta p$ and pick unit costs $c_n$, $c_h$, $V$, and $D$ for @eq-ch10-budget. (a) Solve for the token budget that maximizes net value at low load. (b) Raise the shadow price $c_h$ to model saturation and show the optimal budget shrinks. (c) Design a two-tier policy that escalates only when a verifier predicts value, and estimate its goodput against always-max-reasoning.
 
-![How do scheduling, scale granularity, and reasoning budget change a serving decision? Continuous refill improves utilization and SLO-qualified goodput on the fixed request burst; finer four-bit blocks reduce RMSE while increasing metadata; and the synthetic reasoning curve saturates before its largest token budget. All values are deterministic analytical or synthetic fixtures.](../code/ch10/serving_metrics.svg){#fig-ch10-build-metrics fig-alt="Three grayscale panels. The first compares fixed and continuous scheduling using bars for slot utilization and SLO-qualified goodput. The second plots quantization RMSE for block sizes 16, 64, and 256 and annotates their effective bits per value. The third plots synthetic task score against reasoning-token budgets from 32 through 512, marking diminishing returns."}
-
-To measure a real local or remote engine through an OpenAI-compatible route, run the optional seam:
-
-```bash
-python code/ch10/openai_compatible_adapter.py \
-  http://127.0.0.1:8000 MODEL_ID "Explain why goodput can fall while throughput rises" \
-  --max-tokens 64
-```
-
-The adapter reports first *content event*, because an SSE event need not equal one token, plus endpoint usage when supplied. Real experiments need controlled arrival rates and pinned revisions, hardware, topology, numbers, cache state, warm-up, request distributions, policy, and SLO boundaries. Verify output and cancellation semantics before speed.
-
-::: {.callout-warning title="Honesty boundary"}
-The default scheduler has unit-cost token steps and no real kernels. Its cache costs, bandwidth, coordination delays, draft contention, quantization vector, grammar distribution, and reasoning scores are declared analytical or synthetic fixtures. They validate equations and decision logic; they estimate no model, accelerator, engine, provider, tenant, or production workload. The optional adapter is a measurement seam, not a load generator or benchmark protocol.
-:::
-
-## What endures, what changes {#sec-ch10-endures}
-
-**What endures.** Goodput counts work that satisfies the complete user-visible contract. Continuous scheduling converts length variation into iteration-level admission; paged KV converts sequence growth into block allocation. Prefix reuse requires exact state identity and must beat recomputation after read, write, placement, and eviction costs. Exact speculative sampling preserves a target distribution through accept/reject correction but can lose under contention. Grammar constraints guarantee syntax, not semantics or authority. Quantization is specified by object, format, scale, accumulator, kernel, and validation—not bit width alone. Disaggregation wins only after subtracting KV movement and coordination. Parallelism exchanges memory and arithmetic for communication. Shared weights, adapters, caches, and accelerators are security boundaries. Reasoning consumes tokens, KV, slots, and deadlines even when its trace is hidden.
-
-**What changes.** Engine versions, supported model-feature combinations, kernel coverage, accelerator formats, graph and compiler behavior, quantization recipes, speculative strategies, diffusion-model runtimes, remote-KV protocols, Kubernetes APIs, orchestration projects, provider effort controls, prices, and benchmark results all move. Keep these in pinned adapters, compatibility tests, and the dated landscape. Removing the landscape leaves every decision inequality and invariant above intact.
-
-Chapter 11 moves from serving many fixed model variants to creating and governing customized ones; the serving lattice here becomes the deployment constraint for those artifacts.
-
-## Exercises {#sec-ch10-exercises}
-
-1. **Verify the scheduler by hand.** Draw the four slots for all 26 continuous-batching steps in the fixture. Recompute every start and finish time, slot utilization, TTFT pass, TPOT pass, and goodput. Then permute request order to improve fixed-batch utilization and state what queueing assumption your permutation violates.
-
-2. **Make prefix admission economic.** Extend `CacheKey` with one multimodal and one quantization-layout field. Add an eviction score using entry bytes, predicted reuse, recomputation cost, and read cost. Construct a workload in which LRU evicts the higher-value entry, then test that your policy retains it without violating tenant isolation.
-
-3. **Break speculative speedup without breaking exactness.** Sweep draft block length, target/draft total-variation distance, and draft cost. Predict the break-even frontier before running. Add a statistical target-distribution test and show a configuration whose isolated latency improves while saturated goodput falls.
-
-4. **Validate a quantized deployment.** Choose a model, engine, accelerator, and two supported recipes. Write the full numerical contract, including scales and accumulators. Evaluate loading, kernel selection, memory, TTFT, TPOT, goodput, perplexity, task quality, structured-output validity, tool selection, long context, and safety gates. Define acceptance thresholds before observing results.
-
-5. **Measure the disaggregation inequality.** Replace the lab's synthetic transfer terms with measurements from an aggregated and a split deployment. Sweep prompt length, output length, concurrency, chunk size, and prefill/decode ratio. Include cancellation and one worker failure. Report where phase splitting changes from a loss to a win and which term moves the boundary.
-
-6. **Build an engine feature lattice.** For one production workload, compare at least two engines at pinned revisions. Test the intersection of quantization, parallelism, prefix caching, structured decoding, adapters, speculation, and observability that you actually require. Record fallback kernels, warm-up, unsupported cells, semantic API differences, and goodput curves; defend the selected engine and its residual migration risk.
-
-7. **Design a load-aware reasoning budget.** Define task value, error harm, latency SLO, tool waits, visible and hidden token accounting, KV holding cost, verifier, escalation tiers, hard stops, and overload behavior. Estimate marginal success by difficulty slice. Demonstrate one overthinking case and one underthinking case, then specify telemetry that avoids storing private chain of thought.
-
-## Notes and sources {#sec-ch10-sources}
-
-[Orca](https://www.usenix.org/conference/osdi22/presentation/yu) establishes iteration scheduling. [PagedAttention](https://doi.org/10.1145/3600006.3613165) develops paged KV and vLLM; [SGLang](https://papers.nips.cc/paper_files/paper/2024/file/724be4472168f31ba1c9ac630f15dec8-Paper-Conference.pdf) develops RadixAttention. [Preble](https://arxiv.org/abs/2407.00023), [CachedAttention](https://www.usenix.org/conference/atc24/presentation/gao-bin-cost), and [Mooncake](https://arxiv.org/abs/2407.00079) study distributed and hierarchical KV reuse.
-
-[Speculative Decoding](https://proceedings.mlr.press/v202/leviathan23a.html) and [Speculative Sampling](https://arxiv.org/abs/2302.01318) give target-preserving algorithms. [XGrammar](https://arxiv.org/abs/2411.15100) develops CFG mask execution; [Let Me Speak Freely?](https://arxiv.org/abs/2408.02442) evaluates format-restriction effects.
-
-[GPTQ](https://arxiv.org/abs/2210.17323) uses approximate second-order information; [AWQ](https://arxiv.org/abs/2306.00978) protects activation-salient weights; [SmoothQuant](https://proceedings.mlr.press/v202/xiao23c.html) migrates outlier difficulty. The [OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf) defines the format.
-
-[DistServe](https://www.usenix.org/conference/osdi24/presentation/zhong-yinmin), [Splitwise](https://doi.org/10.1109/ISCA59077.2024.00019), and [Sarathi-Serve](https://arxiv.org/abs/2403.02310) establish phase-splitting and chunked-prefill trade-offs.
-
-[Punica](https://proceedings.mlsys.org/paper_files/paper/2024/hash/054de805fcceb78a201f5e9d53c85908-Abstract-Conference.html) and [S-LoRA](https://arxiv.org/abs/2311.03285) develop multi-adapter serving. [LeftoverLocals](https://arxiv.org/abs/2401.16603) documents local-memory recovery on affected GPUs.
-
-[s1](https://arxiv.org/abs/2501.19393) demonstrates budget forcing; [L1](https://arxiv.org/abs/2503.04697) introduces Length Controlled Policy Optimization; [Beyond Accuracy](https://aclanthology.org/2026.acl-long.339/) studies tool-integrated KV eviction and latency. Chapter 8 owns test-time-scaling quality.
+7. **Decide disaggregation from a measurement.** Replace the synthetic terms in `disaggregation_decision` with numbers you estimate for a real prompt/output mix: KV bytes from the @sec-ch03 arithmetic, a plausible interconnect bandwidth, and a coordination cost. Sweep prompt length and find the crossover where phase splitting turns from a loss into a win, and name which term moves the boundary most.
