@@ -1,462 +1,977 @@
 ---
-description: "Understand how images become model tokens, then build evidence-carrying document extraction and screenshot-bound GUI action."
+description: "Turn pixels into model tokens and back: patchify an image and run attention over it, align images and text contrastively, price the image-token bill, extract a page image into scored JSON, retrieve pages with MaxSim, map a model coordinate to a click through letterbox padding, and gate a computer-use action."
 ---
 
-# Multimodal Agents I: VLMs, Documents, and GUI Perception [F+S] {#sec-ch29}
+# Multimodal Agents I: VLMs, Documents, and GUI Perception {#sec-ch29}
 
-## What you need going in
+An analyst asks which quarter has the tallest revenue bar on page 17. The ingestion pipeline ran OCR, pulled the title, the axis labels, and four numbers in reading order, then threw the bar geometry away. Retrieval finds the right page. The language model reads every character and still cannot say which number belongs to the tallest rectangle, because the rectangle is gone. A second agent receives "delete the old draft, not the account." Its text accessibility tree exposes two buttons with truncated names; the rendered screen tells them apart by position, icon, and a red warning tint. The agent from @sec-ch21 can plan the click but cannot see the screen it must click on — pixel perception was the one capability that chapter deferred to this one. Both failures come from treating two-dimensional evidence as a string. A **vision-language model** (VLM) instead maps images and text into one computation, so a model can answer, extract, ground, or propose an action using both channels.
 
-> **Assumed:** neural-network fundamentals, matrix multiplication, basic image dimensions, JSON APIs, and the agent/tool boundary from Chapters 16–17.
->
-> **From earlier chapters:** [Chapter 14](14-embeddings-rag.qmd#sec-ch14) introduced dense and late-interaction retrieval, [Chapter 15](15-agentic-retrieval.qmd#sec-ch15) handled retrieval control and poisoning, [Chapter 21](21-agent-applications.qmd#sec-ch21) deliberately deferred pixel-level computer-use perception to this chapter, [Chapter 22](22-evaluation.qmd#sec-ch22) supplied the evaluation contract, and [Chapter 24](24-agent-security.qmd#sec-ch24) supplied the action gate.
->
-> **Not required:** prior computer vision, OCR, image-model training, browser automation, or a local GPU. The default build is deterministic and offline; an optional adapter exercises the same extraction interface against a local OpenAI-compatible multimodal endpoint.
+We are now ready to build that machinery at a scale where every number is inspectable: (i) a `patchify` that cuts a real constructed image into Vision-Transformer tokens, over which we run the exact attention from @sec-ch02-attention; (ii) a tiny contrastive dual encoder whose image-caption similarity matrix we watch snap to its diagonal; (iii) the image-token bill — the resolution-times-tiling-to-tokens-to-dollars arithmetic interviewers ask; (iv) a *real* document reader that recognizes a rendered page into scored JSON with evidence boxes, and whose accuracy genuinely rises and then plateaus as we give it more pixels; (v) a ColPali-style MaxSim retriever that keeps a small region a pooled vector would drown; (vi) a coordinate mapping that turns a model's `(0..1000)` output into a screen pixel — and the letterbox bug that moves every click; (vii) a computer-use gate that binds that click to one screenshot and refuses stale or destructive actions; and (viii) a POPE-style hallucination probe with one worked measurement. Everything runs offline on a CPU in under two seconds. The encoders are toys and we say so where they are; the mechanisms on these pages are the mechanisms in production.
 
-> **Route B backfill**
->
-> - **Chapter 2, attention and embeddings sections (~8 pp).** Read [Attention as a learned weighted lookup](02-transformer-first-principles.qmd#sec-ch02-attention), [The residual stream and a modern block](02-transformer-first-principles.qmd#sec-ch02-residual), and [Decoder-only: from embeddings to logits](02-transformer-first-principles.qmd#sec-ch02-decoder). Skipping them leaves the production patterns usable but makes image patches and projected visual vectors feel like API magic rather than ordinary transformer inputs.
+## From pixels to tokens: the Vision Transformer {#sec-ch29-vlm}
 
-## Contents
-
-- [Two workloads expose one lossy assumption](#sec-ch29-loss)
-- [What you will build](#sec-ch29-artifact)
-- [A VLM turns patches into language-model vectors](#sec-ch29-vlm)
-- [Instruction tuning and tiling create the image-token bill](#sec-ch29-budget)
-- [Fusion decides when modalities can interact](#sec-ch29-fusion)
-- [Grounding turns words into regions and points](#sec-ch29-grounding)
-- [Document understanding needs values, structure, and evidence](#sec-ch29-documents)
-- [Visual retrieval preserves page-level interactions](#sec-ch29-visual-rag)
-- [GUI perception must end in a fresh, gated proposal](#sec-ch29-gui)
-- [Choose the cheapest multimodal tier that passes](#sec-ch29-field-guide)
-- [Own an evaluation after the benchmark saturates](#sec-ch29-eval)
-- [Build](#sec-ch29-build)
-- [What endures, what changes](#sec-ch29-endures)
-- [Exercises](#sec-ch29-exercises)
-- [Notes and sources](#sec-ch29-sources)
-
-## Two workloads expose one lossy assumption {#sec-ch29-loss}
-
-An analyst asks, “Which quarter has the tallest revenue bar on page 17?” The ingestion pipeline runs OCR, extracts the title, axis labels, legend, and four numbers in reading order, then discards the bar geometry. Retrieval finds the right page. The language model sees every character and still cannot know which number belongs to the tallest rectangle.
-
-A computer-use agent receives “Delete the old draft, not the account.” Its text accessibility tree exposes two buttons with truncated names; the rendered screen distinguishes them by position, icon, warning color, and surrounding panel. The agent architecture from Chapter 21 can plan, but its perception surface is incomplete.
-
-Both failures came from treating two-dimensional evidence as if it were only a string. Documents communicate through tables, columns, font hierarchy, diagrams, spatial alignment, handwriting, and visual marks. Graphical interfaces communicate through layout, state, focus, icons, overlays, and coordinates. A **vision-language model** (VLM) maps images and text into a shared computation so a model can answer, extract, ground, or propose an action using both.
-
-This does not make OCR obsolete. Clean prose is often cheaper, more searchable, more accessible, and easier to cite as text. DOM and accessibility actions are often more stable than pixels. The engineering decision is per workload: preserve the visual channel when the task depends on it; prefer the cheapest structured channel that retains the needed evidence.
-
-The chapter builds one visual foundation, then applies it twice. For documents, a page image becomes schema-valid fields with evidence boxes and a measured accuracy/token tradeoff. For GUIs, a screenshot becomes a named click proposal bound to one screen digest; deterministic code revalidates freshness, geometry, and confirmation before acting. The pixel-perception deferral flagged in Chapter 21 is completed here.
-
-## What you will build {#sec-ch29-artifact}
-
-::: {.callout-tip}
-### The chapter artifact
-
-You will build [`page_reader.py`](../code/ch29/page_reader.py), a page-image extraction interface with an offline source-traceable fixture and an optional local VLM adapter. Twelve synthetic invoices supply 60 field values and evidence regions. The evaluator sweeps four tiling budgets, validates the result schema and boxes, and reports exact field accuracy beside image-token cost.
-
-Two small artifacts cover genuinely different mechanisms. [`maxsim_demo.py`](../code/ch29/maxsim_demo.py) makes pooled versus late-interaction retrieval visible on one transparent vector construction. [`gui_step.py`](../code/ch29/gui_step.py) grounds a screen label, binds the proposal to the screenshot, and demonstrates why stale or destructive actions need deterministic gates. They share the chapter's principle—retain fine-grained visual evidence—but do not reimplement one another.
-:::
-
-## A VLM turns patches into language-model vectors {#sec-ch29-vlm}
-
-A language model does not receive pixels directly. A visual preprocessing and encoder stack converts pixels into vectors that can enter attention beside text-token vectors.
-
-Start with an image of height $H$, width $W$, and $C$ channels. Split it into non-overlapping square patches of side $P$. The number of patches is
+A language model never receives pixels. A visual front end turns an image into a sequence of vectors that can sit in attention beside text-token vectors, and the first step of that front end is embarrassingly simple: cut the image into squares. Take an image of height $H$, width $W$, and $C$ channels, and split it into non-overlapping patches of side $P$. The number of patches — the number of visual tokens — is
 
 $$
-N=\frac{H}{P}\frac{W}{P},
-$$
+N=\frac{H}{P}\cdot\frac{W}{P},
+$$ {#eq-ch29-patches}
 
-assuming both dimensions are divisible by $P$. Flatten patch $i$ into $\mathbf{x}_i\in\mathbb{R}^{P^2C}$ and project it into visual width $d_v$:
+assuming both sides divide evenly by $P$. Each patch flattens to a vector in $\mathbb{R}^{P^2C}$, which a learned matrix projects to the encoder's width. We start with the two operations that @eq-ch29-patches describes, and a real image to run them on. Our constructed image is a four-bar chart — the analyst's revenue figure in miniature, one bar taller and tinted differently.
 
-$$
-\mathbf{p}_i=\mathbf{x}_i\mathbf{E}+\mathbf{e}_i,
-\qquad
-\mathbf{E}\in\mathbb{R}^{P^2C\times d_v}.
-$$
+```{python}
+# @save
+from __future__ import annotations
 
-Here $\mathbf{E}$ is the learned patch projection and $\mathbf{e}_i$ carries position. A 224-by-224 image with 16-by-16 patches yields a 14-by-14 grid, or 196 visual tokens. Smaller patches or larger images preserve more spatial detail while increasing sequence length and attention work. Modern encoders may use convolutional stems, resampling, variable resolution, or patch merging, but the budgeting intuition survives: spatial resolution becomes tokens.
+import math
 
-The [Vision Transformer](https://arxiv.org/abs/2010.11929) applies transformer blocks to this sequence. A contrastively trained image encoder then learns representations aligned with text. For a batch of $B$ matched image/text pairs, let normalized image embedding $\mathbf{v}_i$, text embedding $\mathbf{t}_j$, similarity $s_{ij}=\mathbf{v}_i^\top\mathbf{t}_j$, and temperature $\tau>0$. One direction of the CLIP-style InfoNCE loss is
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import nn
 
-$$
-\mathcal{L}_{I\rightarrow T}
-=-\frac{1}{B}\sum_{i=1}^{B}
-\log\frac{\exp(s_{ii}/\tau)}{\sum_{j=1}^{B}\exp(s_{ij}/\tau)}.
-$$
 
-The text-to-image direction is symmetric and the losses are averaged. Each positive competes against the other batch texts. This creates useful joint embeddings, but it couples normalization to the batch.
+def visual_token_count(height: int, width: int, patch: int) -> int:
+    """Return the number of ViT patches for one image, from @eq-ch29-patches."""
+    if height % patch or width % patch:
+        raise ValueError("image side is not divisible by the patch size")
+    return (height // patch) * (width // patch)
 
-SigLIP instead treats every pair as a binary match. Let $z_{ij}=1$ for a matched pair and $-1$ otherwise, with learned scale $a$ and bias $b$. A compact form is
 
-$$
-\mathcal{L}_{\text{sigmoid}}
-=-\frac{1}{B^2}\sum_{i,j}\log\sigma\!\left(z_{ij}(a s_{ij}+b)\right),
-$$
+def patchify(image: np.ndarray, patch: int) -> tuple[np.ndarray, tuple[int, int]]:
+    """Cut an image into flattened square patches in raster order.
 
-where $\sigma$ is the logistic sigmoid. The [SigLIP paper](https://arxiv.org/abs/2303.15343) motivates this pairwise loss without a global softmax normalization. Both objectives teach alignment. Neither alone makes an image encoder follow a conversation or emit a structured answer.
+    This is the whole input tokenizer of a Vision Transformer: a
+    ``(H, W, C)`` image becomes an ``(N, P*P*C)`` matrix, one row per patch,
+    which a single learned linear layer then projects to the encoder width.
 
-A **projector** maps visual width $d_v$ to the language model's residual width $d_m$. A two-layer example is
+    Args:
+        image: Pixel array shaped ``(H, W)`` or ``(H, W, C)``.
+        patch: Side length ``P`` of each square patch; must divide both sides.
 
-$$
-\mathbf{h}_i
-=\mathbf{W}_2\phi(\mathbf{W}_1\mathbf{p}_i+\mathbf{b}_1)+\mathbf{b}_2,
-$$
+    Returns:
+        A tuple ``(patches, grid)`` where ``patches`` is the ``(N, P*P*C)``
+        matrix and ``grid`` is the ``(rows, cols)`` patch layout, so that
+        ``rows * cols == N``.
+    """
+    height, width = image.shape[:2]
+    grid_h, grid_w = height // patch, width // patch
+    rows = []
+    for gy in range(grid_h):
+        for gx in range(grid_w):
+            tile = image[gy * patch:(gy + 1) * patch, gx * patch:(gx + 1) * patch]
+            rows.append(np.asarray(tile, dtype=np.float32).reshape(-1))
+    return np.stack(rows), (grid_h, grid_w)
 
-with nonlinear function $\phi$. The vectors $\mathbf{h}_i\in\mathbb{R}^{d_m}$ can then occupy designated positions in the language-model sequence. Some systems resample many visual tokens into fewer latent tokens; some train vision and language components together. The projector equation is still a useful boundary: it tells us where an image representation becomes compatible with the language model.
 
-@fig-ch29-vlm answers where visual evidence enters context.
+def toy_chart(side: int = 224) -> np.ndarray:
+    """Draw a constructed four-bar revenue chart with one tall tinted bar.
+
+    Args:
+        side: Height and width of the square RGB image, in pixels.
+
+    Returns:
+        A ``(side, side, 3)`` uint8 array with three blue bars, one taller
+        red bar, and a baseline — a miniature of the analyst's page-17 figure.
+    """
+    img = np.full((side, side, 3), 245, dtype=np.uint8)
+    heights, base, x = [70, 120, 90, 175], side - 30, 26
+    for i, h in enumerate(heights):
+        color = (200, 90, 70) if i == 3 else (70, 110, 160)
+        img[base - h:base, x:x + 34] = color
+        x += 54
+    img[base:base + 3, :] = 40
+    return img
+```
+
+With the tokenizer written, we run it. A 224-by-224 image at $P=16$ should give a 14-by-14 grid — 196 tokens — and each token should be a 768-vector, since ${16\times16\times3=768}$.
+
+```{python}
+image = toy_chart(224)
+patches, grid = patchify(image, 16)
+print("image:", image.shape, " patch grid:", grid, " tokens:", patches.shape[0])
+print("per-patch dim (P*P*C = 16*16*3):", patches.shape[1])
+print("formula check:", visual_token_count(224, 224, 16))
+```
+
+@fig-ch29-patches shows the grid this produces. The count is the entire budgeting story in one number: halve the patch side to $P=8$ and the same image becomes 784 tokens; double the image to 448 square and it becomes 784 as well. Spatial resolution *is* sequence length, and attention cost grows with its square.
+
+```{python}
+#| label: fig-ch29-patches
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does a 224x224 image become 196 tokens? The Vision Transformer cuts it into a 14x14 grid of 16-pixel patches, flattens each, and treats the sequence like text tokens. The tall red bar the analyst asked about spans a handful of lower-right patches."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(4.2, 4.2))
+ax.imshow(image)
+for k in range(0, 225, 16):
+    ax.axhline(k - 0.5, color="white", lw=0.5)
+    ax.axvline(k - 0.5, color="white", lw=0.5)
+ax.set_xticks([]); ax.set_yticks([])
+ax.set_title("224x224 image -> 14x14 = 196 patch tokens", fontsize=10)
+fig.tight_layout()
+plt.show()
+```
+
+A patch matrix is not yet contextual: each row still describes its square in isolation. The Vision Transformer fixes that with the same self-attention we built in @sec-ch02 [@dosovitskiy2021vit], so a patch showing the top of a bar can be informed by the patch showing its base. We import that function unchanged from Chapter 2 and run it over projected patch embeddings. To keep the demo honest we use *untrained* random projections — no learning has happened — and simply confirm the operation is a genuine soft mixture, not a hard lookup.
+
+```{python}
+import sys
+sys.path.insert(0, "code/ch02")
+import _generated as ch02                      # scaled_dot_product_attention from Ch 2
+
+torch.manual_seed(0)
+with torch.no_grad():
+    project = nn.Linear(patches.shape[1], 48, bias=False)
+    position = torch.randn(patches.shape[0], 48) * 0.3
+    tokens = F.normalize(project(torch.from_numpy(patches)) + position, dim=-1)
+    out, weights = ch02.scaled_dot_product_attention(tokens, tokens, tokens)
+
+print("output:", tuple(out.shape), " attention weights:", tuple(weights.shape))
+print("row sums to 1:", round(float(weights[0].sum()), 4))
+print("mean attention entropy (nats):",
+      round(float(-(weights * (weights + 1e-9).log()).sum(-1).mean()), 3))
+print("patch 177 attends most to:", weights[177].topk(4).indices.tolist())
+```
+
+The weights form a full 196-by-196 interaction, each row summing to one, with a mean entropy above five nats — the average patch spreads its attention across dozens of others, not onto a single neighbor. Even with random weights, patch 177's strongest links are itself and patches 170, 173, and 174 — all in its own grid row. A *trained* encoder shapes which patches matter; the machinery that lets them talk is exactly the attention block from Chapter 2, run over squares of an image instead of subwords of a sentence.
+
+One boundary remains. The encoder outputs vectors of visual width $d_v$; the language model reads vectors of its own residual width $d_m$. A **projector** — usually a small two-layer MLP, $\mathbf{h}_i=\mathbf{W}_2\,\phi(\mathbf{W}_1\mathbf{p}_i+\mathbf{b}_1)+\mathbf{b}_2$ — maps one width to the other, and its outputs occupy real positions in the language-model sequence. This is the LLaVA recipe: freeze a pretrained vision encoder and a pretrained language model, train the projector to bridge them, then instruction-tune on multimodal conversations [@liu2023llava]. @fig-ch29-vlm locates every stage and, more usefully, puts the token bill on it.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch29-vlm
-%%| fig-cap: "Where does an image become a sequence the language model can attend to?"
-%%| fig-alt: "Pixels are resized or tiled, split into patches, encoded with spatial position, mapped by a projector to language-model width, and inserted beside text embeddings before the language model produces text, fields, or coordinates."
+%%| fig-cap: "Where does an image become a sequence the language model can attend to, and what does each stage cost? A 224-square view is 196 visual tokens; four tiles plus a thumbnail is 1,088. The projector is the seam where a visual vector becomes language-model-compatible."
 flowchart LR
-    IMAGE["Image pixels<br/>height × width × channels"] --> PRE["Resize / tile / normalize"]
-    PRE --> PATCH["Patch sequence<br/>N visual tokens"]
-    PATCH --> ENCODER["Vision transformer<br/>spatial contextualization"]
-    ENCODER --> PROJECT["Project / resample<br/>visual width → LM width"]
-    TEXT["Text token embeddings"] --> LM(["Language model<br/>cross-modal attention"])
-    PROJECT --> LM
-    LM --> OUT["Answer · JSON fields<br/>regions · action proposal"]
+    IMG["Image pixels<br/>H x W x C"] --> PRE["Resize / tile /<br/>normalize"]
+    PRE --> PATCH["Patch + embed<br/>224-sq -> 196 tokens"]
+    PATCH --> ENC["Vision transformer<br/>self-attention over patches"]
+    ENC --> PROJ["Projector (MLP)<br/>d_v -> d_m"]
+    TXT["Text token<br/>embeddings"] --> LM(["Language model<br/>cross-modal attention"])
+    PROJ --> LM
+    LM --> OUT["answer · JSON fields<br/>box · click point"]
 ```
 
-The LLM sees projected vectors, not a photograph. Crop policy, orientation, scaling, compression, tiling, color conversion, and patch layout have already determined which evidence survives. Logging only the original file hash is not enough for reproducibility; record preprocessing and the actual rendered image or its immutable derivative.
+## Aligning images and text: CLIP and SigLIP {#sec-ch29-clip}
 
-## Instruction tuning and tiling create the image-token bill {#sec-ch29-budget}
-
-Image/text alignment teaches semantic proximity. A VLM assistant also needs examples that connect visual inputs and instructions to useful responses: description, question answering, OCR, chart reasoning, grounding, refusal, and structured output. A common staged recipe freezes or partly freezes pretrained components while training a projector, then instruction-tunes more of the stack on multimodal conversations. Exact recipes differ; the enduring distinction is encoder alignment versus task-following behavior.
-
-One fixed square view is poor for a dense page. **Dynamic tiling** divides a high-resolution image into model-sized crops and often adds a thumbnail for global layout. More tiles reveal small text but repeat context, raise image tokens, and can make cross-tile reading order harder. Document models may instead use native variable resolution, patch packing, or learned compression.
-
-For a model that emits $k$ tokens per tile plus $t$ thumbnail tokens, the page cost is
+The encoder above was pretrained to produce representations that *align* with text — a picture of an invoice and the word "invoice" land near each other. That alignment is learned contrastively, and the mechanism is worth making numerical because it is the same InfoNCE objective that appears throughout retrieval. Take a batch of $B$ matched image-text pairs. Let $\mathbf{v}_i$ be the normalized image embedding, $\mathbf{t}_j$ the normalized text embedding, $s_{ij}=\mathbf{v}_i^\top\mathbf{t}_j$ their similarity, and $\tau>0$ a temperature. One direction of the CLIP loss treats each row of the similarity matrix as a $B$-way classification whose correct answer is the diagonal [@radford2021clip]:
 
 $$
-V(n)=nk+t,
-$$
+\mathcal{L}_{I\to T}=-\frac{1}{B}\sum_{i=1}^{B}\log\frac{\exp(s_{ii}/\tau)}{\sum_{j=1}^{B}\exp(s_{ij}/\tau)}.
+$$ {#eq-ch29-infonce}
 
-where $n$ is tile count. The fixture uses $k=256$ and $t=64$ only to make the tradeoff tangible. At 1, 4, 9, and 16 tiles, it charges 320, 1,088, 2,368, and 4,160 image tokens per page. A real serving adapter must use the model's processor or returned usage rather than this illustration.
+The text-to-image direction is symmetric; CLIP averages the two. Each positive competes against every other caption in the batch, which is what pulls matched pairs together and pushes mismatched ones apart. We build a minimal version: synthetic pairs that share a hidden latent but live in different raw feature spaces, and two linear encoders that must learn to project both into one shared space. If the idea works, an untrained model's similarity matrix is near-random and a trained one is diagonal.
 
-Resolution is a hyperparameter with an evaluation curve. Low resolution can merge characters, erase decimals, miss tiny controls, or make chart marks indistinguishable. Beyond the task's spatial frequency, extra pixels add little accuracy. The chapter fixture reaches 59 of 60 exact fields at nine tiles and does not improve at sixteen, while token cost rises 76 percent.
+```{python}
+# @save
+def info_nce_loss(similarity: torch.Tensor, tau: float) -> torch.Tensor:
+    """Symmetric CLIP loss: each matched pair must win its row and column."""
+    targets = torch.arange(similarity.size(0))
+    logits = similarity / tau
+    return 0.5 * (F.cross_entropy(logits, targets) + F.cross_entropy(logits.t(), targets))
 
-![Exact field accuracy rises from about 0.73 at one tile to 0.98 at nine tiles and remains flat at sixteen, while illustrative image tokens rise linearly from 320 to 4,160.](../assets/figures/ch29-resolution-tradeoff.svg){#fig-ch29-resolution fig-cap="Where does more page resolution stop paying? Deterministic synthetic invoices; token counts are illustrative processor units, not a provider price."}
 
-Do not select the elbow on aggregate alone. Slice by scan quality, font size, orientation, tables, formulas, handwriting, language, page density, and field consequence. A total amount and a decorative logo may have equal field weight in a naive metric but very different product cost. Predeclare required fields and abstention behavior.
+class DualEncoder(nn.Module):
+    """Two linear encoders projecting images and captions into one space.
 
-VLMs can hallucinate visible objects and relationships just as text models confabulate facts. POPE-style probing tests object presence with controlled positive and negative questions. In production, use evidence regions, OCR or structured-source cross-checks, consistency constraints, and abstention. A fluent description is not page-grounded merely because an image was supplied.
+    The stand-in for CLIP's vision and text towers. Each modality arrives in
+    its own raw feature space; the encoders learn projections whose cosine
+    similarity is high for a matched image-caption pair and low otherwise.
 
-::: {.callout-note .landscape-2026}
-### Landscape 2026 (dated)
+    Args:
+        img_dim: Width of the raw image feature vector.
+        cap_dim: Width of the raw caption feature vector.
+        shared_dim: Width of the joint embedding space both map into.
+    """
 
-**Verify live: 2026-07-19. Appendix C owner: VLM model, processor, and serving matrix.** Current open and hosted VLM families vary in native resolution, dynamic tiling, coordinate format, video support, schema enforcement, and image-token accounting. [vLLM's maintained multimodal documentation](https://docs.vllm.ai/en/latest/features/multimodal_inputs/) describes its current local-serving surface; model processor and endpoint behavior must be pinned together. Roster names, context sizes, supported media, and leaderboard positions change. The spine keeps only the processor-token-evaluation mechanism.
-:::
+    def __init__(self, img_dim: int, cap_dim: int, shared_dim: int) -> None:
+        super().__init__()
+        self.img = nn.Linear(img_dim, shared_dim, bias=False)
+        self.cap = nn.Linear(cap_dim, shared_dim, bias=False)
 
-## Fusion decides when modalities can interact {#sec-ch29-fusion}
+    def forward(self, images: torch.Tensor, captions: torch.Tensor):
+        """Return L2-normalized image and caption embeddings."""
+        return (F.normalize(self.img(images), dim=-1),
+                F.normalize(self.cap(captions), dim=-1))
 
-“Multimodal” covers several architectures. The useful question is when information from one modality can alter the representation of another.
 
-| Pattern | Interaction | Strength | Constraint |
-|---|---|---|---|
-| separate encoders + joint embedding | modalities meet in a shared retrieval space | cheap search and classification | pooled vectors lose token/region interactions |
-| vision encoder + projector + LLM | projected visual tokens enter a language model | reuse pretrained specialists; practical adaptation | vision preprocessing may be a bottleneck |
-| cross-attention modules | language states attend to visual states at selected layers | controlled repeated fusion | more architectural and serving complexity |
-| early/native multimodal transformer | modalities are trained in a more unified token stream | rich interaction and potential any-to-any behavior | expensive joint data/training; modality balance matters |
+def make_pairs(count: int, shared_dim: int, img_dim: int, cap_dim: int, seed: int):
+    """Build synthetic image-caption pairs sharing a hidden latent.
 
-An **omni model** usually refers to a model intended to accept and possibly emit several modalities in one conversational system. The label says little about internal fusion or latency. Chapter 30 treats audio, video, and generated media at the production boundary.
+    Each pair ``i`` is generated from one latent vector ``z_i`` seen through
+    two different random linear views plus small noise, so a matched pair is
+    only recoverable by a model that learns to invert both views into a
+    common space — exactly the job contrastive training does.
 
-Do not confuse **late fusion** with **late interaction**. Late fusion is an architectural statement: independently formed modality representations meet late. Late interaction is a retrieval scoring statement: keep multiple query and document vectors, then compare them at search time. A system can use a late-fusion VLM encoder to produce vectors and late-interaction retrieval to score them.
+    Args:
+        count: Number of pairs (the batch size ``B``).
+        shared_dim: Dimensionality of the hidden latent.
+        img_dim: Raw image feature width.
+        cap_dim: Raw caption feature width.
+        seed: Seed for the local generator, so pairs are reproducible.
 
-Native multimodality does not remove application preprocessing. Images still need size, orientation, frame, and safety policies; audio needs sampling and turn boundaries; documents need page selection; screens need freshness. The model may learn more of the mapping, but the caller still chooses which evidence enters the context and what authority follows.
-
-## Grounding turns words into regions and points {#sec-ch29-grounding}
-
-**Grounding** connects a linguistic reference to image coordinates or a region. A model might answer “the total is 312.00” and emit `[820,1180,1080,1260]` as the supporting box. For GUI work, it might emit the center point of the button labeled “Save draft.” A grounding result is evidence or a proposal—not authorization.
-
-Coordinates need a declared convention. Absolute pixels depend on the exact rendered width and height. Normalized coordinates such as integers in a 0–1000 grid travel across image sizes but must be mapped back with known rounding and letterboxing. Some models emit `(x_0,y_0,x_1,y_1)`, others a point, polygon, mask, or tokenized region. Store the source image dimensions, transform, and model convention with every result.
-
-For a normalized point $(u,v)$ on scale $M$ and rendered image $(W,H)$, one mapping is
-
-$$
-x=\operatorname{round}\!\left(\frac{u}{M}W\right),
-\qquad
-y=\operatorname{round}\!\left(\frac{v}{M}H\right).
-$$
-
-If preprocessing letterboxed an image, subtract padding and divide by the content scale before using page coordinates. A one-line normalization mismatch can move every click while language answers remain excellent.
-
-Grounding can be produced as ordinary coordinate tokens without a dedicated detector head. That makes the prompt convention and tokenizer part of the contract. It also means constrained syntax does not guarantee correct geometry. Validate bounds, shape, target identity, visibility, occlusion, and current screen state outside the model.
-
-**Pointing** asks for one or more representative locations; boxes cover rectangular extent; segmentation masks cover shape. A point is compact for clicks but weak evidence for a table or chart. A box is useful for field citations and crop re-inspection. Choose the representation the downstream verifier can evaluate.
-
-Spatial reasoning often lags semantic recognition. A model can identify every UI control yet swap left/right after a crop, misread an overlapping modal, or fail to relate a legend color to a bar. Test relational and state-dependent cases rather than inferring grounding from VQA accuracy.
-
-## Document understanding needs values, structure, and evidence {#sec-ch29-documents}
-
-Document extraction has at least four outputs: recognized content, layout structure, normalized business values, and evidence linking each value to the page. OCR produces characters and sometimes boxes. Layout models identify blocks, tables, formulas, and reading order. A VLM can perform end-to-end parsing or direct schema extraction. A deterministic layer must still validate types, constraints, and authoritative cross-checks.
-
-The cheapest pipeline for clean digital prose is often PDF text extraction plus layout metadata. OCR remains strong for scans and gives an independent numeric channel. VLM-native parsing becomes attractive when visual hierarchy, charts, handwriting, mixed scripts, or irregular tables dominate. Many production systems keep a **dual representation**: text for exact lexical search and validation, page images or visual embeddings for layout-dependent retrieval and answering.
-
-The reference schema requires five invoice fields, each with a value and evidence box. Validation checks the exact field set, string value type, all four box coordinates, and that every box lies inside the rendered page. The evaluator then compares normalized values to source truth. The core loop is:
-
-```python
-# page_reader.py — one resolution sweep
-for page in pages:
-    extraction = fixture_extract(page, tiles)
-    validate_extraction(extraction, page)
-    page_correct, page_total = score_fields(extraction, page)
-    correct += page_correct
-    total += page_total
+    Returns:
+        A tuple ``(images, captions)`` of raw feature matrices shaped
+        ``(count, img_dim)`` and ``(count, cap_dim)``.
+    """
+    g = torch.Generator().manual_seed(seed)
+    z = torch.randn(count, shared_dim, generator=g)
+    images = z @ torch.randn(shared_dim, img_dim, generator=g) + 0.05 * torch.randn(count, img_dim, generator=g)
+    captions = z @ torch.randn(shared_dim, cap_dim, generator=g) + 0.05 * torch.randn(count, cap_dim, generator=g)
+    return images, captions
 ```
 
-The deterministic adapter is not a model benchmark. It provides a stable failing curve so the chapter's schema, scoring, evidence, and budget code always runs. `OpenAICompatibleVLM` encodes a real PNG, requests the same five values and boxes from a local endpoint, and parses JSON. A production version should use schema-constrained decoding where supported, retry only malformed responses within a budget, and preserve raw model evidence for adjudication.
+We instantiate six pairs — think invoice, bar chart, screenshot, receipt, table, map — and read off the similarity matrix and loss before any training.
 
-Field-level exact match needs domain normalization: currency separators, dates, Unicode, whitespace, identifiers, and tolerance where measurement is approximate. Score absent and abstained separately from wrong. Add table structure, reading order, formula, chart, and region-overlap metrics only when the product requires them. A composite parsing benchmark cannot select a system for a specific invoice policy without this task contract.
+```{python}
+torch.manual_seed(0)
+images, captions = make_pairs(6, shared_dim=6, img_dim=16, cap_dim=12, seed=1)
+model = DualEncoder(16, 12, 8)
+tau = 0.1
 
-Optical compression treats visual tokens as a compact representation from which text and structure can be decoded. The useful engineering question is not whether a page can theoretically compress, but how accuracy changes with scan quality, density, script, formulas, and token budget. Preserve the original and preprocessing lineage; a compressed representation is derived state, not the evidentiary document.
+vi, vt = model(images, captions)
+sim_before = (vi @ vt.t()).detach()
+print("similarity BEFORE (rows=images, cols=captions):")
+print(np.round(sim_before.numpy(), 2))
+print("InfoNCE loss:", round(float(info_nce_loss(vi @ vt.t(), tau)), 3),
+      " diagonal-argmax hits:", int((sim_before.argmax(1) == torch.arange(6)).sum()), "/ 6")
+```
 
-::: {.callout-note .landscape-2026}
-### Landscape 2026 (dated)
+The matrix is a mess of positive and negative correlations, and only one of the six images picks its true caption as the strongest match. Now we minimize @eq-ch29-infonce for 300 steps of Adam and look again.
 
-**Verify live: 2026-07-19. Appendix C owner: document parsing and evaluation registry.** [OmniDocBench](https://arxiv.org/abs/2412.07626) established diverse component-level document parsing evaluation; 2026 work such as [Real5-OmniDocBench](https://arxiv.org/abs/2603.04205) and [PureDocBench](https://arxiv.org/abs/2605.07492) emphasizes physical degradation, source traceability, annotation audit, and saturation risk. Model names and top-line scores move rapidly. Retain a frozen public benchmark for comparability, a source-traceable internal set for field decisions, and fresh degraded/incident cases for deployment validity.
+```{python}
+opt = torch.optim.Adam(model.parameters(), lr=0.05)
+for _ in range(300):
+    vi, vt = model(images, captions)
+    loss = info_nce_loss(vi @ vt.t(), tau)
+    opt.zero_grad(); loss.backward(); opt.step()
+
+vi, vt = model(images, captions)
+sim_after = (vi @ vt.t()).detach()
+print("similarity AFTER:")
+print(np.round(sim_after.numpy(), 2))
+print("InfoNCE loss:", round(float(info_nce_loss(vi @ vt.t(), tau)), 3),
+      " diagonal-argmax hits:", int((sim_after.argmax(1) == torch.arange(6)).sum()), "/ 6")
+```
+
+The loss falls from 5.14 to near zero, every diagonal entry becomes the largest in its row (0.87 to 0.98), and all six images now match their own caption. @fig-ch29-contrastive draws both matrices side by side: the diagonal lighting up *is* what "aligned embeddings" means. SigLIP replaces the softmax-over-a-row in @eq-ch29-infonce with an independent sigmoid on every cell, $-\frac{1}{B^2}\sum_{i,j}\log\sigma(z_{ij}(a\,s_{ij}+b))$ with $z_{ij}=\pm1$ — no global normalization, which scales to larger batches without a batch-wide softmax [@zhai2023siglip]. Both objectives teach alignment; neither, on its own, makes an encoder follow an instruction or emit structured output. That is what the projector and instruction tuning add.
+
+```{python}
+#| label: fig-ch29-contrastive
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does contrastive training place a matched image and caption near each other? The B-by-B similarity matrix before (left) and after (right) 300 steps. InfoNCE makes each row a classification whose right answer is the diagonal; training drives the diagonal to 1 and off-diagonal cells apart."
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.4))
+for ax, mat, title in ((axes[0], sim_before.numpy(), "before"),
+                       (axes[1], sim_after.numpy(), "after")):
+    im = ax.imshow(mat, vmin=-1, vmax=1, cmap="RdBu_r")
+    ax.set_title(f"similarity {title}", fontsize=10)
+    ax.set_xlabel("caption"); ax.set_ylabel("image")
+    ax.set_xticks(range(6)); ax.set_yticks(range(6))
+fig.colorbar(im, ax=axes, fraction=0.046, pad=0.04, label="cosine")
+plt.show()
+```
+
+## The image-token bill: dynamic tiling and cost {#sec-ch29-budget}
+
+One fixed square view is fine for a photo and poor for a dense page: shrink an A4 invoice to 224 pixels and the decimals vanish. **Dynamic tiling** is the standard fix — divide a high-resolution image into model-sized crops, encode each, and usually add one downscaled thumbnail for global layout. More tiles reveal small text but repeat context and raise the token count. For a model emitting $k$ tokens per tile plus $t$ thumbnail tokens, a page of $n$ tiles costs
+
+$$
+V(n)=nk+t.
+$$ {#eq-ch29-bill}
+
+We fix $k=256$ and $t=64$ — representative of a common tile size — and read the bill straight off @eq-ch29-bill.
+
+```{python}
+# @save
+def image_token_bill(tiles: int, tokens_per_tile: int = 256, thumbnail: int = 64) -> int:
+    """Return per-page visual tokens under dynamic tiling, from @eq-ch29-bill."""
+    if tiles <= 0:
+        raise ValueError("tiles must be positive")
+    return tiles * tokens_per_tile + thumbnail
+
+
+def dollars(tokens: int, price_per_mtok: float) -> float:
+    """Convert a token count to dollars at a per-million-token input price."""
+    return tokens / 1e6 * price_per_mtok
+```
+
+```{python}
+for n in (1, 4, 9, 16):
+    print(f"tiles={n:2d}  ->  {image_token_bill(n):5d} image tokens/page")
+```
+
+Those four numbers — 320, 1,088, 2,368, 4,160 — are the reason a naive "just send the screenshot at full resolution" plan blows a budget. @fig-ch29-tiling shows what nine tiles plus a thumbnail actually means for one page. The arithmetic compounds hardest in a computer-use loop, where every step is a fresh screenshot.
+
+::: {.callout-note title="In the interview"}
+**Q. A pixel-based computer-use agent runs 20 steps on a 4K screen, tiling each screenshot into 16 tiles. Estimate the image-token cost per task, and where it hides.**
+Price the pixels, not the call. Each step is ${16\times256+64=4{,}160}$ image tokens, so twenty steps is ${83{,}200}$ image tokens *before* any prompt, tool, or history text — and before caching. At an illustrative \$3 per million input tokens that is about \$0.25 per task in pixels alone; a thousand tasks a day is \$250/day for *seeing*, independent of the reasoning. The number they want is $s\cdot V(n)$ with the step count $s$ made explicit, plus the observation that resolution and step count multiply. The trap is quoting a single per-image price as if a task were one image, or silently dropping tiling resolution below the target size to save tokens — which trades a budget line for a misgrounded click.
 :::
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `page_reader.py` with schema, evidence, and sweep | 164 lines total; 7 shown | Every scored value has in-page evidence, and resolution is selected from measured accuracy and image-token cost rather than intuition. |
-:::
+```{python}
+task_tokens = 20 * image_token_bill(16)
+print("20 steps x 16 tiles:", task_tokens, "image tokens/task")
+print("illustrative cost at $3/Mtok: $", round(dollars(task_tokens, 3.0), 3))
+```
 
-## Visual retrieval preserves page-level interactions {#sec-ch29-visual-rag}
+To see tiling on a real page we first need one. We build a small synthetic invoice — five fields at known boxes, every value emitted by the generator so the ground truth is exact rather than transcribed — and reuse it for extraction in the next section. The `Box` and `Page` records carry both the gold values and the evidence rectangle each value came from.
 
-Chapter 14 represented a document as text chunks and dense vectors. Visual-document retrieval can instead encode each page image. A single pooled vector is compact, but pooling can dilute a small relevant region or be dominated by repeated generic material. **Late interaction** retains multiple vectors per page.
+```{python}
+# @save
+from dataclasses import dataclass
+from PIL import Image, ImageDraw, ImageFont
 
-Let query token vectors be $\mathbf{q}_1,\ldots,\mathbf{q}_m$ and page patch vectors be $\mathbf{d}_1,\ldots,\mathbf{d}_n$, all normalized. MaxSim scoring is
+FIELDS = ("invoice_id", "vendor", "total", "due_date", "chart_peak")
+CELL_W, CELL_H = 26, 34
+ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-."
+FONT = ImageFont.load_default(size=28)
+
+
+@dataclass(frozen=True)
+class Box:
+    """An axis-aligned evidence rectangle in page-pixel coordinates."""
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+
+
+@dataclass(frozen=True)
+class Page:
+    """A synthetic invoice with gold field values and their evidence boxes."""
+    page_id: str
+    width: int
+    height: int
+    gold: dict
+    regions: dict
+
+
+def _draw_text(draw: "ImageDraw.ImageDraw", text: str, x: int, y: int) -> None:
+    for i, ch in enumerate(text):
+        bbox = draw.textbbox((0, 0), ch, font=FONT)
+        w = bbox[2] - bbox[0]
+        draw.text((x + i * CELL_W + (CELL_W - w) // 2 - bbox[0], y), ch, fill=0, font=FONT)
+
+
+def make_pages(count: int = 12) -> list[Page]:
+    """Build source-traceable invoices whose gold values come from the generator.
+
+    Every field's value and evidence box is emitted by construction, so the
+    ground truth is exact rather than hand-transcribed. Values vary per page
+    (rising totals, distinct vendors, shifting due dates) to give the reader
+    real work.
+
+    Args:
+        count: Number of pages to generate.
+
+    Returns:
+        A list of ``Page`` objects, each with five gold fields and boxes.
+    """
+    vendors = ("NORTHWIND", "CONTOSO", "TAILSPIN")
+    layout = {"invoice_id": (60, 60), "vendor": (60, 130), "total": (60, 210),
+              "due_date": (360, 60), "chart_peak": (360, 210)}
+    pages = []
+    for i in range(count):
+        gold = {"invoice_id": f"INV-{1040 + i}", "vendor": vendors[i % 3],
+                "total": f"{125 + 17 * i}.00", "due_date": f"2026-08-{10 + i:02d}",
+                "chart_peak": ("Q4", "Q3", "Q2")[i % 3]}
+        regions = {f: Box(x, y, x + len(gold[f]) * CELL_W, y + CELL_H)
+                   for f, (x, y) in layout.items()}
+        pages.append(Page(f"page-{i:02d}", 640, 300, gold, regions))
+    return pages
+
+
+def render_page(page: Page) -> "Image.Image":
+    """Rasterize a page's gold fields into a grayscale image.
+
+    Args:
+        page: The page whose gold values and boxes fix what is drawn where.
+
+    Returns:
+        A grayscale ``PIL`` image with each field drawn at its box origin.
+    """
+    img = Image.new("L", (page.width, page.height), 255)
+    draw = ImageDraw.Draw(img)
+    for f in FIELDS:
+        _draw_text(draw, page.gold[f], page.regions[f].x0, page.regions[f].y0)
+    return img
+```
+
+@fig-ch29-tiling cuts one rendered page into a 3-by-3 grid of tiles plus a thumbnail, so $V(9)=9\cdot256+64=2{,}368$ stops being an abstraction.
+
+```{python}
+#| label: fig-ch29-tiling
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does one page become n tiles plus a thumbnail, and why does V(n) grow linearly? A dense page cut into a 3x3 grid is nine model-sized crops (256 tokens each) plus one downscaled thumbnail (64) for global layout: 9x256 + 64 = 2,368 tokens. The thumbnail keeps the tiles from losing the page."
+from PIL import Image as _Im
+page_img = render_page(make_pages(1)[0])
+fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.0),
+                         gridspec_kw={"width_ratios": [3, 1]})
+axes[0].imshow(page_img, cmap="gray")
+for gx in range(1, 3):
+    axes[0].axvline(gx * page_img.width / 3 - 0.5, color="#c0392b", lw=1.2)
+    axes[0].axhline(gx * page_img.height / 3 - 0.5, color="#c0392b", lw=1.2)
+axes[0].set_title("9 tiles: 9 x 256 = 2,304 tokens", fontsize=10)
+thumb = page_img.resize((page_img.width // 4, page_img.height // 4))
+axes[1].imshow(thumb, cmap="gray")
+axes[1].set_title("+ thumbnail: 64", fontsize=10)
+for ax in axes:
+    ax.set_xticks([]); ax.set_yticks([])
+fig.tight_layout()
+plt.show()
+```
+
+## Documents: values, structure, and evidence {#sec-ch29-documents}
+
+Now we make the token bill pay for something. Document extraction has to produce not just recognized text but *normalized values* tied to *evidence* on the page — the total is `312.00`, and here is the box it came from — so a reviewer or a downstream check can audit each claim. We already have the synthetic page and its `render_page` from the previous section; here we build a genuine extractor that reads the rendered fields back by matching each character cell against reference glyphs. Crucially, the reader sees the page *degraded* to a resolution set by the tile budget, so its errors are real recognition failures under blur, not a scripted curve.
+
+The reader has two halves: reference glyph templates rendered once, and a per-field recognizer that crops each character cell from the *degraded* page and picks the nearest template. The degradation is a downscale-then-upscale, and the scale is set by the tile budget — fewer tiles, harsher blur.
+
+```{python}
+# @save
+def _templates() -> dict:
+    templates = {}
+    for ch in ALPHABET:
+        cell = Image.new("L", (CELL_W, CELL_H), 255)
+        d = ImageDraw.Draw(cell)
+        bbox = d.textbbox((0, 0), ch, font=FONT)
+        d.text(((CELL_W - (bbox[2] - bbox[0])) // 2 - bbox[0], 0), ch, fill=0, font=FONT)
+        templates[ch] = np.asarray(cell, dtype=np.float32) / 255.0
+    return templates
+
+
+TEMPLATES = _templates()
+SCALE = {1: 0.38, 4: 0.42, 9: 0.46, 16: 0.60}   # effective resolution per tile budget
+
+
+def _degrade(img: "Image.Image", scale: float) -> "Image.Image":
+    small = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))),
+                       Image.BILINEAR)
+    return small.resize((img.width, img.height), Image.BILINEAR)
+
+
+def _read_cell(cell: np.ndarray) -> str:
+    return min(TEMPLATES, key=lambda ch: float(((cell - TEMPLATES[ch]) ** 2).sum()))
+
+
+def read_fields(image: "Image.Image", page: Page, tiles: int) -> dict:
+    """Recognize each field from a resolution-degraded page image.
+
+    The page is downscaled to the effective resolution the tile budget buys,
+    then upscaled back; each field's box is split into fixed-width character
+    cells and every cell is matched to its nearest reference glyph. Low tile
+    counts blur thin strokes and produce genuine confusions (T vs I, Q vs O).
+
+    Args:
+        image: The rendered (undegraded) page image.
+        page: The page whose boxes locate each field's cells.
+        tiles: Tile budget; indexes ``SCALE`` for the degradation factor.
+
+    Returns:
+        A dict mapping each field to ``{"value": str, "box": {x0,y0,x1,y1}}``.
+    """
+    degraded = _degrade(image, SCALE[tiles])
+    out = {}
+    for f in FIELDS:
+        box = page.regions[f]
+        n_cells = round((box.x1 - box.x0) / CELL_W)
+        chars = []
+        for c in range(n_cells):
+            x0 = box.x0 + c * CELL_W
+            crop = degraded.crop((x0, box.y0, x0 + CELL_W, box.y0 + CELL_H))
+            chars.append(_read_cell(np.asarray(crop, dtype=np.float32) / 255.0))
+        out[f] = {"value": "".join(chars), "box": box.__dict__}
+    return out
+```
+
+Before scoring anything we run one page at the extremes and *look at the output*, d2l-style — the honest artifact, misreads and all.
+
+```{python}
+page0 = make_pages(1)[0]
+img0 = render_page(page0)
+print("gold      :", page0.gold)
+print("read @1 tile :", {f: read_fields(img0, page0, 1)[f]["value"] for f in FIELDS})
+print("read @16 tile:", {f: read_fields(img0, page0, 16)[f]["value"] for f in FIELDS})
+```
+
+At one tile the reader returns `NORIHWIND` for the vendor and `O4` for the chart label: the blur turned the T into an I and the Q into an O, the two confusions a human squinting at a thumbnail would make. At sixteen tiles every field is exact. Recognition is not enough, though — a value we cannot audit is a liability. Two deterministic functions enforce the contract: the schema and evidence bounds, then the exact-match score against gold.
+
+```{python}
+# @save
+def validate_extraction(extraction: dict, page: Page) -> None:
+    """Reject a result missing fields, mistyped, or citing an off-page box.
+
+    Args:
+        extraction: The reader's output, field -> ``{value, box}``.
+        page: The page the extraction claims to describe.
+
+    Raises:
+        ValueError: If the field set is wrong, a box is malformed, or a box
+            escapes the page bounds.
+        TypeError: If a value is not a string.
+    """
+    if set(extraction) != set(FIELDS):
+        raise ValueError("extraction does not match the field schema")
+    for f, item in extraction.items():
+        if not isinstance(item.get("value"), str):
+            raise TypeError(f"{f} value must be a string")
+        b = item.get("box", {})
+        if set(b) != {"x0", "y0", "x1", "y1"}:
+            raise ValueError(f"{f} lacks a well-formed evidence box")
+        if not (0 <= b["x0"] < b["x1"] <= page.width and 0 <= b["y0"] < b["y1"] <= page.height):
+            raise ValueError(f"{f} evidence box escapes the page")
+
+
+def score_fields(extraction: dict, page: Page) -> tuple[int, int]:
+    """Return (exact-match count, field count) after case/space normalization."""
+    correct = sum(extraction[f]["value"].strip().casefold() == page.gold[f].strip().casefold()
+                  for f in FIELDS)
+    return correct, len(FIELDS)
+
+
+def evaluate(tiles: int, pages: list[Page]) -> dict:
+    """Extract and score every page at one tile budget.
+
+    Args:
+        tiles: The tile budget passed to the reader and the token bill.
+        pages: The evaluation set.
+
+    Returns:
+        A row with the tile budget, per-page image tokens, exact-field count,
+        total fields, and field accuracy.
+    """
+    correct = total = 0
+    for page in pages:
+        extraction = read_fields(render_page(page), page, tiles)
+        validate_extraction(extraction, page)
+        c, t = score_fields(extraction, page)
+        correct, total = correct + c, total + t
+    return {"tiles": tiles, "tokens_per_page": image_token_bill(tiles),
+            "correct": correct, "total": total, "accuracy": round(correct / total, 4)}
+```
+
+Now the sweep across the four tile budgets, over all twelve pages and sixty fields.
+
+```{python}
+pages = make_pages(12)
+sweep = [evaluate(n, pages) for n in (1, 4, 9, 16)]
+print(f"{'tiles':>5} {'tokens/pg':>10} {'correct/60':>11} {'accuracy':>9}")
+for r in sweep:
+    print(f"{r['tiles']:>5} {r['tokens_per_page']:>10} {r['correct']:>7}/60 {r['accuracy']:>9}")
+```
+
+The curve — 0.60, 0.80, 1.00, 1.00 — is the whole resolution decision in four rows, and it was produced by real pixel recognition, not a hardcoded fixture. Short numeric fields resolve first; the nine-letter vendor names need the most pixels because one wrong character fails the whole field. Accuracy reaches its ceiling at nine tiles; sixteen tiles buys 76% more tokens (2,368 to 4,160) for *zero* additional correct fields. @fig-ch29-resolution makes the plateau legible. Do not read the elbow off an aggregate alone: slice by scan quality, font size, and field consequence, because a wrong total and a wrong decorative label count equally in this metric and are worlds apart in a business.
+
+```{python}
+#| label: fig-ch29-resolution
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where does more page resolution stop paying? Exact field accuracy (left axis) rises from 0.60 at one tile to a ceiling at nine, then flattens; image tokens (right axis) keep climbing. The gap past nine tiles is pure cost: +76% tokens for +0 accuracy."
+xs = [r["tiles"] for r in sweep]
+fig, ax1 = plt.subplots(figsize=(6.4, 3.4))
+ax2 = ax1.twinx()
+l1 = ax1.plot(xs, [r["accuracy"] for r in sweep], "o-", color="#2f855a", label="field accuracy")
+l2 = ax2.plot(xs, [r["tokens_per_page"] for r in sweep], "s--", color="#315b8a", label="image tokens")
+ax1.axvline(9, color="0.7", ls=":")
+ax1.annotate("plateau: +76% tokens, +0 accuracy", (9, 0.55), (10.2, 0.4),
+             arrowprops=dict(arrowstyle="->", color="0.4"), fontsize=8, color="0.3")
+ax1.set(xlabel="tiles per page", ylabel="exact field accuracy", ylim=(0, 1.05), xticks=xs)
+ax2.set_ylabel("image tokens per page")
+ax1.legend(l1 + l2, [ln.get_label() for ln in l1 + l2], loc="center right", frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+The reader stands in for a VLM so the chapter runs offline; the *interface* is what a real model plugs into. Swapping in a hosted or local model means replacing `read_fields` with an endpoint call and validating its JSON with the same two functions — never publishing its fixture numbers as model performance. The adapter below shows the shape; we mark it `#| eval: false` because it needs a running server and a network.
+
+```{python}
+#| eval: false
+class OpenAICompatibleVLM:
+    """Extract the same schema from a real local OpenAI-compatible endpoint.
+
+    A drop-in replacement for ``read_fields``: it sends the page as a base64
+    data URL, asks for the five fields with boxes as JSON, and returns a dict
+    the same ``validate_extraction`` / ``score_fields`` pair can check. Pin
+    the model and its image processor together; prefer schema-constrained
+    decoding where the server supports it.
+    """
+
+    def __init__(self, base_url: str, model: str) -> None:
+        self.base_url, self.model = base_url.rstrip("/"), model
+
+    def extract(self, image_path) -> dict:
+        import base64, json, httpx           # imported lazily: the offline default needs none
+        data = base64.b64encode(open(image_path, "rb").read()).decode()
+        prompt = ("Extract invoice_id, vendor, total, due_date, chart_peak. "
+                  "Return JSON: {field: {value, box:{x0,y0,x1,y1}}} only.")
+        payload = {"model": self.model, "temperature": 0, "messages": [{"role": "user",
+                   "content": [{"type": "text", "text": prompt},
+                               {"type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{data}"}}]}]}
+        r = httpx.post(f"{self.base_url}/v1/chat/completions", json=payload, timeout=60)
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+```
+
+Which channel to reach for is per workload. Clean digital PDFs are cheapest read as text plus layout metadata; scans want OCR, which also gives an independent numeric channel to cross-check; VLM-native parsing earns its cost when visual hierarchy, charts, handwriting, or irregular tables dominate. Many systems keep a **dual representation** — text for exact search and validation, page images or visual embeddings for layout-dependent retrieval — which is exactly the retrieval question of the next section. Public parsing benchmarks such as DocVQA [@mathew2021docvqa] and OmniDocBench [@ouyang2024omnidocbench] compare systems, but only your source-traceable set decides your invoice policy.
+
+## Visual-document retrieval: MaxSim over pooling {#sec-ch29-visual-rag}
+
+Chapter 14 represented a document as text chunks and dense vectors. A visually rich page resists that: shrink it to one pooled vector and a small but decisive region — the one cell with the number the query needs — gets averaged into oblivion, or drowned by repeated boilerplate. The late-interaction idea from @sec-ch14-encoders is the fix, and ColPali applies it directly to page images: encode a page as *many* patch vectors, encode the query as *many* token vectors, and score with MaxSim, each query token taking its single best patch [@faysse2024colpali; @khattab2020colbert]. We met the scoring rule as @eq-ch14-maxsim; here it is over page patches:
 
 $$
 S(Q,D)=\sum_{i=1}^{m}\max_{1\le j\le n}\mathbf{q}_i^\top\mathbf{d}_j.
-$$
+$$ {#eq-ch29-maxsim}
 
-Every query term finds its best patch, then those best matches are summed. The operation is asymmetric: query tokens ask questions of a larger page-vector set. A page cannot win merely because one patch matches one term if the remaining query terms find no home.
+The construction that makes the difference visible: a query with two orthogonal concepts, a relevant page holding one perfect patch for each plus eight distractors, and a "flooded" page repeating a single generic vector aimed halfway between the concepts — the shape a poisoned or boilerplate-heavy page takes.
 
-@fig-ch29-maxsim contrasts pooled and late-interaction paths.
+```{python}
+# @save
+def _normalize(vec) -> np.ndarray:
+    arr = np.asarray(vec, dtype=np.float64)
+    return arr / np.linalg.norm(arr)
+
+
+def pooled_score(query: list, document: list) -> float:
+    """Score a query and document by the cosine of their mean-pooled vectors."""
+    q = _normalize(np.mean([_normalize(v) for v in query], axis=0))
+    d = _normalize(np.mean([_normalize(v) for v in document], axis=0))
+    return float(q @ d)
+
+
+def maxsim(query: list, document: list) -> float:
+    """Late-interaction score: each query vector takes its best document match.
+
+    Implements @eq-ch29-maxsim over L2-normalized vectors. Unlike pooling, a
+    query term that matches one small region contributes its full similarity,
+    so a decisive patch is not averaged away — and a page cannot win on one
+    lucky patch while the rest of the query finds no home.
+
+    Args:
+        query: Query token vectors.
+        document: Document patch vectors.
+
+    Returns:
+        The summed best-match similarity ``S(Q, D)``.
+    """
+    qn, dn = [_normalize(v) for v in query], [_normalize(v) for v in document]
+    return float(sum(max(q @ d for d in dn) for q in qn))
+```
+
+```{python}
+query = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+relevant = [query[0], query[1]] + [(0.0, 0.0, 1.0)] * 8
+flooded = [(0.7, 0.7, 0.0)] * 10
+print(f"{'':>8}{'relevant':>10}{'flooded':>10}   winner")
+for name, fn in (("pooled", pooled_score), ("MaxSim", maxsim)):
+    rel, fl = fn(query, relevant), fn(query, flooded)
+    print(f"{name:>8}{rel:>10.3f}{fl:>10.3f}   {'relevant' if rel > fl else 'flooded'}")
+```
+
+Pooling picks the flooded page, 1.000 to 0.174: its repeated vector aligns perfectly with the pooled query while the relevant page's two sharp matches get diluted by eight distractors. MaxSim picks the relevant page, 2.000 to 1.414, because each query token finds its own perfect patch and the flood — equally similar to both concepts but perfect for neither — tops out at ${2/\sqrt2\approx1.414}$. @fig-ch29-maxsim traces the two paths. This is a constructed demonstration of the *mechanism*, not a theorem that late interaction defeats poisoning; change the pooling, vector counts, or geometry and it can flip. The cost is storage: many vectors per page instead of one. A practical ladder climbs only as far as recall demands — caption-and-text-index, then one joint page vector, then a document-specific single vector, then multivector late interaction, then agentic page-and-crop selection — and every compression step (patch pooling, lower dimension, quantization) can destroy tiny-region recall, so it must be re-measured. Poisoned pages and visual prompt injection remain a security problem for @sec-ch15 and @sec-ch24, not a retrieval score.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch29-maxsim
-%%| fig-cap: "Why can late interaction preserve a small visual region that pooling dilutes?"
-%%| fig-alt: "A pooled retriever compresses all query tokens and page patches to one vector before one similarity. A late-interaction retriever keeps query-token and page-patch vectors, takes the best patch match for each query token, and sums those matches."
+%%| fig-cap: "Why does late interaction keep a small region that pooling drowns? Pooling collapses each side to one vector before a single similarity, so a repeated 'flood' vector wins (1.000 vs 0.174). MaxSim keeps every vector and sums each query token's best patch, so two sharp matches beat the flood (2.000 vs 1.414)."
 flowchart TB
-    Q["Query token vectors"] --> QPOOL["Pool to one query vector"]
-    PAGE["Page patch vectors"] --> DPOOL["Pool to one page vector"]
-    QPOOL --> ONE["One similarity"]
-    DPOOL --> ONE
-
-    Q --> EACH["For each query token"]
-    PAGE --> MATCH["Compare with every page patch"]
-    EACH --> MATCH
-    MATCH --> MAX["Keep best patch per query token"]
-    MAX --> SUM["Sum MaxSim score"]
+    Q["Query tokens<br/>2 concepts"] --> QP["mean-pool"]
+    PG["Relevant page<br/>2 sharp + 8 distractor patches"] --> DP["mean-pool"]
+    QP --> S1["one similarity<br/>relevant 0.174 · flooded 1.000"]
+    DP --> S1
+    Q --> EACH["for each query token:<br/>best patch match"]
+    PG --> EACH
+    EACH --> SUM["sum MaxSim<br/>relevant 2.000 · flooded 1.414"]
+    S1 --> WP["pooling picks the flood"]
+    SUM --> WM["MaxSim picks the page"]
 ```
 
-The runnable example asks for two orthogonal concepts. The relevant page contains one perfect patch for each plus eight unrelated patches; pooling dilutes it. The flooded page repeats a generic vector halfway between the concepts. Pooled similarity chooses the flood 1.0 to 0.174. MaxSim chooses the relevant page 2.0 to 1.414. This is a constructed explanation, not a theorem that MaxSim defeats poisoning.
+## Grounding: turning words into coordinates {#sec-ch29-grounding}
 
-A practical cost ladder is:
+**Grounding** connects a linguistic reference to image coordinates. A model answers "the total is 312.00" and emits `[820,1180,1080,1260]` as the box it read; a GUI model emits the center point of "Save draft." A grounding result is *evidence or a proposal, never authorization* — a distinction the next section enforces. The first practical hazard is the coordinate convention. Absolute pixels break the moment the render size changes, so models emit *normalized* coordinates, typically integers on a `0..1000` grid, which travel across image sizes. Mapping one back to a pixel is a division — except when preprocessing **letterboxed** the image, padding it to a square with gray bars, in which case the pad must be subtracted first. Forget the pad and every click shifts. We write the mapping to make that failure a number.
 
-1. caption or OCR and use the existing text index;
-2. one joint image/text embedding per page;
-3. a document-specific single-vector encoder;
-4. multivector visual embeddings with late interaction;
-5. agentic retrieval that selects pages, crops, tools, and follow-up queries.
+```{python}
+# @save
+def to_pixels(u: int, v: int, grid: int, screen_w: int, screen_h: int,
+              pad_x: int = 0, pad_y: int = 0) -> tuple[int, int]:
+    """Map a normalized model coordinate to a screen pixel, undoing letterbox pad.
 
-Storage rises with page count, vectors per page, dimension, and bytes per component. Reduce it through patch pooling, lower dimensions, quantization, centroid/residual compression, candidate generation before exact scoring, and tiered storage. Each lever can destroy tiny-region recall; evaluate after every transformation. Do not cite a generic terabyte-to-gigabyte ratio without your page count and representation.
+    The model emits ``(u, v)`` on a ``grid``-wide square it was shown. If the
+    original screen was letterboxed into that square, the content occupies
+    only ``grid - 2*pad`` of it, so the pad must be removed and the remainder
+    rescaled to the true screen. Passing ``pad_x=pad_y=0`` is the common bug:
+    it treats the padded square as if it were the whole screen.
 
-Visual retrieval complements rather than automatically replaces text. Text indexes give exact identifiers, filters, phrase search, and cheap snippets. Visual multivectors retain layout and figure evidence. A dual index can union or cascade candidates, rerank with query-specific policy, and cross-check extracted numbers. Tenant filters and source authorization apply before either search. Visual prompt injection and poisoned pages still require Chapters 15 and 24's defenses.
+    Args:
+        u: Horizontal model coordinate on the ``0..grid`` scale.
+        v: Vertical model coordinate on the ``0..grid`` scale.
+        grid: Width of the square grid the model emits on (e.g. 1000).
+        screen_w: True screen width in pixels.
+        screen_h: True screen height in pixels.
+        pad_x: Horizontal letterbox pad, in grid units (0 if none).
+        pad_y: Vertical letterbox pad, in grid units (0 if none).
 
-::: {.callout-note .landscape-2026}
-### Landscape 2026 (dated)
-
-**Verify live: 2026-07-19. Appendix C owner: visual-retrieval models, benchmarks, and engines.** [ColPali](https://arxiv.org/abs/2407.01449) introduced page-image multivectors and ViDoRe alongside a late-interaction recipe. Current libraries and vector engines differ in native multivector indexing, MaxSim execution, compression, and filters. ViDoRe revisions and leaderboards continue to move. Benchmark the exact encoder, preprocessing, index, compression, filter order, and reranker on your own pages.
-:::
-
-## GUI perception must end in a fresh, gated proposal {#sec-ch29-gui}
-
-This section completes the pixel-based computer-use perception deferred in Chapter 21. A GUI loop observes a screen, grounds the intended control, proposes a semantic action and coordinates, passes deterministic policy and freshness checks, acts, then observes again. The model never receives raw authority to click arbitrary coordinates.
-
-Prefer a stable semantic channel when available. DOM selectors, accessibility nodes, native automation identifiers, and application APIs are cheaper and easier to verify than pixels. Use the screenshot to resolve visual-only state and fall back to coordinates when structured surfaces are missing or untrustworthy. Hybrid agents can ask the VLM which named element matters, then let code target it.
-
-Screen parsers can detect icons, text, and controls, while **Set-of-Marks** overlays give candidate regions short speakable identifiers. This can reduce free-coordinate error: the model says “mark 17” and code maps it to a known box. It can also clutter dense screens, miss custom controls, or expose a stale parse. The unmarked screenshot, marks, element table, and coordinate transform must share one revision.
-
-The reference screen has `Save draft`, `Delete account`, and `Email address` elements. `ground` stands in for a VLM: it finds exactly one label and proposes the element's center plus the screen digest. `authorize` then rechecks:
-
-```python
-# gui_step.py — deterministic boundary after visual grounding
-if proposal.screen_digest != screen.digest:
-    return "deny:stale_screen"
-element = find_element(screen, proposal.element_id)
-if not point_inside(proposal, element.box):
-    return "deny:coordinates_outside_target"
-if element.destructive and not confirmed:
-    return "review:confirmation_required"
-return "allow"
+    Returns:
+        The ``(x, y)`` screen pixel the coordinate points at.
+    """
+    fx = (u - pad_x) / (grid - 2 * pad_x)
+    fy = (v - pad_y) / (grid - 2 * pad_y)
+    return round(fx * screen_w), round(fy * screen_h)
 ```
 
-The source file spells out the helpers rather than hiding them. A safe click is allowed. Deleting the account requires confirmation. After the delete button moves and the screen revision changes, the previously confirmed proposal is denied as stale. Confirmation authorized the semantic action on one state, not a coordinate forever.
+A 1920-by-1080 screen fit into a 1000-square keeps its width but shrinks to 562 tall, leaving a $(1000-562)/2\approx219$ pad top and bottom. Consider a model coordinate near the lower third, `v=700`.
 
-@fig-ch29-gui shows the trust boundary between perception and effect.
+```{python}
+print("no letterbox, v=300 :", to_pixels(760, 300, 1000, 1000, 700))
+right = to_pixels(760, 700, 1000, 1920, 1080, pad_y=219)   # pad removed
+wrong = to_pixels(760, 700, 1000, 1920, 1080)              # pad forgotten
+print("letterbox-correct   :", right)
+print("letterbox-forgotten :", wrong)
+print("vertical error      :", wrong[1] - right[1], "px")
+```
+
+The pad-aware mapping lands at $y=924$; forgetting the pad lands at $y=756$ — 168 pixels too high, comfortably onto a different control. Language answers stay perfect while every click drifts, which is why a grounding regression can pass a VQA suite and still break automation. @fig-ch29-coords draws the two landings. This is also why the representation matters: a **point** is compact for a click but weak evidence for a table; a **box** supports a crop and re-inspection; a **mask** covers shape. Choose the representation the downstream verifier can actually check — and validate bounds, target identity, and screen state *outside* the model, because coordinates emitted as ordinary tokens obey no geometry constraint.
+
+```{python}
+#| label: fig-ch29-coords
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where does a normalized model coordinate actually land, and how does letterbox padding move it? The model saw a 1000-square with 219px gray pads (hatched). Removing the pad maps v=700 to y=924 (green); forgetting it maps to y=756 (red) — 168px high, onto the wrong control."
+from matplotlib.patches import Rectangle
+fig, ax = plt.subplots(figsize=(4.6, 4.6))
+ax.add_patch(Rectangle((0, 0), 1000, 1000, fill=False, ec="0.4"))
+ax.add_patch(Rectangle((0, 0), 1000, 219, fc="0.85", hatch="//", ec="0.6"))
+ax.add_patch(Rectangle((0, 781), 1000, 219, fc="0.85", hatch="//", ec="0.6"))
+ax.add_patch(Rectangle((0, 219), 1000, 562, fill=False, ec="#315b8a", lw=1.5))
+ax.plot(760, 924, "o", color="#2f855a", ms=11); ax.annotate("pad removed\ny=924", (760, 924), (300, 900), color="#2f855a", fontsize=8)
+ax.plot(760, 756, "X", color="#c0392b", ms=11); ax.annotate("pad forgotten\ny=756", (760, 756), (300, 640), color="#c0392b", fontsize=8)
+ax.annotate("", (620, 756), (620, 924), arrowprops=dict(arrowstyle="<->", color="0.3"))
+ax.text(560, 840, "168 px", rotation=90, fontsize=8, color="0.3")
+ax.set(xlim=(-20, 1020), ylim=(1020, -20), xticks=[], yticks=[], title="model 1000-grid over a letterboxed screen")
+fig.tight_layout()
+plt.show()
+```
+
+## GUI perception and the deterministic gate {#sec-ch29-gui}
+
+This section closes the deferral from @sec-ch21: a computer-use agent that observes a screen, grounds a control, and acts — without ever handing the model raw authority to click arbitrary coordinates. The loop is observe, ground, *gate*, act, observe again, and the gate is deterministic code the model cannot talk past. We model the screen as an accessibility tree of elements, each with a label, a box, and a destructive flag, plus a revision and a content digest so we can detect change. A **Set-of-Marks** style overlay would give each element a speakable id — the model says "mark 2" instead of free coordinates — but the marks, the screenshot, and the element table must share one revision [@yang2023setofmark; @lu2024omniparser].
+
+```{python}
+# @save
+import hashlib
+import json
+from dataclasses import replace
+
+
+@dataclass(frozen=True)
+class Element:
+    """One accessibility-tree control: an id, a label, a box, a risk flag."""
+    element_id: str
+    label: str
+    box: tuple
+    destructive: bool = False
+
+
+@dataclass(frozen=True)
+class Screen:
+    """A captured screen: a revision, size, and its elements, with a digest."""
+    revision: int
+    width: int
+    height: int
+    elements: tuple
+
+    @property
+    def digest(self) -> str:
+        payload = {"revision": self.revision, "elements": [e.__dict__ for e in self.elements]}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]
+
+
+@dataclass(frozen=True)
+class ClickProposal:
+    """A model's proposed click, bound to the screen digest it was made on."""
+    screen_digest: str
+    element_id: str
+    x: int
+    y: int
+    destructive: bool
+
+
+def initial_screen() -> Screen:
+    """Build the demo screen.
+
+    Returns:
+        A revision-1 ``Screen`` with three controls: a safe "Save draft", a
+        destructive "Delete account", and an "Email address" text field.
+    """
+    return Screen(1, 1000, 700, (
+        Element("save", "Save draft", (700, 610, 820, 670)),
+        Element("delete", "Delete account", (830, 610, 980, 670), True),
+        Element("email", "Email address", (120, 180, 620, 230)),
+    ))
+```
+
+Grounding turns a label into a proposal by mapping the model's normalized point through `to_pixels` from the previous section — the coordinate mapping is now *exercised*, not asserted — and stamps the proposal with the screen digest it was made on.
+
+```{python}
+# @save
+def ground(screen: Screen, label: str, u: int, v: int) -> ClickProposal:
+    """Resolve a label to a click proposal via the coordinate mapping.
+
+    Stands in for a VLM: it finds the uniquely matching element, maps the
+    model's normalized ``(u, v)`` to a screen pixel with ``to_pixels``, and
+    binds the result to the current screen digest so a later gate can detect
+    a stale screen.
+
+    Args:
+        screen: The screen the model observed.
+        label: The element label the model chose.
+        u: Normalized horizontal coordinate on the 0..1000 grid.
+        v: Normalized vertical coordinate on the 0..1000 grid.
+
+    Returns:
+        A ``ClickProposal`` bound to ``screen.digest``.
+
+    Raises:
+        LookupError: If the label matches zero or several elements.
+    """
+    matches = [e for e in screen.elements if e.label.casefold() == label.casefold()]
+    if len(matches) != 1:
+        raise LookupError("label is missing or ambiguous")
+    element = matches[0]
+    x, y = to_pixels(u, v, 1000, screen.width, screen.height)
+    return ClickProposal(screen.digest, element.element_id, x, y, element.destructive)
+
+
+def authorize(screen: Screen, proposal: ClickProposal, confirmed: bool = False) -> str:
+    """Re-validate a proposal against the live screen before any click.
+
+    The trust boundary: it rejects a proposal made on a stale screen, a
+    coordinate that fell outside its named target, or a destructive action
+    without confirmation. Confirmation authorizes one semantic action on one
+    screen state — not a coordinate forever.
+
+    Args:
+        screen: The current, authoritative screen at click time.
+        proposal: The click proposed after grounding.
+        confirmed: Whether a human confirmed a destructive action.
+
+    Returns:
+        ``"allow"``, ``"review:confirmation_required"``, or a ``"deny:..."``
+        reason string.
+    """
+    if proposal.screen_digest != screen.digest:
+        return "deny:stale_screen"
+    element = next((e for e in screen.elements if e.element_id == proposal.element_id), None)
+    if element is None:
+        return "deny:missing_target"
+    x0, y0, x1, y1 = element.box
+    if not (x0 <= proposal.x <= x1 and y0 <= proposal.y <= y1):
+        return "deny:coordinates_outside_target"
+    if element.destructive and not confirmed:
+        return "review:confirmation_required"
+    return "allow"
+
+
+def mutate(screen: Screen) -> Screen:
+    """Move the delete control and bump the revision, staling old proposals."""
+    moved = tuple(replace(e, box=(40, 610, 190, 670)) if e.element_id == "delete" else e
+                  for e in screen.elements)
+    return replace(screen, revision=screen.revision + 1, elements=moved)
+```
+
+Now we drive the loop. The model grounds two controls — the safe "Save draft" and the destructive "Delete account" — and we push each proposal through the gate under four conditions.
+
+```{python}
+screen = initial_screen()
+save = ground(screen, "Save draft", u=760, v=914)
+dele = ground(screen, "Delete account", u=905, v=914)
+print("save maps to pixel:", (save.x, save.y))
+print("safe click                         :", authorize(screen, save))
+print("destructive, no confirmation       :", authorize(screen, dele))
+print("destructive, confirmed             :", authorize(screen, dele, confirmed=True))
+print("confirmed but screen then changed  :", authorize(mutate(screen), dele, confirmed=True))
+print("image tokens per step              :", image_token_bill(4))
+```
+
+The safe click is allowed. Deleting the account without confirmation returns `review`, not silent action. Confirmed, it is allowed — but replay that same confirmed proposal after the delete button has moved and the screen revision changed, and the gate returns `deny:stale_screen`. The confirmation authorized one semantic action on one state, not a coordinate in perpetuity. @fig-ch29-gui shows the trust boundary this enforces. Cost is the other axis: at four tiles a step is 1,088 image tokens, so the loop's price is roughly $s\cdot V(n)$ — reduce it by preferring DOM or API actions, cropping the search region before grounding, and stopping early, never by dropping resolution below the target size. Report grounding hit rate separately from task success, and weight errors by consequence: a misgrounded "Save draft" is a shrug; a misgrounded "Delete account" is an incident the gate exists to contain.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch29-gui
-%%| fig-cap: "What must happen between a VLM grounding a control and the runtime clicking it?"
-%%| fig-alt: "The runtime captures a screenshot and revision, the VLM proposes a named element and coordinates, a deterministic gate re-reads the current screen, verifies the digest, target box, policy, and confirmation, then either denies or executes and captures a new screen."
+%%| fig-cap: "What must happen between a VLM grounding a control and the runtime clicking it? The model proposes a named element and a point bound to a screen digest; a deterministic gate re-reads the live screen, checks the digest, target box, and destructive policy, and only then allows a click. The model never holds raw click authority."
 sequenceDiagram
     participant R as Runtime
-    participant V as VLM perception
-    participant G as Deterministic gate
-    participant U as User/reviewer
-    participant UI as GUI
-
+    participant V as VLM
+    participant G as Gate (deterministic)
+    participant U as Reviewer
+    participant UI as Screen
     R->>UI: capture screenshot + revision
-    UI-->>R: pixels + structured elements
+    UI-->>R: pixels + accessibility elements
     R->>V: task + bounded screen evidence
-    V-->>R: proposal(element, point, screen digest)
-    R->>G: proposal + current authenticated state
-    G->>UI: re-read target and screen revision
+    V-->>R: proposal(element, point, digest)
+    R->>G: proposal + live screen
+    G->>UI: re-read target box and revision
     alt destructive and current
-        G->>U: exact semantic action + consequence
+        G->>U: exact action + consequence
         U-->>G: bound confirmation
     end
     G-->>R: allow / deny / review
-    R->>UI: execute only if allowed
-    R->>UI: capture post-action screen
+    R->>UI: click only if allowed
 ```
 
-Cost grows per step. If each screenshot costs $v$ image tokens, planning adds $t$ text tokens, and a task takes $s$ observed steps, the input scale is roughly $s(v+t)$ before cache effects. Twelve pixel steps at 1,088 image tokens already consume 13,056 visual tokens. Reduce steps through APIs, DOM actions, deterministic workflows, cropped search regions, state-difference processing, and better stopping—not by silently lowering resolution below the target size.
+## Hallucination and owning the evaluation {#sec-ch29-eval}
 
-Evaluate grounding hit rate separately from task success. Test small and dense controls, high-resolution professional software, overlays, scrolling, scaling, multiple displays, lookalike labels, disabled state, and moving targets. One misgrounding can be harmless on `Save draft` and catastrophic on `Delete account`; report risk-weighted errors and gate containment.
+A VLM can describe an object that is not on the page as fluently as a text model invents a citation, and a supplied image does not make the description grounded. **POPE** measures this directly: ask controlled yes/no questions about object presence — half about objects that are there, half about plausible objects that are not — and read the error structure, not just the accuracy [@li2023pope]. The signature failure is a *yes*-bias: a model that leans toward "yes, it's there" scores high recall and low precision, and its yes-rate drifts above the true 0.5. We compute those numbers on a small answer set from a deliberately biased model.
+
+```{python}
+# @save
+def pope_metrics(answers: list, gold: list) -> dict:
+    """Score object-presence answers the POPE way: accuracy plus its structure.
+
+    Accuracy alone hides the characteristic VLM failure. A yes-biased model
+    keeps high recall (it rarely misses a present object) while precision and
+    the yes-rate expose the confabulation: it also says yes to absent ones.
+
+    Args:
+        answers: Model answers, each ``"yes"`` or ``"no"``.
+        gold: Ground-truth presence, aligned with ``answers``.
+
+    Returns:
+        A dict with ``accuracy``, ``precision``, ``recall``, and ``yes_rate``.
+    """
+    tp = sum(a == "yes" and g == "yes" for a, g in zip(answers, gold))
+    fp = sum(a == "yes" and g == "no" for a, g in zip(answers, gold))
+    fn = sum(a == "no" and g == "yes" for a, g in zip(answers, gold))
+    return {"accuracy": round(sum(a == g for a, g in zip(answers, gold)) / len(gold), 3),
+            "precision": round(tp / (tp + fp), 3) if tp + fp else 0.0,
+            "recall": round(tp / (tp + fn), 3) if tp + fn else 0.0,
+            "yes_rate": round(sum(a == "yes" for a in answers) / len(answers), 3)}
+```
+
+```{python}
+gold = ["yes", "no", "yes", "no", "yes", "no", "yes", "no"]
+biased = ["yes", "yes", "yes", "yes", "yes", "no", "yes", "yes"]
+print(pope_metrics(biased, gold))
+```
+
+Accuracy 0.625 looks mediocre; the structure is diagnostic. Recall is a perfect 1.0 — the model never misses a present object — while precision is 0.571 and the yes-rate is 0.875, far above 0.5. That is confabulation, not perception, and an aggregate accuracy would have hidden it. The same lesson scales to every multimodal metric you own. Document extraction needs schema validity, required-field exactness, evidence-box validity, and abstention counted apart from wrong answers; visual retrieval needs recall at candidate depth, tenant-filter correctness, and poisoning slices; GUI work needs grounding hit rate, task completion, destructive-error rate, and stale-screen containment. Two habits matter more than any single number. First, the unit of analysis is the page or the screen, not the field or the step: sixty fields on twelve invoices are twelve correlated observations, so cluster uncertainty by document with @sec-ch22's statistics. Second, preprocessing is part of the system under test — a comparison run at different DPI, crop, tile count, or coordinate convention is not a base-model comparison. Public multimodal benchmarks saturate and sprout "v2" successors with harder sources; keep a stable subset for regression, but let the source-traceable set you own decide the tile budget, the retrieval tier, and the gate policy.
 
 ::: {.callout-note .landscape-2026}
-### Landscape 2026 (dated)
-
-**Verify live: 2026-07-19. Appendix C owner: GUI grounding models and benchmarks.** [Set-of-Mark prompting](https://arxiv.org/abs/2310.11441), screen parsers, native GUI models, and hybrid browser/computer-use products form a fast-moving stack. The original [ScreenSpot-Pro](https://arxiv.org/abs/2504.07981) results exposed large gaps on high-resolution professional interfaces; newer systems and leaderboard entries improve, so verify current numbers rather than copying them. Benchmark revisions, OS images, scaling, coordinate conventions, and allowed action surfaces are part of the evaluated system.
+**Verify live: 2026-07-20. Appendix C owns the multimodal model, parser, and GUI-grounding registry.** VLM families differ in native resolution, tiling, coordinate format, and image-token accounting; document parsers ([OmniDocBench](https://arxiv.org/abs/2412.07626) [@ouyang2024omnidocbench] and successors such as [REAL-5/OmniDocBench-1.5](https://arxiv.org/abs/2603.04205)) and GUI grounding suites ([ScreenSpot-Pro](https://arxiv.org/abs/2504.07981) [@li2025screenspotpro] and OSWorld-G [@xie2024osworld]) move quickly, and ScreenSpot-Pro's early results exposed large gaps on high-resolution professional interfaces. Roster names, context sizes, coordinate conventions, and leaderboard positions change. The spine that endures is the one on these pages: pixels become a budgeted token sequence, resolution is chosen from a task curve, values carry evidence, coordinates are mapped and gated, and the whole processor-model-index-gate system is evaluated on source-traceable and adversarial slices. Verify current models and numbers against primary sources before quoting them.
 :::
 
-## Choose the cheapest multimodal tier that passes {#sec-ch29-field-guide}
+## Summary
 
-Begin from the question whose answer must survive preprocessing:
+We turned pixels into tokens and back. `patchify` cut a real image into Vision-Transformer patches over which Chapter 2's attention runs unchanged; a tiny contrastive encoder drove its image-caption similarity matrix to the diagonal; and `image_token_bill` priced resolution times tiling into tokens and dollars. A real page reader recognized invoices into evidence-carrying JSON whose accuracy rose then plateaued at nine tiles while cost kept climbing — the resolution decision as a measured curve, not a guess. MaxSim kept a small region pooling drowned; `to_pixels` exposed the 168-pixel letterbox bug; and a deterministic gate refused stale and unconfirmed clicks. Chapter 30 carries multimodality into voice, video, and generated media.
 
-| Workload | Start with | Escalate when | Dominant failure to measure |
-|---|---|---|---|
-| clean contracts and articles | native text + layout metadata | scans, signatures, tables, or visual citations matter | reading order and exact identifiers |
-| invoices and forms | OCR/layout + schema rules, optionally VLM cross-check | irregular layouts, handwriting, charts, or long-tail templates dominate | required-field error and evidence validity |
-| visually rich legal discovery | dual text and visual page indexes | single-vector visual recall misses fine regions | tenant-filtered recall and storage/latency |
-| product-image search | joint image/text embeddings | queries name multiple local attributes | slice recall and near-duplicate confusion |
-| chart/figure questions | retrieve page then crop-aware VLM | answer spans pages or requires calculation | numeric grounding and unsupported inference |
-| browser or desktop control | DOM/accessibility/API action | state is visible only in pixels | grounding, stale-screen containment, cost per step |
+## Exercises
 
-The default is not the accuracy frontier. It is the least expensive representation and model that passes the deployment contract with acceptable residual risk. A large general VLM may lose to a small document specialist on parsing, while being more robust to unusual pages. A multivector index may improve visual recall but be unnecessary for a prose knowledge base. A pixel loop may demo broadly while a narrow API workflow is cheaper and safer.
-
-Use cascades. Extract digital text first, route only low-confidence or visually dependent pages to a VLM, and require independent checks for consequential numbers. Search text and visual indexes in parallel for high-value queries, or use a single-vector first stage before multivector reranking. Crop a GUI search area before expensive grounding, then revalidate against the full current state.
-
-Batch offline documents; keep interactive screens latency-bound. Cache immutable page renderings and embeddings under document and processor hashes. Do not cache GUI coordinates across revisions. Include image storage, preprocessing CPU, visual tokens, vector storage, MaxSim compute, model latency, step count, and review in cost per successful outcome.
-
-The field guide ends in an experiment. Select two plausible tiers, freeze a source-traceable task set, measure quality, latency, cost, security containment, and operational burden, then keep the simpler tier unless the next one earns its complexity. Chapter 32 applies this rule across the whole agent stack.
-
-## Own an evaluation after the benchmark saturates {#sec-ch29-eval}
-
-Multimodal benchmarks saturate for familiar reasons: models improve, public tasks enter training ecosystems, annotations contain errors, and the remaining deployment distribution is harder than clean pages or consumer screens. A “v2” usually adds harder sources, better annotations, professional interfaces, degradation, or contamination controls. It does not invalidate the first benchmark; keep a stable subset for regression and add fresh evidence for selection.
-
-Build task-specific outcome metrics. Document extraction needs schema validity, required-field exactness, normalized numeric/date accuracy, evidence-region validity, table/formula/reading-order metrics where relevant, latency, image tokens, and abstention. Visual retrieval needs recall at candidate depth, tenant-filter correctness, reranking gain, storage, latency, and poisoning slices. GUI work needs element grounding, coordinate hit, task completion, destructive-error rate, stale-screen containment, steps, visual tokens, and confirmation burden.
-
-The independent unit matters. Fifty fields on one invoice are correlated; resampling fields pretends to have more documents than you do. Cluster uncertainty by page or document. Repeated GUI attempts on one screen share layout. Pair systems on the same pages and screen states, preserve clean environment resets, and use the Chapter 22 statistics.
-
-Evaluate preprocessing as part of the system. A model comparison with different DPI, crop, color conversion, tile count, prompt, coordinate mapping, or schema decoder is not a base-model comparison. Record every surface. Test rotations, skew, blur, compression, screen photography, dark mode, scaling, localization, tiny targets, overlays, and assistive settings that appear in use.
-
-Adversarial cases belong beside quality cases. Render an indirect prompt into a retrieved page, hide text at small scale, insert a lookalike button, change the screen after proposal, poison a visual index, and attempt cross-tenant retrieval. Measure whether the model follows the attack and whether the gate contains the effect separately.
-
-Benchmark literacy is the ability to read construction, annotation, contamination, splits, harness, and error slices—not memorize a leaderboard. The evaluation you own should decide processor budget, retrieval tier, gate policy, and release. A saturated public score never proves your invoices or professional GUI are solved.
-
-## Build {#sec-ch29-build}
-
-Run the deterministic build from `newbook/`:
-
-```bash
-python -m pytest tests/test_ch29_multimodal.py -q
-python code/ch29/page_reader.py
-python code/ch29/maxsim_demo.py
-python code/ch29/gui_step.py
-python code/ch29/render_tradeoff.py \
-  --plot assets/figures/ch29-resolution-tradeoff.svg
-```
-
-The document sweep returns:
-
-```text
-tiles   image tokens/page   correct/60   field accuracy
-1                    320          44          0.7333
-4                  1,088          57          0.9500
-9                  2,368          59          0.9833
-16                 4,160          59          0.9833
-```
-
-The source-traceable pages guarantee every gold value and region came from the generator rather than manual transcription. At one tile, every chart peak and four due dates are unreadable. At four, three chart peaks remain wrong. At nine and sixteen, one deliberately difficult chart remains wrong. Every returned field still carries a valid in-page box, which lets a reviewer or verifier inspect the claim.
-
-The retrieval construction produces:
-
-```text
-             relevant page   flooded page   winner
-pooled              0.174          1.000    flooded
-MaxSim               2.000          1.414    relevant
-```
-
-The flooded page repeats a generic vector aligned with the pooled query. The relevant page contains exact patches for both query concepts plus eight distractors. Late interaction preserves the two local matches. Change pooling, vector counts, or embeddings and the example may flip; the test teaches the mechanism, not a universal robustness guarantee.
-
-The GUI fixture returns:
-
-```text
-safe action                         allow
-destructive, no confirmation        review:confirmation_required
-destructive, confirmed              allow
-same proposal after screen change   deny:stale_screen
-illustrative image tokens/step      1,088
-```
-
-To replace the document fixture with a real local VLM, render or select a PNG and run:
-
-```bash
-python code/ch29/page_reader.py \
-  --base-url http://127.0.0.1:8000 \
-  --model YOUR_PINNED_VLM \
-  --image path/to/page.png
-```
-
-The adapter uses the common `/v1/chat/completions` shape with an image data URL. Verify the current server's multimodal and structured-output contract, pin model and processor, and validate the result with the same `validate_extraction` and `score_fields` functions. Never publish the fixture numbers as model performance.
-
-The build succeeds when three invariants hold: resolution selection is justified by a measured field/token curve; every document value has bounded page evidence; and no GUI coordinate executes after the observed screen changes or before a destructive confirmation. A production system still needs real images, calibrated abstention, a secured local endpoint, authoritative DOM/screen capture, OS-level isolation, and the policy architecture from Chapter 24.
-
-## What endures, what changes {#sec-ch29-endures}
-
-**What endures.** Images become a budgeted sequence of representations before language attention. Preserve preprocessing lineage. Choose resolution from a task curve. Distinguish alignment, instruction following, grounding, and authorization. Carry evidence regions with extracted values. Keep OCR/text and visual representations when each preserves different truth. Use late interaction when local page matches justify its storage and compute. Prefer semantic GUI actions, bind coordinate proposals to fresh screens, and gate consequential effects in deterministic code. Evaluate the full processor-model-index-gate system on source-traceable tasks and degraded/adversarial slices.
-
-**What changes.** VLM families, native resolution, image-token accounting, document parsers, visual retrievers, vector engines, GUI models, screen parsers, endpoint schemas, and benchmark leaderboards will change. Appendix C records those dated facts. Removing every Landscape box leaves the visual mechanisms and build intact.
-
-## Exercises {#sec-ch29-exercises}
-
-1. For images at 224, 448, and 896 square with patch sizes 14 and 16, compute patch-token counts before any resampling. Add a four-tile plus thumbnail processor and identify which term dominates long-document context.
-2. Extend `maxsim_demo.py` with four-to-one patch pooling and int8 quantization. Find a construction where compression changes the winner, then state which real retrieval slice should catch that loss.
-3. Add rotation, skew, blur, and a photographed-screen artifact to the invoice generator or a real page set. Measure field and evidence accuracy separately, apply one preprocessing repair, and report which page clusters—not fields—enter the confidence interval.
-4. Generate Set-of-Marks overlays from the deterministic screen elements. Compare label-to-mark grounding with raw coordinates under screen scaling, a modal overlay, and duplicate labels. Keep the same freshness gate.
-5. Render an indirect instruction into a page image and pass it through extraction and retrieval. Record instruction-following and final-effect containment separately; apply the controls from Chapters 15 and 24 without calling the page trusted.
-6. Size multivector storage for ten million pages under a 100-GB budget. State vectors per page, dimension, bytes per component, metadata, replicas, and index overhead; order pooling, lower dimension, quantization, and candidate reranking by expected recall risk.
-7. Compare a twelve-step pixel loop with a hybrid DOM/API path on image tokens, text tokens, latency, grounding errors, stale-state errors, and review burden. Decide which steps genuinely require pixels.
-8. Defend a dual OCR-plus-visual index against a pure visual proposal for legal discovery. Include exact identifier search, layout questions, tenant filtering, storage, rebuild time, citation evidence, poisoning, and the evaluation that would change your decision.
-
-## Notes and sources {#sec-ch29-sources}
-
-- Dosovitskiy et al., [“An Image Is Worth 16×16 Words”](https://arxiv.org/abs/2010.11929), introduce the Vision Transformer patch-sequence construction.
-- Radford et al., [“Learning Transferable Visual Models From Natural Language Supervision”](https://arxiv.org/abs/2103.00020), describe CLIP's contrastive image-text training.
-- Zhai et al., [“Sigmoid Loss for Language Image Pre-Training”](https://arxiv.org/abs/2303.15343), introduce the pairwise sigmoid alternative used in the derivation.
-- Liu et al., [“Visual Instruction Tuning”](https://arxiv.org/abs/2304.08485), establish the LLaVA-style projector and visual instruction-tuning recipe.
-- Li et al., [“Evaluating Object Hallucination in Large Vision-Language Models”](https://arxiv.org/abs/2305.10355), introduce POPE's controlled object-presence probing.
-- Faysse et al., [“ColPali: Efficient Document Retrieval with Vision Language Models”](https://arxiv.org/abs/2407.01449), introduce page-image multivectors, late interaction, and ViDoRe.
-- Santhanam et al., [“PLAID: An Efficient Engine for Late Interaction Retrieval”](https://arxiv.org/abs/2205.09707), provide a systems route for pruning and compressed late-interaction search.
-- Ouyang et al., [“OmniDocBench”](https://arxiv.org/abs/2412.07626), provide diverse parsing tasks and component-level evaluation.
-- Yang et al., [“Set-of-Mark Prompting”](https://arxiv.org/abs/2310.11441), introduce speakable region overlays for visual grounding.
-- Li et al., [“ScreenSpot-Pro”](https://arxiv.org/abs/2504.07981), evaluate GUI grounding on professional high-resolution interfaces.
+1. **Patch budget.** Using `visual_token_count`, tabulate visual tokens for images at 224, 448, and 896 square with patch sizes 14 and 16, then add a four-tile-plus-thumbnail page with `image_token_bill`. Which term dominates the context of a long multi-page document, and at what page count does tiling overtake a single high-resolution view?
+2. **Contrastive knobs.** In the `DualEncoder` demo, (a) raise the temperature `tau` from 0.1 to 1.0 and describe what happens to the trained similarity matrix and the loss floor; (b) shrink `shared_dim` below the true latent width of 6 and explain, from @eq-ch29-infonce, why some pairs can no longer be separated.
+3. **Read the resolution curve honestly.** The sweep plateaus at nine tiles because every field becomes exactly right. Modify `make_pages` to add a low-contrast handwritten-style field (draw it in light gray), rerun `evaluate`, and report a curve that plateaus *below* 1.0. Which field clusters — not which fields — should enter the confidence interval, and why does that change the elbow you would ship?
+4. **Break MaxSim.** Extend the retrieval demo with 4-to-1 patch pooling before scoring, then find a construction where pooling changes the MaxSim winner. State which real retrieval slice (small-region recall? near-duplicate confusion?) would catch that loss in production.
+5. **The letterbox in the loop.** The GUI demo assumes no letterbox. Feed `ground` a screen whose model input was padded (pass a non-zero `pad_y` through a modified `to_pixels` call) and show that the proposal now lands outside its target box, so `authorize` returns `deny:coordinates_outside_target`. Then fix the mapping and confirm `allow`. Why is a gate that checks the target box a safety net for a coordinate bug the model cannot see?
+6. **Stale-screen adversary.** Construct a sequence where a destructive proposal is confirmed, the screen mutates, and a naive runtime that skipped the digest check would have clicked the moved control. Show which line of `authorize` prevents it, then argue why confirmation must bind to a screen state rather than to a semantic action alone.
+7. **Own a POPE probe.** Build a 20-question presence set (half present, half absent) and score three synthetic answer patterns with `pope_metrics`: a yes-biased model, a no-biased model, and a calibrated one. For each, state which of accuracy, precision, recall, and yes-rate you would gate a release on, and why aggregate accuracy is the wrong single number.
+8. **Field guide.** For each of a clean contract archive, a scanned invoice pipeline, a visually rich legal-discovery corpus, and a browser-control agent, name the cheapest representation that could pass, the dominant failure to measure, and the single observation that would force you to escalate one tier — grounding every answer in a knob from this chapter's code.

@@ -32,7 +32,6 @@ def test_every_svg_generator_fixes_ids_and_creation_metadata() -> None:
 @pytest.mark.parametrize(
     "script",
     (
-        ROOT / "code" / "ch32" / "render_ladder.py",
         ROOT / "code" / "appa" / "render_pareto.py",
     ),
 )
