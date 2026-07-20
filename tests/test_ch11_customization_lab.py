@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 
 import numpy as np
 
-from customization_lab import LoRA, NF4, make_fixture, nf4_quantize, run_lab, softmax, ties_merge
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch11"))
+
+from customization_lab import LoRA, NF4, make_fixture, nf4_quantize, run_lab, softmax, ties_merge  # noqa: E402
 
 
 class CustomizationLabTests(unittest.TestCase):

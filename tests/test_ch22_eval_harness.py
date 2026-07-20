@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 
 
-CHAPTER_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CHAPTER_DIR))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch22"))
 
 import eval_harness as harness
 

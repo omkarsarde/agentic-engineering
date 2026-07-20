@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from posttrain_lab import run_experiment, write_svg
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch07"))
+
+from posttrain_lab import run_experiment, write_svg  # noqa: E402
 
 
 class PostTrainingLabTest(unittest.TestCase):

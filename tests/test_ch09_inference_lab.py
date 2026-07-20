@@ -5,10 +5,13 @@ import unittest
 import sys
 from pathlib import Path
 
-import hf_inference_adapter
-import inference_lab as lab
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch09"))
+
+import hf_inference_adapter  # noqa: E402
+import inference_lab as lab  # noqa: E402
 sys.modules.pop("render_metrics", None)
-import render_metrics
+import render_metrics  # noqa: E402
 
 
 class InferenceLabTest(unittest.TestCase):

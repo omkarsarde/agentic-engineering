@@ -7,10 +7,13 @@ import unittest
 import sys
 from pathlib import Path
 
-from hf_generate_adapter import extract_final_integer
-from reason_rl import grpo_advantages, run_experiment
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch08"))
+
+from hf_generate_adapter import extract_final_integer  # noqa: E402
+from reason_rl import grpo_advantages, run_experiment  # noqa: E402
 sys.modules.pop("render_metrics", None)
-from render_metrics import write_svg
+from render_metrics import write_svg  # noqa: E402
 
 
 class ReasonRlTest(unittest.TestCase):

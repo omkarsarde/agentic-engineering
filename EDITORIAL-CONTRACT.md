@@ -1,113 +1,108 @@
-# Editorial contract
+# Editorial contract (v2)
 
-This file is binding for every chapter in this book.
+Binding for every chapter and appendix. Where this contract and any older document
+disagree, this contract wins. The section-level rhythm is specified in
+`_redo/analysis/d2l-style-template.md`; this file states the book-level rules.
 
-## Reader and outcome
+## Reader and promise
 
-Assume neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch. Define every LLM, retrieval, agent, infrastructure, evaluation, and security term in plain language when it first becomes necessary. The goal is senior engineering judgment earned through understandable mechanisms, not jargon density.
+The reader knows neural-network basics, backpropagation, and Python. Nothing else is
+assumed. Every LLM, retrieval, agent, systems, evaluation, and security term is defined in
+plain language at first use. The book teaches the way d2l.ai teaches machine learning:
+the reader watches working code produce real output, narrated by a knowledgeable "we",
+and leaves able to build, measure, and defend each mechanism.
 
-## Two routes only
+One linear reading path. A reader already fluent in model internals may start at
+Chapter 12; the preface says this once. No other routes, boxes, or per-chapter
+prerequisites exist.
 
-- Route A reads Chapters 1–32.
-- Route B reads Chapter 1 and then Chapters 12–32.
+## Chapter shape
 
-Route-B dependencies on Chapters 2–11 must appear in the audited backfill boxes. Chapters 23 and 25 carry self-contained primers. No additional reading paths or hidden prerequisites are allowed.
+1. **Opening** (no heading): 1–3 paragraphs. First sentence names the concrete thing this
+   chapter builds or measures. Enumerate the parts inline. Anchor to prior chapters with
+   inline references, never a prerequisites block.
+2. **5–9 teaching sections** (H2), each one primary idea, each following the beat:
+   motivate → intuition in prose → formal object (numbered, every symbol defined) →
+   implement in small executed cells → show the output → interpret it honestly.
+   Plain functional section titles.
+3. **`## Summary`** — 60–110 words, synthesizing, one forward pointer. Prose or 3 bullets.
+4. **`## Exercises`** — 5–8 numbered items, investigative tone, anchored to knobs in this
+   chapter's artifact, at least one multi-part, no solutions.
 
-## D2L-style teaching contract
+The chapter's single integrated build is the running artifact the sections construct
+incrementally. There is no separate "Build" section: by the last teaching section the
+artifact exists, has run, and its measurements have been shown.
 
-Teach concepts just in time to accomplish a concrete end. A chapter should contain six to ten teaching sections and normally 4,000–7,000 words of explanatory prose. A section should introduce one primary idea. Dense surveys belong in a collapsible note, a dated Landscape box, or Appendix C.
+~4,000–7,000 prose words per chapter (floor 3,000; soft cap 8,000), excluding code and
+output. 400–900 prose words per section.
 
-For a new conceptual mechanism, use this rhythm:
+## Code
 
-1. Concrete motivation or failure.
-2. One-sentence capability promise.
-3. Plain-language intuition.
-4. Load-bearing mathematics with every symbol defined.
-5. Small runnable implementation or inspection.
-6. Verification, measurement, or deliberate break.
-7. Production implication and honest residual limitation.
-8. Two-to-four-sentence synthesis.
+- Teaching code lives **inline in executable ```` ```{python} ```` cells**, developed
+  incrementally: 5–12 cells per section-bearing arc, each 2–20 lines, prose between every
+  pair of cells stating why the next cell comes. Never a wall of code, never a fragment of
+  an external file, never an elision comment (`# ... added later ...`).
+- **Every runnable cell shows its result** — printed values, generated text (imperfect
+  output shown honestly), plots, measured numbers — rendered by Quarto at build time.
+- Cells whose definitions are reused or tested start with `# @save` (after any `#|`
+  options). `scripts/tangle.py` extracts saved cells in order to `code/chNN/_generated.py`;
+  tests import only generated modules. Nothing else lives under `code/chNN/`.
+- **Docstrings teach.** Public classes and functions carry Google-style docstrings —
+  one-line summary, `Args:`, `Returns:`, `Raises:` when relevant — written to teach the
+  concept the object embodies. Trivial helpers may carry a single line.
+- **Deterministic, offline, fast.** Pin seeds; no network; CPU-only; a chapter's cells
+  execute in ≤ 90 seconds total. Real-API calls appear as `#| eval: false` cells paired
+  with one captured transcript presented as data and labeled as a recorded run.
+- Systems chapters substitute a small inline simulation or measurement for "train a
+  model": build the mechanism in fragments, drive it with a synthetic workload, print the
+  measured numbers, vary one knob, re-measure. A worked trace of one concrete input is the
+  fallback when nothing is measurable.
 
-For a systems mechanism, use:
+## Figures
 
-1. User-visible invariant and concrete incident.
-2. Smallest enforceable mechanism.
-3. Deliberate fault, race, replay, overload, or hostile input.
-4. Assertion, SLI, trace, or counter that exposes it.
-5. Mapping to the production stack.
-6. Residual application responsibility.
-
-Prose is the teaching spine. Tables summarize after explanation; they do not replace explanation. Bullets are for genuine enumerations, not paragraph fragments. Avoid front-loading a glossary whose terms will not be used for many pages.
-
-## Chapter apparatus
-
-Every numbered chapter uses this order:
-
-1. Exact H1 title and durability tag.
-2. `What you need going in` block.
-3. Route-B backfill or mandatory primer when audited.
-4. `Contents` linking every H2.
-5. Opening problem, chapter promise, and `What you will build` callout.
-6. Six to ten teaching sections.
-7. Exactly one integrated `Build`.
-8. `What endures, what changes`.
-9. Five to eight escalating `Exercises`.
-
-Quarto supplies previous/next navigation. The closing synthesis may point to the next chapter in one sentence; never make the reader choose among a maze of paths.
-
-## Progressive reference artifacts
-
-Each chapter names one integrated build and uses one reference artifact per genuinely distinct mechanism. Do not create v0/v1/v2 copies of the same program. Introduce the smallest useful artifact once, then show deltas of no more than 40 lines. Each delta names its file and location and tags changed regions.
-
-After a code-bearing section, use an artifact checkpoint:
-
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `agent_loop.py` after the gate | 24 lines | denied actions cannot reach a handler |
-
-The complete artifact should normally remain below 200 lines. Print it at most once. Public entry points receive useful docstrings; helpers receive one-line documentation only when their purpose is not evident. Code must be runnable, free of pseudocode gaps, deterministic by default, and explicit about optional network/GPU adapters.
-
-A comparison build may share one core with thin strategies or adapters. It may not independently reimplement the core behavior.
-
-## Visual contract
-
-Use two to five purposeful figures per chapter. Systems chapters require at least three diagrams that answer different questions. Follow `VISUAL-SYSTEM.md`. Every figure has a caption, adjacent explanation, a text conclusion, and semantics that survive grayscale. Numeric figures are generated from code. Diagram and SVG source is version-controlled.
-
-## Durable spine and dated landscape
-
-The spine teaches mechanisms, equations, interfaces, invariants, and decision criteria. Names, versions, prices, benchmark leaderboards, hardware SKUs, exact legal dates, and provider-specific parameters live in a block or section titled `Landscape 2026 (dated)`.
-
-The book uses two deliberately different controls for moving facts:
-
-1. A chapter-local `.landscape-2026` callout owns a teaching-local snapshot. It must state an ISO `YYYY-MM-DD` verification date, link the primary sources that support its claims, and end with an explicit **Verify live** instruction. Deleting it must leave a coherent chapter. These local snapshots do not each require duplicate rows in Appendix C.
-2. Appendix C's machine-readable registry is a curated control plane for a smaller set of cross-chapter, deployment-sensitive, high-stakes, or operational pins. A registry row is justified by a maintenance or migration decision, not merely because a dated fact appears in prose.
-
-For a registry row, `owner_chapter` is the repository-relative `.qmd` file responsible for maintaining or consuming that row. The linter requires the owner file to contain the exact primary-source URL or the row's declared, row-specific visible/HTML anchor. Registry-only records are owned by Appendix C and anchored where the appendix interprets them. This makes ownership auditable without forcing every chapter callout to mirror its contents into the registry.
-
-An annual audit may still revise the spine when the mechanism itself changes.
+At least 3 per chapter, no ceiling; every one earns its place. Prefer plots produced by
+the chapter's own cells. Concept diagrams (mermaid/dot/SVG) are for comparing
+alternatives, locating a component in a larger system, or tracing a flow prose cannot
+carry. Every figure is numbered, captioned with the question it answers, referenced from
+prose, and legible in grayscale. Diagram source is version-controlled.
 
 ## Voice
 
-Write directly, concretely, and without ceremony. Intuition precedes rigor. Do not use “obviously,” “clearly,” “trivially,” “of course,” gatekeeping language, or interview stakes as motivation. Design-defense prompts belong only in exercises and Appendix B.
+First-person plural "we", present tense, intuition before rigor, short declaratives to
+land long explanations, lightly opinionated ("inelegant but ubiquitous" is on-voice).
+Forbidden: "obviously", "clearly", "trivially", "of course"; gatekeeping; interview
+stakes as motivation; contract-jargon ("code-owned gate", "typed endings", "canonical
+home") outside a definition site. Cross-references inline and numbered
+("recall from @sec-ch09"). Citations inline (Author, Year), load-bearing only, resolving
+to `references.bib`. No footnotes, no "Notes and sources" section.
+
+## Deleted apparatus (must not appear anywhere)
+
+"What you need going in" · route/backfill boxes · "Contents" link lists · "What you will
+build" callouts · artifact-checkpoint tables · "Acceptance checks" · "Honesty note" ·
+"What endures, what changes" · durability tags in titles · learning-objectives boxes ·
+troubleshooting sidebars · per-section setup instructions. Honest caveats live as
+ordinary sentences where they matter.
+
+## Dated facts
+
+Volatile facts (model names, versions, prices, leaderboards, SKUs, legal dates) live in
+`.landscape-2026` callouts — ISO verification date, primary-source links, a closing
+"Verify live" instruction, deletable without breaking the chapter — or in Appendix C's
+registry for cross-chapter operational pins. The spine teaches mechanisms.
+
+## Interview boxes
+
+At most one short "In the interview" callout per chapter: one question, the crisp answer,
+the trap. The integrated 45-minute design arguments live only in Appendix B's design
+studies; Chapter 32 exercises them.
 
 ## Ownership boundaries
 
-- KV memory arithmetic: Chapter 3.
-- Behavior specifications: Chapter 7.
-- Hallucination, calibration, and abstention: Chapter 9.
-- Model customization and merging: Chapter 11.
-- Compaction and caller-side context engineering: Chapter 13.
-- Core RAG and grounding metrics: Chapter 14.
-- Agentic retrieval control: Chapter 15.
-- Raw agent specification and loop: Chapter 16.
-- Skills and approval mechanics: Chapter 17.
-- Memory content policy and deletion propagation: Chapter 18.
-- MCP security and framework checkpointers: Chapter 19.
-- Statistical evaluation and judge calibration: Chapter 22.
-- Protocol-neutral action security: Chapter 24.
-- Cost, durable effects, and delivery: Chapter 26.
-- Observability, SLOs, incidents, HITL queues, and privacy operations: Chapter 27.
-- Product, people, ownership, and AIMS: Chapter 28.
-- Media provenance mechanics: Chapter 30.
-
-Elsewhere, recap in one paragraph or point to the canonical section.
+Unchanged from v1: KV arithmetic Ch 3 · behavior specs Ch 7 · hallucination/calibration/
+abstention Ch 9 · customization/merging Ch 11 · compaction/context Ch 13 · core RAG
+metrics Ch 14 · agentic retrieval Ch 15 · raw loop Ch 16 · skills/approval mechanics
+Ch 17 · memory policy/deletion Ch 18 · MCP security/checkpointers Ch 19 · statistical
+eval/judge calibration Ch 22 · action security Ch 24 · cost/durable effects/delivery
+Ch 26 · observability/SLO/incidents/HITL-ops/privacy-ops Ch 27 · product/people/AIMS
+Ch 28 · media provenance Ch 30. Elsewhere: recap in one paragraph, point to the owner.

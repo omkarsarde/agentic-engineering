@@ -1,79 +1,119 @@
 ---
-description: "One-sentence reader-facing promise."
+description: "One-sentence, reader-facing promise: the concrete thing this chapter builds or measures."
 ---
 
-# Exact title [F] {#sec-chNN}
+# Exact Title {#sec-chNN}
 
-## What you need going in
+Open on the concrete artifact in the first sentence: name the thing this chapter
+builds or measures, then enumerate its parts inline. Anchor to earlier chapters
+with an inline reference ("recall from @sec-ch09 that...") rather than a
+prerequisites block. One to three short paragraphs, no headings, no scaffolding.
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter N, Section name](NN-file.qmd#sec-example) — one-sentence recap of the exact dependency.
->
-> **Not required:** name plausible but unnecessary prerequisites.
+## First teaching section
 
-::: {.route-b}
-**Route B backfill.** Include only for audited chapters. Name the exact source section, page-scale effort, and the consequence of skipping it.
-:::
+Motivate the idea in plain prose before any formal object: say what breaks
+without this mechanism, name the fix conversationally, and only then reach for
+the equation or spec. Introduce the reusable helper the rest of the chapter
+extends. The cell below carries `# @save`, so `scripts/tangle.py` exports it to
+`code/chNN/_generated.py` for the tests to import.
 
-## Contents
+```{python}
+# @save
+from __future__ import annotations
 
-- [Opening section](#sec-chNN-opening)
-- [Teaching section](#sec-chNN-mechanism)
-- [Build](#sec-chNN-build)
-- [What endures, what changes](#sec-chNN-endures)
-- [Exercises](#sec-chNN-exercises)
+import math
 
-## Opening section {#sec-chNN-opening}
 
-Begin with one failure, measurement, or practical goal. Explain enough context for the reader to care without opening with terminology.
+def softmax(logits: list[float], temperature: float) -> list[float]:
+    """Turn raw scores into a probability distribution over next tokens.
 
-## What you will build
+    Temperature rescales the logits before exponentiation: values below 1
+    sharpen the distribution toward the argmax, values above 1 flatten it.
 
-::: {.callout-tip}
-### The chapter artifact
+    Args:
+        logits: Unnormalized scores, one per candidate token.
+        temperature: Positive scale; smaller is greedier, larger is flatter.
 
-Name one integrated build, its deterministic default fixture, optional real adapter, outputs, metrics, and success condition.
-:::
+    Returns:
+        Probabilities in the same order as ``logits``, summing to 1.
+    """
+    scaled = [value / temperature for value in logits]
+    ceiling = max(scaled)
+    weights = [math.exp(value - ceiling) for value in scaled]
+    total = sum(weights)
+    return [weight / total for weight in weights]
 
-## Teaching section {#sec-chNN-mechanism}
 
-State why the mechanism matters and what the reader will be able to do. Give intuition before math. Define every symbol. Introduce no more than 40 new or changed code lines at once.
-
-```{mermaid}
-%%| label: fig-chNN-question
-%%| fig-cap: "A caption phrased around the one question this figure answers."
-flowchart LR
-    A[Input] --> B[Mechanism] --> C[Observable result]
+logits = [2.0, 1.0, 0.2]
+print([round(p, 3) for p in softmax(logits, 1.0)])
 ```
 
-State the conclusion the reader should retain from the figure.
+Interpret the printed distribution before moving on: name which token dominates
+and why. Then show the same idea as a picture the reader can scan at a glance.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `artifact.py` after this section | 24 lines | State the executable property. |
-:::
+```{python}
+#| label: fig-chNN-softmax
+#| fig-cap: "How does temperature reshape one next-token distribution?"
+import matplotlib.pyplot as plt
 
-## Build {#sec-chNN-build}
+for temperature in (0.5, 1.0, 2.0):
+    plt.plot(softmax(logits, temperature), marker="o", label=f"T={temperature}")
+plt.xlabel("token")
+plt.ylabel("probability")
+plt.legend()
+plt.show()
+```
 
-Specify inputs, runnable steps, measurements, expected qualitative result, and an honesty note. Do not introduce an unrelated second artifact here.
+Read @fig-chNN-softmax honestly: at low temperature the top token takes almost
+all the mass; at high temperature the curve flattens.
 
-## What endures, what changes {#sec-chNN-endures}
+## Second teaching section
 
-**What endures.** State the durable mechanisms and decision rules.
+State why the next step follows. Build one more fragment on the helper above, run
+it, and show what it produces. Every runnable cell shows its result.
 
-**What changes.** State the models, prices, versions, benchmark status, and product surfaces that require Appendix C verification.
+```{python}
+#| label: fig-chNN-entropy
+#| fig-cap: "How fast does output entropy climb with temperature?"
+temperatures = [0.25 * step for step in range(1, 13)]
+entropy = [-sum(p * math.log2(p) for p in softmax(logits, t) if p > 0) for t in temperatures]
+plt.plot(temperatures, entropy, marker="o")
+plt.xlabel("temperature")
+plt.ylabel("entropy (bits)")
+plt.show()
+```
 
-## Exercises {#sec-chNN-exercises}
+Name the regime where entropy saturates (@fig-chNN-entropy) and what that implies
+for sampling.
 
-1. Confirm one mechanism by hand.
-2. Change one parameter and predict before running.
-3. Break one invariant and diagnose the trace.
-4. Extend the reference artifact without replacing it.
-5. Compare one alternative through measurement.
-6. Defend a design choice and name its residual risk.
+## Third teaching section
 
-## Notes and sources
+Continue the same beat for every idea. A real chapter has five to nine sections;
+the single integrated build grows across them, so by the last section the
+artifact exists, has run, and its measurements are on the page. Reserve a concept
+diagram for the moments prose cannot carry a flow.
 
-Use primary papers, specifications, official repositories, and official documentation. Keep dated details in a Landscape 2026 block registered in Appendix C.
+```{mermaid}
+%%| label: fig-chNN-flow
+%%| fig-cap: "Where does the mechanism sit in the larger system?"
+flowchart LR
+    Input --> Mechanism --> Result
+```
+
+State the one conclusion the diagram carries, then move on.
+
+## Summary
+
+Sixty to a hundred and ten words that synthesize what was built and measured, not
+a step-by-step recap. Lead with the capability the reader gained, name one honest
+limitation, and leave a single forward pointer to the next chapter.
+
+## Exercises
+
+1. Confirm one mechanism by hand and check it against the printed output.
+2. Change one knob in the cell above and predict the result before re-running.
+3. Break one invariant and diagnose the trace it produces.
+4. Extend the chapter's artifact without rewriting it, then re-measure.
+5. Compare one alternative design through a measurement, not an assertion.
+6. A multi-part item: (a) vary a second knob; (b) plot the result; (c) explain
+   the trend you see.

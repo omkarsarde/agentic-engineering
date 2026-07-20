@@ -468,7 +468,7 @@ The integrated build drives a language-conditioned tabletop task, records every 
 ```bash
 python code/ch31/embodied_eval.py --episodes 10 --gate --approve-gated \
   --plot assets/figures/ch31-horizon.svg
-python -m unittest discover code/ch31/tests -v
+python -m pytest -q tests/test_ch31_embodied_eval.py
 ```
 
 The episode core stays below forty lines and is shared by both backends:

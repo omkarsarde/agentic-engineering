@@ -420,7 +420,7 @@ Current examples of outcome-based agent pricing include vendor offerings such as
 The build is one launch-review rehearsal. From `newbook/`, run:
 
 ```bash
-python -m unittest discover -s code/ch28/tests -v
+python -m pytest -q tests/test_ch28_launch_metrics.py
 python code/ch28/launch_metrics.py \
   --fixture code/ch28/fixtures/expense_triage.json
 python code/ch28/launch_metrics.py --enforce

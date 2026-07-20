@@ -461,10 +461,10 @@ In the United States, requirements remain distributed across federal actions, se
 
 ## Build {#sec-ch25-build}
 
-The integrated artifact consists of [safety_case.py](../code/ch25/safety_case.py), the [deployment fixture](../code/ch25/fixtures/deployment.json), and focused [tests](../code/ch25/tests/test_safety_case.py). NumPy is required for the deterministic activation fixture; Matplotlib is required only for the chapter figure. From `newbook/`, run:
+The integrated artifact consists of [safety_case.py](../code/ch25/safety_case.py), the [deployment fixture](../code/ch25/fixtures/deployment.json), and focused [tests](../tests/test_ch25_safety_case.py). NumPy is required for the deterministic activation fixture; Matplotlib is required only for the chapter figure. From `newbook/`, run:
 
 ```bash
-python -m unittest discover -s code/ch25/tests -v
+python -m pytest -q tests/test_ch25_safety_case.py
 python code/ch25/safety_case.py
 python code/ch25/safety_case.py --enforce
 ```

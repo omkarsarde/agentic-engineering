@@ -356,10 +356,10 @@ As of 2026-07-19, coding benchmarks are fragmenting into curated, live-updated, 
 
 ## Build {#sec-ch21-build}
 
-The integrated artifact consists of [coding_agent.py](../code/ch21/coding_agent.py), the committed [six-task fixture](../code/ch21/fixtures/tasks.json), and focused [tests](../code/ch21/tests/test_coding_agent.py). It uses only the Python standard library. From the `newbook/` directory, run:
+The integrated artifact consists of [coding_agent.py](../code/ch21/coding_agent.py), the committed [six-task fixture](../code/ch21/fixtures/tasks.json), and focused [tests](../tests/test_ch21_coding_agent.py). It uses only the Python standard library. From the `newbook/` directory, run:
 
 ```bash
-python -m unittest discover -s code/ch21/tests -v
+python -m pytest -q tests/test_ch21_coding_agent.py
 python code/ch21/coding_agent.py --max-proposals 3
 ```
 

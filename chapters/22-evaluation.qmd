@@ -490,7 +490,7 @@ Error analysis closes the loop without changing the confirmatory result. Rank fa
 The build runs entirely from committed fixtures. From the `newbook/` directory, first execute the focused tests:
 
 ```bash
-python -m unittest discover -s code/ch22/tests -v
+python -m pytest -q tests/test_ch22_eval_harness.py
 ```
 
 Then run the integrated evaluation and generate the two statistics figures:

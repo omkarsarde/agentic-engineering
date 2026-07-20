@@ -6,8 +6,8 @@ import unittest
 import numpy as np
 
 
-CHAPTER_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CHAPTER_DIR))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch31"))
 
 from embodied_eval import (
     MiniTabletopEnv,

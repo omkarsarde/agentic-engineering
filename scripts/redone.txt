@@ -1,0 +1,5 @@
+# Chapter file stems (without .qmd) already ported to the EDITORIAL-CONTRACT v2
+# (d2l-style) shape. The validator applies the new-contract checks only to the
+# stems listed here; every other chapter gets the hygiene checks only. One stem
+# per line, e.g. 01-operational-on-ramp. Empty during the incremental redo so
+# that `validate_book.py --strict` stays green.

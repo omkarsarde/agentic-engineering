@@ -6,10 +6,13 @@ import unittest
 import sys
 from pathlib import Path
 
-import openai_compatible_adapter
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch10"))
+
+import openai_compatible_adapter  # noqa: E402
 sys.modules.pop("render_metrics", None)
-import render_metrics
-import serving_lab as lab
+import render_metrics  # noqa: E402
+import serving_lab as lab  # noqa: E402
 
 
 class ServingLabTest(unittest.TestCase):

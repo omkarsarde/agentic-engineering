@@ -421,10 +421,10 @@ Rollback means restoring the prior complete policy bundle—not just weights. To
 
 ## Build {#sec-ch23-build}
 
-The integrated artifact consists of [agent_gym.py](../code/ch23/agent_gym.py) and its focused [tests](../code/ch23/tests/test_agent_gym.py). It uses only the Python standard library; Matplotlib is needed only for the book figure. From the `newbook/` directory, run:
+The integrated artifact consists of [agent_gym.py](../code/ch23/agent_gym.py) and its focused [tests](../tests/test_ch23_agent_gym.py). It uses only the Python standard library; Matplotlib is needed only for the book figure. From the `newbook/` directory, run:
 
 ```bash
-python -m unittest discover -s code/ch23/tests -v
+python -m pytest -q tests/test_ch23_agent_gym.py
 python code/ch23/agent_gym.py
 ```
 
