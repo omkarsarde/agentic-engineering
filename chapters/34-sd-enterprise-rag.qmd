@@ -36,6 +36,8 @@ A senior closes scope by restating the problem with numbers and naming a non-goa
 Numbers before boxes. We import the back-of-envelope toolkit Chapter 33 built and tangled — `index_bytes`, `completion_ms`, `cost_per_query`, `context_budget` — rather than re-deriving anything, and drive it with this prompt's shape. The prices, per-stage latencies, the three-chunks-per-document ratio, and the 1024-dimension embedding are illustrative teaching constants carrying the same caveat as Chapter 33's toolkit (@sec-ch33-cost); the formulas, not the constants, are the lesson.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 import importlib.util
 import sys
 from pathlib import Path
@@ -64,6 +66,8 @@ print("packed query context:", pack)
 Two lessons land here. First, the family's quiet numeric trap: sizing from *documents* (ten million) instead of *chunks* (thirty million) understates the index threefold. Thirty million chunks at fp32 is 369 GB — shard it or quantize it; int8 brings one copy to 46 GB, a single memory-heavy node. Second, the packed query is about 3,500 input tokens (system, a little history, five 500-token chunks) inside a comfortable window: for RAG the context window is *not* the binding constraint, so retrieval width — how many chunks we pack — is the cost lever, not window pressure. Now the latency and the bill:
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 stages = {"embed query": 20.0, "ACL prefilter": 30.0, "ANN top-100": 50.0,
           "rerank top-5": 150.0, "queue + prefill": 400.0}
 ttft = sum(stages.values())
@@ -148,6 +152,8 @@ flowchart LR
 The fork the interviewer pushes on first is permissions, and the decision is a single sentence with an alternative and a reason: **the ACL filter runs before the vector search, not after.** Post-filtering — search first, then drop what the user cannot see — is simpler and perfectly fine when permissions are coarse. It breaks when they are fine-grained, and the break is arithmetic, not taste:
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 import math
 
 visible = 0.02          # this user can see 2% of the corpus

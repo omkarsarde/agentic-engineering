@@ -3,6 +3,22 @@ $font-family-sans-serif: "Inter", "Segoe UI", system-ui, -apple-system, sans-ser
 $font-family-monospace: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 $headings-font-family: "Aptos Display", "Segoe UI", system-ui, sans-serif;
 
+// Mermaid diagrams follow the page theme: these switch Quarto to mermaid's
+// "base" theme with explicit colors (light values here; styles-dark.scss,
+// loaded only with the dark theme, overrides them for night mode). Base-theme
+// variables like $body-bg are NOT available in this layer, so values are
+// literal.
+$mermaid-bg-color: #ffffff !default;
+$mermaid-fg-color: #343a40 !default;
+$mermaid-fg-color--lighter: #5c646c !default;
+$mermaid-fg-color--lightest: #868e96 !default;
+$mermaid-node-bg-color: #f2f5f8 !default;
+$mermaid-node-fg-color: #212529 !default;
+$mermaid-edge-color: #6c757d !default;
+$mermaid-label-bg-color: #ffffff !default;
+$mermaid-label-fg-color: #212529 !default;
+$mermaid-font-family: "Inter", "Segoe UI", system-ui, sans-serif !default;
+
 /*-- scss:rules --*/
 :root {
   --ae-model: #147d92;

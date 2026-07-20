@@ -43,6 +43,8 @@ Numbers before boxes. The anchors here are a token total, a dollar cost per task
 The key modeling move: a worker is not one call, it is an internal retrieval loop (@sec-ch15-loop), and its cost is the resend-quadratic `loop_cost` from the toolkit — each step re-sends the growing context, so a four-step worker's input tokens are not four times the base but the triangular sum. That is where the reported "~30k tokens per subagent" comes from; it is a consequence of the loop, not a guess.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 import importlib.util
 import sys
 from pathlib import Path
@@ -198,6 +200,8 @@ The failures that page a human are three. A **merge conflict** — two findings 
 Cost is the attack surface this family is defined by, and it has a name: **denial-of-wallet**. An uncapped orchestrator, or one an adversarial query can talk into deep decomposition, spends real money at machine speed. The controls are all arithmetic, and the toolkit prices them.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 def team_cost_n(k: int) -> float:
     """Price a task with k subagents; merge and cite-check grow with findings."""
     merge_k = tk.cost_per_query(4_000 + k * 2_000, 3_000, price)

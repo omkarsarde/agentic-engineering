@@ -28,6 +28,8 @@ Three clarifiers fork the architecture. The first is the family fork, and a seni
 Numbers before boxes. The measurement family has one classic numeric trap, and it is the analogue of the KV-heads trap in serving: **gate on Cohen's ${\kappa}$, not raw agreement.** A judge that agrees with humans 90 percent of the time sounds calibrated until you notice the set is 90 percent pass — a judge that says "pass" to everything scores the same and has measured nothing. We import the calculator that says so, reusing Chapter 22's `cohen_kappa` (the owner of judge calibration, @sec-ch22-judge) rather than rebuilding it, alongside the back-of-envelope toolkit from Chapter 33.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 import importlib.util
 import sys
 from pathlib import Path
@@ -56,6 +58,8 @@ print(f"  a trustworthy judge must clear kappa >= 0.60")
 Eighty-five percent agreement, kappa exactly zero: the raw number was lying and kappa says so in one figure. That is the sentence to say aloud in move 2 — the same way a serving candidate says "GQA caches KV heads, not query heads." Next, the money. A judge grade is one cheap model call; we price the tiers with the toolkit's `cost_per_query`.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 judge = sd.TokenPrice(input_per_million=3.00, output_per_million=15.00)
 per_grade = sd.cost_per_query(1_500, 120, judge)     # grade one (prompt, answer) pair
 ci_items, nightly_items, online_per_day, merges = 300, 5_000, 20_000, 20
