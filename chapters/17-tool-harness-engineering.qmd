@@ -1,69 +1,213 @@
 ---
-description: "Design tools, context, workspaces, approvals, and resumable threads so that a capable model remains a bounded software component."
+description: "Build the software boundary around a capable model — tool cards measured against a small eval, a context ledger, a real resource-limited sandbox, a loadable skill, and a human approval that is revalidated at the last moment against a TOCTOU attack."
 ---
 
-# Tool Engineering and Harness Design [F+S] {#sec-ch17}
+# Tool Engineering and Harness Design {#sec-ch17}
 
-## What you need going in
+Two teams wire the same model into a support console and get very different systems. The first exposes one `run(command)` tool that returns forty thousand characters of terminal output; its agent flails, retries, and occasionally moves money it should not. The second exposes `order_status`, `policy_read`, and `refund_draft`, each with a bounded schema and a concise result, confines files to a per-thread directory, runs any untrusted code under a resource limit, and makes a human approve refunds against the exact order state — with a re-check the instant before the money moves. Same weights, same prompt. The difference is the harness: the software that decides what the model can see, call, and cause.
 
-> **Assumed:** production Python, typed APIs, basic authorization, file paths, and tests.
->
-> **From earlier chapters:** [Chapter 13](13-prompting-context-engineering.qmd) owns caller-side context selection and compaction; [Chapter 16](16-agent-anatomy.qmd) supplies the proposal–gate–execute–observe kernel and the rule that model output is a proposal rather than authority.
->
-> **Not required:** MCP, LangGraph, a hosted model, container internals, or a durable workflow engine. Those appear only after the harness boundary is understood.
-
-::: {.route-b}
-**Route B backfill.** Read **Chapter 10, “Prefix caching and cache economics”** (about 4 pages) before Section 17.3. Without it, the harness will still work, but you may reorder stable and volatile context in a way that silently destroys prefix reuse on every turn.
-:::
-
-## Contents
-
-- [The interface is part of the intelligence](#sec-ch17-aci)
-- [Search the tool surface instead of preloading it](#sec-ch17-tool-search)
-- [Assemble context with a ledger](#sec-ch17-context)
-- [Skills as progressively disclosed procedures](#sec-ch17-skills)
-- [A workspace is a boundary, not a sandbox](#sec-ch17-workspace)
-- [Human approval as a typed protocol](#sec-ch17-approval)
-- [Close the approval-to-execution race](#sec-ch17-toctou)
-- [Resume threads without pretending effects are durable](#sec-ch17-resume)
-- [Improve the harness with evaluations](#sec-ch17-eval)
-- [Build](#sec-ch17-build)
-- [What endures, what changes](#sec-ch17-endures)
-- [Exercises](#sec-ch17-exercises)
-- [Notes and sources](#sec-ch17-sources)
-
-## What you will build
-
-::: {.callout-tip}
-### A six-tool harness under attack
-
-The artifact under `code/ch17/` exposes six support tools, retrieves only the relevant definitions, confines paths to a per-thread workspace, binds a human approval to exact arguments and target state, and checkpoints harness state in SQLite. The build measures tool-retrieval recall and context exposure, substitutes a larger refund after approval, changes the target before execution, restarts the process, and verifies that the audit event is not duplicated. The deterministic path uses only local fixtures.
-:::
+We build that harness in this chapter, one measurable piece at a time, and we let the measurements drive the design. We tune a tool surface against a six-task eval and watch success climb from zero to one as the names and descriptions improve; we give each tool a schema and a risk rating; we retrieve a small tool set instead of preloading a catalog and plot the recall-versus-context trade; we assemble one model call through a context ledger that evicts a low-priority row when the budget overflows; we run hostile code inside a subprocess bounded by CPU and memory limits, and show the one escape a path check cannot stop; we package a procedure as a skill whose body loads only when a task activates it; and we bind a human approval to exact arguments and target state, then defeat a substituted-argument and a stale-target attack by revalidating at the last responsible moment. The through-line is the chapter's thesis: the interface and the harness determine behavior as much as the weights do, and an approval that is not revalidated at execution time is theater. Chapter 16 supplies the loop this harness sits inside — model output is a proposal, never authority; here we build the walls that hold that proposal.
 
 ## The interface is part of the intelligence {#sec-ch17-aci}
 
-Two systems can use the same model and produce very different results because they expose different action and observation interfaces. One gives the model a generic `run(command: str)` tool and returns 40,000 characters of terminal output. The other gives it `search_code`, `view_file`, `apply_patch`, and `run_tests`, each with bounded arguments and concise structured results. The second model appears more capable because the environment makes useful actions easy to express and mistakes easy to detect.
+Start with the claim that interface design is a model-performance variable, and test it with numbers rather than assert it. This is the **Agent–Computer Interface** (ACI) thesis: the same model, given a better vocabulary of actions and observations, becomes a more capable agent [@yang2024sweagent]. The model reads a small **card** for each tool — a name and a description — and must pick the right one for the task. If the cards are vague, selection fails before any code runs.
 
-This is the **Agent–Computer Interface** (ACI) thesis: interface design is a first-class model-performance variable. The [SWE-agent study](https://arxiv.org/abs/2405.15793) demonstrated it in software engineering, but the principle applies to support, analytics, research, and operations. A tool is not merely a Python function exposed through JSON. It is a vocabulary item the model must distinguish, select, populate, and interpret.
+We need a stand-in for the model's selection step. A real system embeds the task and the cards and ranks by similarity; we use a transparent lexical scorer so the reader can see exactly why a tool wins. It scores a tool by how many meaningful words the task and the card share, after dropping stopwords and light suffixes. This is a teaching probe, not a production retriever, and its transparency is the point — every decision it makes is inspectable.
 
-An effective tool contract answers six questions:
+```{python}
+# @save
+import re
+from dataclasses import dataclass
 
-1. **What single job does the tool do?** A specific verb–object name such as `order_lookup` is easier to retrieve than `get`.
-2. **When should it be used?** The description names the user's intent and meaningful exclusions.
-3. **What arguments are legal?** The schema uses domain types, ranges, enumerations, and semantic field descriptions.
-4. **What authority does it exercise?** Read, propose, write, transfer, delete, or administer are different risk classes.
-5. **What observation comes back?** Results are concise, structured, correlated, and distinguish expected failure categories.
-6. **How is success verified?** A write returns a receipt or new resource version, not a reassuring sentence.
+STOP = {
+    "the", "a", "an", "to", "and", "or", "for", "of", "in", "on", "is", "it",
+    "this", "that", "their", "them", "they", "our", "us", "we", "you", "your",
+    "with", "but", "not", "yet", "if", "so", "do", "does", "did", "has", "have",
+    "was", "are", "what", "when", "how", "out", "up", "about", "at", "by", "as",
+    "customer", "order", "please", "want", "wants", "asking", "says", "find",
+    "here", "should", "can", "be", "my", "me",
+}
 
-Large grab-bag tools hide these answers. A `manage_order(action, data)` endpoint asks the model to invent a second protocol inside untyped strings. At the other extreme, dozens of nearly identical tools increase selection ambiguity. Good tool design follows the shape of decisions the model can reliably make while keeping enforcement in application code.
 
-The chapter artifact makes risk visible in the registry:
+def terms(text: str) -> set[str]:
+    """Reduce text to the content words a lexical matcher compares on.
 
-```python
-# harness.py — one model-facing tool contract
+    Lowercases, keeps alphabetic words longer than two characters, drops a small
+    stopword list, and stems a few common suffixes so ``refunded`` and ``refund``
+    match. It is deliberately crude: a production harness would embed text
+    instead, but the crudeness makes every match in this chapter explainable.
+
+    Args:
+        text: A task phrase or a tool card to tokenize.
+
+    Returns:
+        The set of normalized content words.
+    """
+    def stem(word: str) -> str:
+        for suffix in ("ing", "ed", "es", "s"):
+            if len(word) > 4 and word.endswith(suffix):
+                return word[: -len(suffix)]
+        return word
+
+    return {stem(w) for w in re.findall(r"[a-z]+", text.casefold())
+            if w not in STOP and len(w) > 2}
+```
+
+A tool card is just the model-visible pair. We keep it separate from the full executable contract we build in the next section: the model chooses on the card, the application enforces on the contract.
+
+```{python}
+# @save
+@dataclass(frozen=True)
+class ToolCard:
+    """The model-visible summary of a tool: what the router reads to choose it.
+
+    Only ``name`` and ``description`` reach the model at selection time. Keeping
+    this small and honest is the whole ACI lever — a card that names its job and
+    its exclusions is retrievable; a card called ``get`` is not.
+    """
+
+    name: str
+    description: str
+
+
+def route(task: str, cards: list[ToolCard]) -> int:
+    """Pick the index of the card whose words best cover the task.
+
+    Ties break toward the earlier card, deterministically, so a surface of
+    indistinguishable cards collapses to always choosing the first one — which is
+    exactly the failure a vague surface produces.
+
+    Args:
+        task: A user-intent phrase, in the user's words, not the tool's.
+        cards: The candidate tool cards.
+
+    Returns:
+        The index into ``cards`` of the best match.
+    """
+    task_terms = terms(task)
+    return max(
+        range(len(cards)),
+        key=lambda i: (len(task_terms & terms(f"{cards[i].name} {cards[i].description}")), -i),
+    )
+```
+
+Now the eval. Six support tasks, each phrased the way a user would phrase it — not as a paraphrase of any tool's description, which is what would make the test a tautology. Each task has one correct tool. Success is the fraction of tasks routed to the right tool.
+
+```{python}
+tasks = [
+    ("the package arrived broken and they want their money back", "refund_issue"),
+    ("check whether this order has shipped yet", "order_status"),
+    ("what is our return window", "policy_read"),
+    ("note in the file that we called about the delay", "case_note_add"),
+    ("is this buyer a premium member", "customer_tier"),
+    ("start a refund but do not send the money yet", "refund_draft"),
+]
+
+
+def success(cards: list[ToolCard]) -> float:
+    picks = [cards[route(task, cards)].name for task, _ in tasks]
+    return sum(pick == expected for pick, (_, expected) in zip(picks, tasks)) / len(tasks)
+```
+
+The first surface is the grab-bag every codebase grows by accident: short generic verbs, descriptions that restate the name.
+
+```{python}
+bad = [
+    ToolCard("get", "get information"),
+    ToolCard("do", "perform an action"),
+    ToolCard("manage", "manage records"),
+    ToolCard("lookup", "look something up"),
+    ToolCard("update", "update a value"),
+    ToolCard("run", "run a command"),
+]
+print(f"bad surface success = {success(bad):.2f}")
+print("picks:", [bad[route(t, bad)].name for t, _ in tasks])
+```
+
+Every task routes to `get`, because no card shares any word with any task and the tie-break falls to the first. The model is not stupid; the surface gave it nothing to distinguish. Now rewrite each card as a specific verb–object name with a description that names the job.
+
+```{python}
+good_v1 = [
+    ToolCard("refund_issue", "issue an approved refund and send money back to the original payment method"),
+    ToolCard("order_status", "look up whether an order has shipped and its tracking and delivery state"),
+    ToolCard("policy_read", "read the refund and returns policy including the return window and eligibility"),
+    ToolCard("case_note_add", "write a note into the support case file recording what happened"),
+    ToolCard("customer_tier", "look up the buyer membership tier and premium status"),
+    ToolCard("refund_draft", "draft a refund for review without sending money"),
+]
+print(f"good v1 success = {success(good_v1):.2f}")
+picks = [good_v1[route(t, good_v1)].name for t, _ in tasks]
+for (task, expected), pick in zip(tasks, picks):
+    flag = "" if pick == expected else "   <- wrong tool"
+    print(f"  {pick:14} {flag}")
+```
+
+Success jumps to 0.83, but one task still routes wrong: *"start a refund but do not send the money yet"* picks `refund_issue`, not `refund_draft`. Both cards say "refund"; the request's real intent — *do not send money* — is the exclusion that separates them, and neither card encodes it. This is the wrong-tool case a real eval exists to catch, and it points at the fix.
+
+```{python}
+good_v2 = list(good_v1)
+good_v2[0] = ToolCard("refund_issue",
+                      "issue an approved refund that actually sends money; do not use to draft or propose")
+good_v2[5] = ToolCard("refund_draft",
+                      "draft or propose a refund for review without sending money yet; start but do not send")
+print(f"good v2 success = {success(good_v2):.2f}")
+```
+
+Two edited descriptions — adding the *do not send* / *actually sends money* boundary — take success to 1.0. Nothing about the model changed. We iterated the interface against an eval and read the capability back out, which is the entire loop this chapter keeps returning to. @fig-ch17-aci shows the three measurements side by side.
+
+```{python}
+#| label: fig-ch17-aci
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does the interface change model capability? The same router and the same six tasks; only the tool names and descriptions differ. Vague cards route every task to one tool; specific cards with exclusions route all six correctly."
+import matplotlib.pyplot as plt
+
+surfaces = {"bad\n(generic)": success(bad), "good v1\n(specific)": success(good_v1),
+            "good v2\n(+exclusions)": success(good_v2)}
+fig, ax = plt.subplots(figsize=(6.2, 3.2))
+bars = ax.bar(list(surfaces), list(surfaces.values()), color=["#b13f3f", "#c9a227", "#2a7f4f"])
+ax.bar_label(bars, labels=[f"{v:.2f}" for v in surfaces.values()], padding=3)
+ax.set_ylim(0, 1.1)
+ax.set_ylabel("tool-selection success (6 tasks)")
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
+
+The lesson generalizes into a contract every tool should satisfy: name one job with a specific verb and object; say when to use it *and when not to*; type its arguments; declare the authority it exercises; return a concise structured result; and make success verifiable from that result rather than from a reassuring sentence. The next section turns the last four of those into code.
+
+## One tool contract, and its risk rating {#sec-ch17-contract}
+
+The card is what the model reads; the **contract** is what the application enforces. It adds three things the card omits: a typed argument schema, a risk rating, and the handler that actually runs. Separating risk from arguments lets the harness decide *at discovery time* — before it inspects a single argument — whether a call needs a budget, a sandbox, or a human. We use a two-value rating to expose the mechanism; production needs data-sensitivity and resource-impact axes too, because a "read" that exports regulated data is not low-risk merely because it leaves state unchanged.
+
+```{python}
+# @save
+from enum import Enum
+from typing import Any, Callable
+
+
+class Risk(str, Enum):
+    """Whether a tool observes state or changes it — the discovery-time split.
+
+    READ tools can run freely; WRITE tools must clear an approval before the
+    handler fires. The rating is a property of the tool, known before arguments
+    are seen, so the harness can assign gates and budgets at selection time
+    rather than parsing every call first.
+    """
+
+    READ = "read"
+    WRITE = "write"
+
+
 @dataclass(frozen=True)
 class Tool:
-    """A model-facing contract bound to an application-owned handler."""
+    """A model-facing card bound to an application-owned handler and risk class.
+
+    ``target_version`` is not shown to the model. It lets the harness ask the
+    application "is this resource still the one a human reviewed?" at execution
+    time, which is what makes the approval binding in a later section possible.
+    """
+
     name: str
     summary: str
     schema: dict[str, type]
@@ -72,362 +216,917 @@ class Tool:
     target_version: Callable[[dict[str, Any]], str] | None = None
 ```
 
-`target_version` is not for the model. It lets the harness ask the application whether the resource is still the one a human reviewed. The distinction between model-facing description and application-owned control is deliberate.
+A proposed call and the authenticated context that surrounds it are separate values. The model supplies the call; the application supplies the tenant and actor. The model never names its own authority.
 
-Tool results deserve the same design care. Return the fields required for the next decision, a stable identifier, provenance or resource version when relevant, and a bounded human-readable summary. Put bulk output in a file or artifact and return a handle. Dumping an entire database row or terminal transcript into the conversation spends context, leaks fields, and makes the next choice harder.
+```{python}
+# @save
+@dataclass(frozen=True)
+class Call:
+    """One exact proposed invocation: which tool, with which arguments."""
 
-Granularity is a design choice, not a universal preference for smaller functions. A tool should usually represent one domain decision whose preconditions and outcome can be explained. `set_account_state` is too broad because a model must synthesize hidden business rules. Separate tools for every internal database update are too narrow because the model must coordinate a transaction it cannot observe atomically. `suspend_account(reason, evidence_ids)` can be the right boundary when application code validates the evidence, performs the transaction, and returns the resulting account version.
+    tool: str
+    arguments: dict[str, Any]
 
-Reads and writes should normally be distinguishable before arguments are inspected. This lets the harness assign budgets, sandboxes, approvals, and concurrency policies at discovery time. A “read” that causes an expensive export or reveals regulated data is not low-risk merely because it leaves state unchanged, so risk classes also need data sensitivity and resource impact in production. The two-value enum in the fixture exposes the mechanism without pretending to be that full taxonomy.
 
-Tool semantics also need retry clarity. A pure calculation can be retried freely. A lookup is usually safe but may observe a newer version. A write needs an idempotency or reconciliation contract. The model should not decide retry legality from a natural-language error. The handler returns a typed category, while code applies the retry policy developed in Chapter 26.
+@dataclass(frozen=True)
+class ExecutionContext:
+    """Authenticated identity supplied by the application, never by the model."""
 
-## Search the tool surface instead of preloading it {#sec-ch17-tool-search}
-
-Every tool definition placed in the prompt consumes tokens before the agent has done work. A larger menu also creates more opportunities to confuse tools with overlapping names. With six small tools, preloading can be reasonable. With hundreds of enterprise endpoints and several protocol servers, it becomes a context-allocation policy.
-
-Deferred loading separates **discovery metadata** from the full callable contract. The model initially sees a small set of always-available tools plus a search capability or namespace catalog. When the task requires another capability, the harness retrieves a few candidate definitions and adds them to the active surface. The chosen definition normally remains available for the rest of the relevant phase so the model does not repeatedly rediscover it.
-
-The retrieval objective is recall-oriented. Missing the needed tool makes the task impossible; including one extra plausible tool costs a little context. A practical pipeline is:
-
-1. filter by tenant, permission, environment, and risk before semantic retrieval;
-2. retrieve by task language against tool name, description, parameter names, and examples;
-3. rerank a small candidate set when the catalog is large;
-4. expose full schemas only for the final set;
-5. record which catalog and tool versions were considered.
-
-Risk changes discovery. A destructive administrative tool should not become callable merely because its description matched a query. Tool search narrows the context surface; an authorization service narrows the authority surface. Both are necessary.
-
-The deterministic fixture uses transparent lexical overlap rather than an embedding service. Across six tasks, retrieving two tools retained the expected tool in every candidate set while reducing exposed name-and-summary characters from 1,326 to 455.
-
-![Preloading all tool summaries versus retrieving two per task. The deterministic six-task fixture retained recall at two of 1.0 while exposing fewer schema characters.](../assets/figures/ch17-tool-surface.svg){#fig-ch17-tool-surface}
-
-The plot answers a narrow question: can this fixture reduce prompt surface without losing the expected tool? It does not establish a universal threshold, and characters are only a transparent proxy for tokenizer-specific token counts. A real catalog evaluation should report recall@k by task slice, wrong-tool rate after the model chooses, added search turns, end-to-end success, and token/latency savings.
-
-The retrieval core is small enough to inspect:
-
-```python
-# harness.py — select_tools(), deterministic retrieval fixture
-def select_tools(query: str, tools: list[Tool], limit: int = 3) -> list[Tool]:
-    """Retrieve a small tool surface by transparent lexical overlap."""
-    terms = set(query.casefold().replace("-", " ").split())
-
-    def score(tool: Tool) -> tuple[int, str]:
-        words = set(
-            f"{tool.name} {tool.summary}".casefold().replace("_", " ").split()
-        )
-        return len(terms & words), tool.name
-
-    return sorted(tools, key=score, reverse=True)[:limit]
+    tenant_id: str
+    actor_id: str
 ```
 
-This function is a teaching probe, not a production search engine. Its value is that it makes catalog inputs, tie breaking, and the measured surface explicit. Replace it only after establishing an evaluation set that the replacement must beat.
+Before any tool runs, its arguments are validated against the schema. A malformed call is a typed rejection the agent can react to, not an exception that unwinds the loop. The model should never learn argument legality from a stack trace.
 
-::: {.landscape-2026}
-**Landscape 2026 (dated).** Verified 2026-07-19. Deferred tool loading is now exposed by multiple agent products and SDKs, including current GitHub Copilot CLI and OpenAI Agents SDK documentation. Exact activation thresholds, supported models, namespace behavior, and event types are provider surfaces rather than spine concepts.
+```{python}
+# @save
+def validate_call(call: Call, tool: Tool) -> None:
+    """Reject a call whose arguments do not match the tool's typed schema.
 
-**Verify live:** [GitHub tool-search documentation](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/tool-search) and [OpenAI Agents SDK tool documentation](https://openai.github.io/openai-agents-python/tools/).
-:::
+    Checks the argument names exactly (no missing, no extra) and each value's
+    type. Raising a precise ``ValueError`` gives the harness a repairable signal
+    to hand back to the model instead of a crash.
 
-## Assemble context with a ledger {#sec-ch17-context}
+    Args:
+        call: The proposed invocation to check.
+        tool: The contract whose schema the call must satisfy.
 
-Chapter 13 treated context as a caller-side allocation problem. A harness operationalizes that decision on every step. It gathers stable instructions, the current task, compacted history, selected tools, activated skills, retrieved evidence, workspace artifacts, policy messages, and recent observations. Without explicit accounting, whichever component appends last tends to win the remaining window.
-
-```{mermaid}
-%%| label: fig-ch17-context
-%%| fig-cap: "Which sources enter one model call, and which component records the allocation decision?"
-flowchart LR
-    Stable["Stable instructions\nand safety contract"] --> Assemble["Harness assembler"]
-    Task["Task + authenticated\ncaller context"] --> Assemble
-    History["Compacted run history"] --> Assemble
-    Tools["Retrieved tool schemas"] --> Assemble
-    Skills["Activated skill body"] --> Assemble
-    Evidence["Just-in-time evidence"] --> Assemble
-    Assemble --> Prompt["Ordered model context"]
-    Assemble --> Ledger[("Context ledger")]
-    Ledger --> Metrics["tokens, source, reason,\ncache class, truncation"]
+    Raises:
+        ValueError: If argument names or types do not match the schema.
+    """
+    if set(call.arguments) != set(tool.schema):
+        raise ValueError(f"expected fields {sorted(tool.schema)}")
+    for name, expected in tool.schema.items():
+        if not isinstance(call.arguments[name], expected):
+            raise ValueError(f"{name} must be {expected.__name__}")
 ```
 
-A **context ledger** records each contribution's source, version, token count, selection reason, trust class, cache class, and whether it was truncated or summarized. It turns context from an invisible string into an inspectable build artifact. When an agent fails because a policy was missing or stale evidence displaced the task, the ledger makes that causal claim testable.
+We build the six-tool surface around one mutable order and check that validation catches a wrong-typed argument. The `refund_issue` tool is the only `WRITE`; it carries a `target_version` so the harness can later detect a changed order.
 
-Let the usable window be $W$, the reserved output allowance be $R$, and the selected input components have token counts $n_i$. Admission requires
+```{python}
+order = {"status": "damaged", "version": "v1", "refunded_cents": 0}
+
+
+def issue_refund(order_id: str, amount_cents: int) -> dict[str, Any]:
+    order["refunded_cents"] = amount_cents
+    order["version"] = f"v{int(order['version'][1:]) + 1}"
+    return {"order_id": order_id, "refunded_cents": amount_cents}
+
+
+tools = {
+    "order_status": Tool("order_status", "look up order shipping state",
+                         {"order_id": str}, Risk.READ, lambda order_id: dict(order)),
+    "refund_draft": Tool("refund_draft", "draft a refund without effect",
+                         {"order_id": str, "amount_cents": int}, Risk.READ,
+                         lambda order_id, amount_cents: {"order_id": order_id, "proposed_cents": amount_cents}),
+    "refund_issue": Tool("refund_issue", "issue an approved refund",
+                         {"order_id": str, "amount_cents": int}, Risk.WRITE, issue_refund,
+                         target_version=lambda args: order["version"]),
+}
+
+valid_call = Call("refund_issue", {"order_id": "A-17", "amount_cents": 4999})
+typo_call = Call("refund_issue", {"order_id": "A-17", "amount_cents": "lots"})
+validate_call(valid_call, tools["refund_issue"])
+print("valid call accepted")
+try:
+    validate_call(typo_call, tools["refund_issue"])
+except ValueError as exc:
+    print("rejected:", exc)
+```
+
+Granularity is a design choice, not a preference for smaller functions. A tool should represent one domain decision whose preconditions and outcome can be explained. `set_account_state(state)` is too broad, because the model has to synthesize hidden business rules to use it; a separate tool for every internal row update is too narrow, because the model must coordinate a transaction it cannot observe atomically. `suspend_account(reason, evidence_ids)` is often the right seam: application code validates the evidence, runs the transaction, and returns the resulting account version. Retry semantics ride along with the risk class. A pure read can be retried freely; a write needs an idempotency or reconciliation contract, and the model must not infer retry legality from a natural-language error. The handler returns a typed category and code applies the policy — the same separation the approval section makes for authority.
+
+The contract now knows each tool's job, argument types, risk class, and retry rules before it ever runs. That risk class is what the approval and sandbox sections key on. First, though, we deal with a surface too large to show the model all at once.
+
+## Search the tool surface, or hand over a code runner {#sec-ch17-search}
+
+Six tools fit in a prompt. Six hundred do not, and a large menu also breeds selection errors: the more near-synonyms the model sees, the more often it picks the wrong one. Two patterns handle scale. The first keeps typed tools but **retrieves** a small candidate set per task instead of preloading the catalog. The retrieval objective is recall — missing the needed tool makes the task impossible, while one extra plausible tool costs only a little context — so we measure recall at k and the characters exposed.
+
+```{python}
+# @save
+def select_tools(query: str, tools: list[Tool], k: int = 3) -> list[Tool]:
+    """Retrieve the k tools whose card best matches a task query.
+
+    Ranks by shared content words between the query and each tool's name and
+    summary, breaking ties toward earlier tools. Recall-oriented: raising k
+    trades exposed context for a better chance the needed tool is present.
+
+    Args:
+        query: The task in user-intent language.
+        tools: The full catalog to rank.
+        k: How many tools to expose to the model.
+
+    Returns:
+        The top-k tools, most relevant first.
+    """
+    query_terms = terms(query)
+    ranked = sorted(
+        range(len(tools)),
+        key=lambda i: (len(query_terms & terms(f"{tools[i].name} {tools[i].summary}")), -i),
+        reverse=True,
+    )
+    return [tools[i] for i in ranked[:k]]
+```
+
+We build a ten-tool catalog and six queries whose target tool is known, then sweep k.
+
+```{python}
+catalog = [
+    Tool("refund_issue", "issue an approved refund and send money to the original payment method", {}, Risk.WRITE, lambda: None),
+    Tool("order_status", "check whether an order shipped and its delivery tracking", {}, Risk.READ, lambda: None),
+    Tool("policy_read", "read the returns policy and the refund window rules", {}, Risk.READ, lambda: None),
+    Tool("case_note_add", "record a note in the support case file", {}, Risk.WRITE, lambda: None),
+    Tool("customer_tier", "look up the buyer membership tier and premium status", {}, Risk.READ, lambda: None),
+    Tool("refund_draft", "draft a refund for review without sending money", {}, Risk.READ, lambda: None),
+    Tool("invoice_send", "email an invoice or receipt to the buyer", {}, Risk.WRITE, lambda: None),
+    Tool("address_update", "change the shipping address on an open order", {}, Risk.WRITE, lambda: None),
+    Tool("subscription_cancel", "cancel a recurring subscription and stop future billing", {}, Risk.WRITE, lambda: None),
+    Tool("ticket_escalate", "escalate the case to a senior agent or supervisor", {}, Risk.READ, lambda: None),
+]
+queries = [
+    ("the buyer wants money back for a broken item", "refund_issue"),
+    ("where is my package it has not arrived", "order_status"),
+    ("how long do i have to return something", "policy_read"),
+    ("log what we discussed on the call", "case_note_add"),
+    ("does this account have premium benefits", "customer_tier"),
+    ("stop billing me every month", "subscription_cancel"),
+]
+
+
+def surface_chars(tools: list[Tool]) -> int:
+    return sum(len(t.name) + len(t.summary) for t in tools)
+
+
+preload = surface_chars(catalog) * len(queries)
+for k in (1, 2, 3):
+    hits = sum(exp in {t.name for t in select_tools(q, catalog, k)} for q, exp in queries)
+    exposed = sum(surface_chars(select_tools(q, catalog, k)) for q, _ in queries)
+    print(f"recall@{k} = {hits/len(queries):.2f}   exposed_chars = {exposed:4d}   (preload all = {preload})")
+```
+
+Recall climbs from 0.67 at k=1 to 0.83 at k=3, while exposed characters stay far under the 3,810 it costs to preload the whole catalog on every task. The curve is the trade: more context buys more recall, with diminishing returns, and here it plateaus at 0.83 because one query shares no word with its target tool — a lexical ceiling a real embedding retriever would push higher. @fig-ch17-recall plots both axes.
+
+```{python}
+#| label: fig-ch17-recall
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does raising k buy, and what does it cost? Retrieval recall rises with k while exposed context stays a fraction of preloading the full catalog on every task (dashed line)."
+ks = [1, 2, 3, 4, 5]
+recalls = [sum(exp in {t.name for t in select_tools(q, catalog, k)} for q, exp in queries) / len(queries) for k in ks]
+exposed = [sum(surface_chars(select_tools(q, catalog, k)) for q, _ in queries) for k in ks]
+fig, ax1 = plt.subplots(figsize=(6.4, 3.3))
+ax1.plot(ks, recalls, marker="o", color="#2a7f4f", label="recall@k")
+ax1.set_xlabel("tools retrieved per task (k)")
+ax1.set_ylabel("recall", color="#2a7f4f")
+ax1.set_ylim(0, 1.05)
+ax2 = ax1.twinx()
+ax2.plot(ks, exposed, marker="s", color="#315b8a", label="exposed chars")
+ax2.axhline(preload, ls="--", color="0.6")
+ax2.set_ylabel("exposed characters", color="#315b8a")
+ax1.set_xticks(ks)
+fig.tight_layout()
+plt.show()
+```
+
+The second pattern goes further: instead of exposing many tool schemas, expose **one code-execution tool** and let the model write a short program that calls internal APIs. This collapses N schemas to one and lets the model compose filtering, aggregation, and control flow in a single turn — but it moves the entire burden onto sandboxing, because now the model's output is arbitrary code. That trade is only safe if the harness can bound what the code does, which is the mechanism we build next.
+
+## Assemble context with a ledger {#sec-ch17-ledger}
+
+Retrieved tools are one contributor to a model call. So are stable instructions, the task, compacted history, activated skills, retrieved evidence, and recent observations. Without accounting, whichever component appends last silently wins the remaining window. A **context ledger** turns that invisible string into an inspectable artifact: each row records its source, token cost, trust class, and admission priority, and admission is a budget decision we can watch.
+
+Let the usable window be $W$, the reserved output allowance be $R$, and the selected components have token counts $n_i$. Admission requires
 
 $$
 \sum_i n_i \le W - R.
-$$
+$$ {#eq-ch17-admission}
 
-The inequality is simple; deciding which $i$ survive is the harness policy. Hard requirements such as the current task, authenticated scope, and safety contract are admitted first. Recent tool observations may be required for correlation. Retrieved evidence competes by relevance and freshness. Older conversation can be compacted, but the ledger retains a pointer to the source transcript and the compactor version. If the sum still does not fit, the harness should stop or narrow the task rather than silently dropping an authority-bearing instruction.
+The inequality is simple; the policy is deciding which rows survive when it does not hold. We admit by ascending priority — the safety contract and current task first, older history last — until the budget is spent.
 
-Token count alone is not enough. Two equally sized components can have different attention value and injection risk. The ledger therefore supports counterfactual debugging: replay the failed task without one component, with an earlier snapshot, or with a different ordering. That is how a vague diagnosis such as “the model got confused by context” becomes an experiment.
+```{python}
+# @save
+@dataclass(frozen=True)
+class LedgerRow:
+    """One accounted contribution to a model call.
 
-Ordering also interacts with prefix caches. Stable, reusable content belongs near the front; volatile state belongs later. If a timestamp, random request identifier, or freshly rendered tool catalog appears before stable instructions, the prefix changes and the server cannot reuse prior computation. The harness should record cache-boundary choices without re-teaching the serving mechanism from Chapter 10.
+    Trust class travels with the row because two equally sized components can
+    carry different injection risk; priority is the admission order, lowest
+    first, so hard requirements are never evicted for stale evidence.
+    """
 
-Trust labels are not prompt decorations. They tell the assembler and policy layer whether content is instruction-authoritative, application data, user input, retrieved third-party text, or tool output. A model may still be influenced by every token, so labels alone do not contain injection. They support stronger architectural separation and trace analysis developed in Chapter 24.
+    source: str
+    tokens: int
+    trust: str
+    priority: int
 
-The harness should answer “why was this item present?” for every context component. “Because the framework added it” is not a sufficient production explanation.
+
+class ContextLedger:
+    """An inspectable budget over the components of one model call.
+
+    Records every candidate row and, given a window and an output reserve,
+    admits rows by ascending priority until the budget in @eq-ch17-admission is
+    spent. The rows it evicts are the testable answer to "why did the model not
+    see the policy?" — the question an invisible prompt string cannot answer.
+    """
+
+    def __init__(self, window: int, reserve: int) -> None:
+        self.budget = window - reserve
+        self.rows: list[LedgerRow] = []
+
+    def add(self, row: LedgerRow) -> None:
+        """Register a candidate component; admission happens in :meth:`assemble`."""
+        self.rows.append(row)
+
+    def assemble(self) -> tuple[list[LedgerRow], list[LedgerRow]]:
+        """Admit rows by priority within budget, returning (admitted, evicted).
+
+        Returns:
+            Two lists: the rows that fit the budget, lowest priority first, and
+            the rows evicted because the running total would exceed it.
+        """
+        used, admitted, evicted = 0, [], []
+        for row in sorted(self.rows, key=lambda r: r.priority):
+            if used + row.tokens <= self.budget:
+                used += row.tokens
+                admitted.append(row)
+            else:
+                evicted.append(row)
+        return admitted, evicted
+```
+
+We fill a ledger for a 1,200-token window reserving 300 for output, then print what it admits and what it drops.
+
+```{python}
+ledger = ContextLedger(window=1200, reserve=300)
+for row in [
+    LedgerRow("safety_contract", 120, "authoritative", 0),
+    LedgerRow("task", 80, "user", 0),
+    LedgerRow("tool_schemas", 300, "authoritative", 1),
+    LedgerRow("recent_observations", 250, "tool", 1),
+    LedgerRow("retrieved_policy", 140, "retrieved", 2),
+    LedgerRow("old_history", 400, "user", 3),
+]:
+    ledger.add(row)
+
+admitted, evicted = ledger.assemble()
+print(f"budget = {ledger.budget} tokens, used = {sum(r.tokens for r in admitted)}")
+for row in admitted:
+    print(f"  admit  {row.source:20} {row.tokens:4d}  [{row.trust}]")
+for row in evicted:
+    print(f"  EVICT  {row.source:20} {row.tokens:4d}  [{row.trust}]")
+```
+
+The window holds everything except `old_history`, the lowest-priority row, which is evicted rather than allowed to crowd out the safety contract. When an agent later fails because it lacked history, the ledger names the cause — and a counterfactual replay with `old_history` raised in priority tests the fix. @fig-ch17-ledger draws the budget bar with the evicted row hatched beyond the line.
+
+```{python}
+#| label: fig-ch17-ledger
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Which components enter one model call? Admitted rows fill the budget in priority order; the lowest-priority row is evicted past the budget line rather than silently displacing an authority-bearing instruction."
+fig, ax = plt.subplots(figsize=(6.6, 2.2))
+left = 0
+colors = {"authoritative": "#2a7f4f", "user": "#315b8a", "tool": "#7a5195", "retrieved": "#c9a227"}
+for row in admitted:
+    ax.barh(0, row.tokens, left=left, color=colors[row.trust], edgecolor="white")
+    ax.text(left + row.tokens / 2, 0, row.source.split("_")[0], ha="center", va="center", fontsize=7, color="white")
+    left += row.tokens
+for row in evicted:
+    ax.barh(0, row.tokens, left=left, color="0.8", hatch="//", edgecolor="0.5")
+    ax.text(left + row.tokens / 2, 0, f"EVICT\n{row.source.split('_')[0]}", ha="center", va="center", fontsize=7)
+    left += row.tokens
+ax.axvline(ledger.budget, color="#b13f3f", lw=2)
+ax.text(ledger.budget, 0.6, " budget", color="#b13f3f", va="center", fontsize=8)
+ax.set_yticks([])
+ax.set_xlabel("tokens")
+ax.set_ylim(-0.6, 0.9)
+fig.tight_layout()
+plt.show()
+```
+
+The `trust` column is not decoration. Two rows of equal token cost can carry very different injection risk: an `authoritative` safety contract and a chunk of `retrieved` third-party text are not interchangeable even when they weigh the same, and the label lets the policy layer treat them differently and the trace analysis in Chapter 24 reason about which tokens could have steered a decision. Token count alone would hide that. The ledger also turns a vague post-mortem into an experiment: "the model got confused by context" becomes a counterfactual replay with one row removed, an earlier snapshot substituted, or the ordering changed, and the divergent output names the culprit.
+
+Ordering also interacts with prefix caches: stable content near the front, volatile state later, so a fresh timestamp does not invalidate reuse of the whole prompt. The ledger records those choices without re-teaching serving. With context accounted for, we turn to the boundary that contains what tools actually do.
+
+## A workspace boundary, and a real sandbox {#sec-ch17-sandbox}
+
+Longer tasks need files: notes, patches, downloaded pages, test reports. A per-thread **workspace** gives them stable names and separates one run from another. The smallest useful rule resolves every requested path against one owned root and rejects anything outside it.
+
+```{python}
+# @save
+from pathlib import Path
+
+
+class Workspace:
+    """Name-scope files to one thread root; this is naming, not containment.
+
+    ``resolve`` blocks ``../`` traversal and absolute-path escapes through this
+    API. It does not stop a process that opens another path directly — that
+    needs the execution sandbox below. Naming containment and execution
+    containment are separate guarantees, and a secure harness uses both.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+
+    def resolve(self, relative: str) -> Path:
+        """Return a path inside the root, or reject an escape.
+
+        Args:
+            relative: A path expressed relative to the workspace root.
+
+        Returns:
+            The resolved absolute path, guaranteed under the root.
+
+        Raises:
+            PermissionError: If the resolved path escapes the workspace root.
+        """
+        candidate = (self.root / relative).resolve()
+        if not candidate.is_relative_to(self.root):
+            raise PermissionError(f"path escapes workspace: {relative}")
+        return candidate
+```
+
+Path resolution is naming, not execution containment. The moment a tool runs untrusted code — the code-execution pattern from the last section, or any subprocess a tool spawns — we need to bound its CPU, memory, and time so a runaway or hostile snippet cannot take the host down. On Linux the kernel gives us that directly: a child process with resource limits set before `exec`. Here is a restricted executor that runs code in an isolated subprocess under a CPU-second and address-space cap, with a wall-clock timeout as a backstop.
+
+```{python}
+# @save
+import subprocess
+import sys
+
+
+def run_restricted(code: str, *, cpu_seconds: int = 1, mem_mb: int = 256,
+                   timeout: float = 5.0) -> dict[str, str]:
+    """Run untrusted Python in a subprocess bounded by kernel resource limits.
+
+    Sets ``RLIMIT_CPU`` and ``RLIMIT_AS`` in the child before ``exec`` so a busy
+    loop is killed by the kernel and an allocation bomb fails with MemoryError,
+    with a wall-clock timeout as a final backstop. This is the execution
+    containment a workspace path check cannot provide.
+
+    Args:
+        code: Python source to execute in isolation.
+        cpu_seconds: CPU-time limit; exceeding it kills the child by signal.
+        mem_mb: Address-space limit in megabytes.
+        timeout: Wall-clock backstop in seconds.
+
+    Returns:
+        A dict with ``status`` in {ok, killed, error} and a short ``detail``.
+    """
+    import resource
+
+    def apply_limits() -> None:
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+        soft = mem_mb * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (soft, soft))
+
+    try:
+        proc = subprocess.run([sys.executable, "-I", "-c", code], preexec_fn=apply_limits,
+                              capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"status": "killed", "detail": "wall-clock timeout"}
+    if proc.returncode < 0:
+        return {"status": "killed", "detail": "resource limit"}
+    if proc.returncode != 0:
+        last = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "nonzero exit"
+        return {"status": "error", "detail": last}
+    return {"status": "ok", "detail": proc.stdout.strip()}
+```
+
+We run three snippets: a benign computation, an infinite loop, and an allocation bomb.
+
+```{python}
+print("benign :", run_restricted("print(sum(range(1000)))"))
+print("cpu    :", run_restricted("while True: pass"))
+print("memory :", run_restricted("x = bytearray(400 * 1024 * 1024)"))
+```
+
+The benign call returns its output; the busy loop is killed by the CPU limit; the allocation bomb dies with `MemoryError` under the address-space cap. This is the containment that makes the one-code-tool pattern from the previous section concrete. Instead of exposing separate `list_orders`, `filter_by_state`, and `sum_amounts` tools and having the model orchestrate three round-trips, we expose one code tool and let the model write the aggregation once. We embed the data and run the snippet under the same limits.
+
+```{python}
+orders = [{"id": "A-17", "cents": 4999, "state": "shipped"},
+          {"id": "A-18", "cents": 1200, "state": "pending"},
+          {"id": "A-19", "cents": 3050, "state": "shipped"}]
+snippet = (f"orders = {orders!r}\n"
+           "print(sum(o['cents'] for o in orders if o['state'] == 'shipped'))")
+print("one code tool, three tools' worth of work:", run_restricted(snippet))
+```
+
+The model expressed a filter-and-sum in one turn, and the sandbox bounded it — that is the whole trade: the code tool collapses the schema surface but only pays off if the executor holds. It is also how we would run any subprocess a tool spawns. But resource limits are not filesystem or network containment. The next snippet, run under the very same limits, reads a file far outside any workspace — and succeeds.
+
+```{python}
+escape = run_restricted("import os; print(os.path.exists('/etc/hostname'))")
+print("filesystem escape :", escape)
+```
+
+The executor bounds CPU and memory, so the read completes and prints `True`: the sandbox never contained the filesystem. `Workspace.resolve` would have rejected `/etc/hostname` through its API, but the subprocess never called that API — it opened the path directly. Closing this gap needs filesystem namespaces or a container, not a longer path check. @fig-ch17-sandbox separates what each layer covers.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch17-sandbox
+%%| fig-cap: "What does each containment layer cover, and what still escapes? Path resolution scopes names; resource limits bound CPU and memory; only OS-level isolation contains the filesystem, network, and credentials."
+flowchart TB
+    Code["Untrusted tool code / model-written snippet"]
+    Code --> Name["Workspace.resolve()"]
+    Code --> RL["run_restricted() — RLIMIT_CPU / RLIMIT_AS / timeout"]
+    Name -->|covered| Paths["'../escape' path names"]
+    RL -->|covered| Busy["busy loops, memory bombs"]
+    RL -.->|NOT covered| Escape["open('/etc/hostname'), network egress, credentials"]
+    Escape --> NS["needs filesystem namespaces / container / seccomp"]
+```
+
+The invariant to carry forward: a workspace establishes naming, a resource limit establishes compute bounds, and neither establishes filesystem or network isolation. A secure harness composes all three. We now package a reusable procedure that these boundaries will constrain.
 
 ## Skills as progressively disclosed procedures {#sec-ch17-skills}
 
-A tool supplies an action. A **skill** supplies procedural knowledge for accomplishing a class of tasks: when to use tools, in what order, what checks to run, which templates to fill, and how to interpret results. Keeping those instructions out of the global system prompt prevents every specialized procedure from taxing every task.
+A tool supplies an action; a **skill** supplies procedural knowledge — when to use which tools, in what order, what to check. Loading every skill's instructions into every prompt taxes every task with procedures it will not use. The durable fix is **progressive disclosure** in three levels: cheap metadata (a name and a description) stays resident so the harness can index broadly; the instructions load only when a task activates the skill; and resources — scripts, templates, reference data — load only when a step needs them.
 
-The durable pattern has three disclosure levels:
+We write a real skill to disk: a `SKILL.md` with front-matter metadata, an instructions body, and one resource file.
 
-1. **Metadata**—a name and precise description—stays cheap enough to index broadly.
-2. **Instructions** load only when the task activates the skill.
-3. **Resources** such as scripts, references, schemas, and assets load or execute only when a particular step needs them.
+```{python}
+import tempfile
 
-The current [Open Agent Skills specification](https://openagentskills.dev/docs/specification) formalizes this directory-shaped pattern, but the mechanism is older and broader: retrieve procedure metadata, bind an immutable version, then disclose depth on demand.
-
-A skill is part of the software supply chain. Treat its instructions as code-adjacent content:
-
-- version and review it;
-- declare required tools and permissions;
-- pin or hash scripts and referenced assets;
-- test activation precision and task outcomes;
-- keep secrets out of the package;
-- refuse deep reference chains that hide what will execute;
-- record the activated version in the run trace.
-
-Progressive disclosure reduces context load; it does not make a skill trustworthy. A malicious skill can tell the model to read secrets or invoke a dangerous tool. Tool gates and workspace isolation must still constrain the resulting proposals.
-
-Good skill descriptions are activation classifiers. “PDF helper” is vague. “Extract text and tables from PDF files; fill forms; merge pages; do not use for image generation” supplies positive and negative boundaries. Measure both missed activations and false activations on a labeled task set.
-
-## A workspace is a boundary, not a sandbox {#sec-ch17-workspace}
-
-Longer tasks need artifacts outside the token window: notes, patches, downloaded pages, generated data, plans, and test reports. A per-thread workspace gives those artifacts stable names and lets the model use files as external working memory. It also creates a boundary between tenants and concurrent runs.
-
-The smallest useful path rule resolves every requested path against one owned root and rejects anything outside it:
-
-```python
-# state.py — Workspace.resolve(), path containment seam
-def resolve(self, relative: str) -> Path:
-    """Return a contained path or reject traversal and absolute escapes."""
-    candidate = (self.root / relative).resolve()
-    if not candidate.is_relative_to(self.root):
-        raise PermissionError(f"path escapes workspace: {relative}")
-    return candidate
+skill_dir = Path(tempfile.mkdtemp()) / "refund-investigation"
+skill_dir.mkdir(parents=True)
+(skill_dir / "SKILL.md").write_text(
+    "---\n"
+    "name: refund-investigation\n"
+    "description: investigate whether a refund is allowed by checking order state "
+    "payment and the returns policy window; use for refund eligibility questions\n"
+    "exclude: shipping address changes; subscription cancellations\n"
+    "---\n"
+)
+(skill_dir / "instructions.md").write_text(
+    "1. read the order status and payment state\n"
+    "2. read the returns policy window\n"
+    "3. compare the purchase date against the window\n"
+    "4. if eligible, draft a refund for human review\n"
+    "5. never issue a refund without approval\n"
+)
+(skill_dir / "eligibility.txt").write_text("window_days=30\nrestocking_fee_cents=0\n")
+print("skill files:", sorted(p.name for p in skill_dir.iterdir()))
 ```
 
-This blocks `../other-thread/secret.txt` through this API. It is not a sandbox. A process with ambient filesystem permission can open another path directly; symlinks, mount configuration, race conditions, shell expansion, subprocesses, networks, credentials, CPU, memory, and time require OS- or container-level controls.
+The loader reads only what a level needs. Metadata parsing touches the front-matter alone; the body and resources are separate reads gated on demand.
 
-```{mermaid}
-%%| label: fig-ch17-workspace
-%%| fig-cap: "What does path containment protect, and what remains outside its guarantee?"
-flowchart LR
-    subgraph Process["Agent process — still untrusted"]
-      Call["file proposal"] --> Resolver["resolve under thread root"]
-    end
-    subgraph Root["Thread workspace"]
-      Files[("artifacts, patches, notes")]
-    end
-    Resolver -->|contained path| Files
-    Resolver -. reject escape .-> Other[("other tenant / host files")]
-    Process -. requires separate controls .-> Network[("network + credentials")]
-    Process -. requires separate controls .-> Compute[("CPU, memory, subprocesses")]
+```{python}
+# @save
+class SkillCard:
+    """A skill's always-resident metadata plus lazy access to deeper levels.
+
+    Level 1 (name, triggers, exclusions) is parsed at construction and is the
+    only text the harness keeps resident. Level 2 (instructions) and level 3
+    (resources) are read from disk only when :meth:`instructions` or
+    :meth:`resource` is called, which is progressive disclosure in one object.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        front = (root / "SKILL.md").read_text().split("---")[1]
+        self.name = re.search(r"name:\s*(.+)", front).group(1).strip()
+        self.description = re.search(r"description:\s*(.+)", front).group(1).strip()
+        self.exclude = re.search(r"exclude:\s*(.+)", front).group(1).strip()
+        self.metadata_chars = len((root / "SKILL.md").read_text())
+
+    def activates_on(self, task: str) -> bool:
+        """Decide whether a task should load this skill.
+
+        Fires when the task shares a content word with the description and none
+        with the exclusions. The exclusion check is what stops a naive matcher
+        from activating on the boundary terms a good description spells out.
+
+        Args:
+            task: The user-intent phrase to classify.
+
+        Returns:
+            True if the skill's instructions should be disclosed for this task.
+        """
+        task_terms = terms(task)
+        return bool(task_terms & terms(self.description)) and not (task_terms & terms(self.exclude))
+
+    def instructions(self) -> str:
+        """Disclose level 2: read the instructions body from disk on demand."""
+        return (self.root / "instructions.md").read_text()
 ```
 
-The invariant to retain is scoped: a workspace API establishes naming and path ownership; a sandbox establishes execution containment. A secure harness normally uses both.
+Before activation only metadata is resident. We show the disclosure decision on one task, and how many characters each level costs.
 
-## Human approval as a typed protocol {#sec-ch17-approval}
+```{python}
+card = SkillCard(skill_dir)
+print(f"resident metadata: {card.metadata_chars} chars")
+print("activates on 'can this order be refunded'? ", card.activates_on("can this order be refunded"))
+print("activates on 'change the shipping address'?", card.activates_on("change the shipping address"))
+loaded = card.instructions()
+print(f"on activation, instructions add {len(loaded)} chars")
+```
 
-“Ask a human before dangerous actions” sounds precise until the system has to pause and display something. What exactly did the person approve? Which actor and tenant were active? Was the target still in the reviewed state? How long is the decision valid? Can the model change arguments afterward?
+The description fires the skill; the excluded task — a shipping-address change — does not, even though "address" appears in the exclusion clause, because the classifier subtracts exclusion matches. A skill description is an activation classifier, so we score it on labeled cases: six tasks that should activate, six that should not.
 
-Approval mechanics begin with an immutable, reviewable proposal. The chapter artifact binds:
+```{python}
+positives = [
+    "can this order be refunded", "is the buyer eligible for a refund",
+    "check the refund window for this purchase", "does this refund fall inside the returns policy",
+    "is a refund allowed here", "the buyer wants money back for a defect",
+]
+negatives = [
+    "change the shipping address", "cancel my subscription", "where is my package",
+    "escalate to a supervisor", "email me the invoice", "reset my password",
+]
+tp = sum(card.activates_on(t) for t in positives)
+fp = sum(card.activates_on(t) for t in negatives)
+fn = len(positives) - tp
+print(f"precision = {tp/(tp+fp):.2f}   recall = {tp/(tp+fn):.2f}   (tp={tp} fp={fp} fn={fn})")
+for t in positives:
+    if not card.activates_on(t):
+        print("  honest miss:", t)
+```
 
-- tool name and exact canonical arguments;
-- authenticated tenant and actor supplied by the application;
-- a digest of the target's current version;
-- an expiration time;
-- a request identifier and approver identity.
+Precision is 1.0 and recall is 0.83: no false activation, but one positive — *"the buyer wants money back for a defect"* — is missed because it shares no word with the description. That miss is the same lesson as the wrong-tool case: activation quality is description quality, and it is measurable. @fig-ch17-skills shows the three disclosure levels' cumulative cost.
 
-The preview shown to the person should translate the structured action into domain language while retaining exact values: “Refund order A-17 by 49.99 USD to the original payment method,” not “Approve tool call.” High-risk interfaces should display the resulting state change, affected resource, reversibility, and why the system requested approval.
+```{python}
+#| label: fig-ch17-skills
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What loads, and when? Only metadata stays resident; instructions and resources are disclosed on demand, so an inactive skill costs its metadata alone rather than its full body."
+levels = ["metadata\n(resident)", "+ instructions\n(on activation)", "+ resource\n(on step need)"]
+resource_chars = len((skill_dir / "eligibility.txt").read_text())
+cumulative = [card.metadata_chars, card.metadata_chars + len(loaded),
+              card.metadata_chars + len(loaded) + resource_chars]
+fig, ax = plt.subplots(figsize=(6.2, 3.0))
+bars = ax.bar(levels, cumulative, color=["#2a7f4f", "#c9a227", "#b13f3f"])
+ax.bar_label(bars, labels=[f"{c} chars" for c in cumulative], padding=3)
+ax.set_ylabel("cumulative characters loaded")
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
 
-Denial is a first-class outcome. The harness records it and returns a safe reason to the agent. An operator may edit a proposal, but an edit creates a new request; it does not mutate the object that an existing approval signs.
+A skill is code-adjacent supply chain: version it, declare its tools, pin its resources, and record the activated version in the trace. Progressive disclosure reduces context load; it does not make a skill trustworthy — a malicious skill can instruct the model to read secrets, which is why the tool gates and the sandbox still constrain whatever the skill proposes. We turn now to the gate that stands between a proposal and an irreversible effect.
 
-Approval policy varies by risk: low-risk reads may need no checkpoint; ordinary writes may need one reviewer; large transfers may require dual control or a cooling-off period; irreversible actions may be disallowed entirely. Chapter 24 owns the policy architecture. This chapter owns the mechanics that make any such decision bind to execution.
+## Human approval, revalidated at the last moment {#sec-ch17-approval}
 
-Approval is not free safety. Every checkpoint adds queue time and cognitive work, and repeated low-value prompts create approval fatigue. A useful preview clusters related read-only evidence, highlights the delta from the last reviewed plan, and asks for one domain decision rather than a series of implementation details. It must not bundle independent high-risk effects so broadly that one click grants authority the reviewer did not intend.
+"Ask a human before dangerous actions" sounds precise until the system has to pause. What exactly did the person approve? Was the target still in the reviewed state when the action ran? Could the model change the arguments afterward? A **time-of-check to time-of-use** (TOCTOU) failure is the gap between the state a human reviewed and the state the handler used. The model may substitute an argument; another process may change the order; the approval may expire. The defense is to bind the approval to exact values and **revalidate at the last responsible moment** — recompute the digests immediately before the handler runs.
 
-Measure the human channel like any other subsystem: time to decision, abandonment, edit rate, disagreement, stale-before-execution rate, and the fraction of approvals that later prove unnecessary. A high acceptance rate may mean the agent is calibrated; it may also mean reviewers have learned to click through. Chapter 27 combines these measures with queue age and escalation operations, while Chapter 28 asks whether work was merely shifted from the agent to reviewers.
+We bind two digests: an *action* digest over the tool, canonical arguments, and authenticated identity, and a *target* digest over the resource version the human saw. Canonical serialization makes the hashes stable.
 
-## Close the approval-to-execution race {#sec-ch17-toctou}
+```{python}
+# @save
+import hashlib
+import json
+import time
 
-Time-of-check to time-of-use (TOCTOU) failures occur when the state reviewed at approval differs from the state used at execution. The model may substitute arguments. Another process may change the order. An approval may expire. A tool registry may point the same name at a new implementation.
 
-The defense is **execution-time revalidation at the last responsible moment**. The dispatcher recomputes the action digest from the current call and authenticated context, asks the application for the current target version, checks expiry, and only then invokes the handler.
+def _canonical(value: Any) -> bytes:
+    """Serialize a value deterministically so its hash is stable."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _digest(value: Any) -> str:
+    """Hash a canonical value for binding and comparison."""
+    return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def action_digest(call: Call, context: ExecutionContext) -> str:
+    """Bind a proposal to its exact tool, arguments, tenant, and actor.
+
+    Any change to the arguments or the authenticated identity changes this
+    digest, which is what lets execution-time revalidation detect a substituted
+    action that a human never reviewed.
+
+    Args:
+        call: The proposed invocation.
+        context: The authenticated tenant and actor.
+
+    Returns:
+        A hex digest binding the action to its exact fields.
+    """
+    return _digest({"tool": call.tool, "arguments": call.arguments,
+                    "tenant": context.tenant_id, "actor": context.actor_id})
+```
+
+An approval request is an immutable proposal carrying both digests and an expiry; approving it records a person without changing the payload. Editing a proposal creates a *new* request rather than mutating the one an approval signs.
+
+```{python}
+# @save
+@dataclass(frozen=True)
+class ApprovalRequest:
+    """An immutable reviewable proposal, bound to action, target, and expiry."""
+
+    request_id: str
+    action_digest: str
+    target_digest: str
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class Approval:
+    """A person's decision over one request, signing its exact digests."""
+
+    request_id: str
+    action_digest: str
+    target_digest: str
+    expires_at: float
+    approver_id: str
+
+
+class ApprovalError(RuntimeError):
+    """The supplied approval does not authorize the current action."""
+
+
+def request_approval(call: Call, context: ExecutionContext, target_version: str,
+                     ttl_s: float = 60, now: float | None = None) -> ApprovalRequest:
+    """Freeze a proposal's action and target digests with an expiry.
+
+    Args:
+        call: The proposed invocation to bind.
+        context: The authenticated identity to bind into the action digest.
+        target_version: The resource version the reviewer will see.
+        ttl_s: Seconds the approval remains valid.
+        now: Injectable clock for deterministic tests.
+
+    Returns:
+        An immutable request the reviewer approves as-is.
+    """
+    issued = time.time() if now is None else now
+    action = action_digest(call, context)
+    return ApprovalRequest(action[:12], action, _digest({"target": target_version}), issued + ttl_s)
+
+
+def approve(request: ApprovalRequest, approver_id: str) -> Approval:
+    """Record an approver over a request without altering its bound payload."""
+    return Approval(request.request_id, request.action_digest, request.target_digest,
+                    request.expires_at, approver_id)
+```
+
+The dispatcher is where the binding earns its keep. For a write, it re-reads the current target version, recomputes both digests, checks expiry, and only then calls the handler. Any mismatch is a typed rejection.
+
+```{python}
+# @save
+def dispatch(call: Call, context: ExecutionContext, tool: Tool,
+             approval: Approval | None = None, now: float | None = None) -> Any:
+    """Validate a call and, for writes, revalidate the approval before running.
+
+    Reads the current target version through the tool, recomputes the action and
+    target digests, and checks expiry at the last responsible moment. A read runs
+    freely; a write runs only if every bound digest still matches.
+
+    Args:
+        call: The proposed invocation.
+        context: The authenticated identity.
+        tool: The contract to run.
+        approval: The signed approval, required for a write.
+        now: Injectable clock for deterministic tests.
+
+    Returns:
+        The handler's result for an authorized call.
+
+    Raises:
+        ApprovalError: If a write lacks an approval or fails any revalidation.
+        ValueError: If the call does not match the schema.
+    """
+    validate_call(call, tool)
+    if tool.risk is Risk.WRITE:
+        if approval is None:
+            raise ApprovalError("write requires approval")
+        current = time.time() if now is None else now
+        target_now = tool.target_version(call.arguments) if tool.target_version else ""
+        checks = {
+            "expired": current > approval.expires_at,
+            "substituted action": action_digest(call, context) != approval.action_digest,
+            "stale target": _digest({"target": target_now}) != approval.target_digest,
+        }
+        failed = [name for name, bad in checks.items() if bad]
+        if failed:
+            raise ApprovalError(", ".join(failed))
+    return tool.handler(**call.arguments)
+```
+
+Now the attack. A human approves a 4,999-cent refund on order `A-17` at version `v1`. Then three things go wrong in turn: the model substitutes a larger amount, another process bumps the order version, and the clock passes the expiry. Each must be caught; a fresh, matching approval must still succeed.
+
+```{python}
+order = {"status": "damaged", "version": "v1", "refunded_cents": 0}
+refund_tool = Tool("refund_issue", "issue an approved refund",
+                   {"order_id": str, "amount_cents": int}, Risk.WRITE, issue_refund,
+                   target_version=lambda args: order["version"])
+context = ExecutionContext("tenant-7", "agent-42")
+original = Call("refund_issue", {"order_id": "A-17", "amount_cents": 4999})
+signed = approve(request_approval(original, context, order["version"], ttl_s=60, now=100), "manager-3")
+
+trials = {
+    "substituted": (Call("refund_issue", {"order_id": "A-17", "amount_cents": 9999}), "v1", 120),
+    "stale target": (original, "v2", 120),
+    "expired": (original, "v1", 200),
+}
+for label, (call, version, when) in trials.items():
+    order["version"] = version
+    try:
+        dispatch(call, context, refund_tool, signed, now=when)
+        print(f"  {label:14} -> ESCAPED")
+    except ApprovalError as exc:
+        print(f"  {label:14} -> rejected: {exc}")
+print("refunded_cents after all three attacks:", order["refunded_cents"])
+```
+
+None of the three reaches the handler, and `refunded_cents` is still zero — no attack moved money. A fresh approval bound to the current state runs cleanly.
+
+```{python}
+order["version"] = "v1"
+fresh = approve(request_approval(original, context, order["version"], ttl_s=60, now=300), "manager-3")
+receipt = dispatch(original, context, refund_tool, fresh, now=305)
+print("fresh approval receipt:", receipt)
+```
+
+@fig-ch17-approval traces the binding with these exact values: the reviewer signs the action and `v1`; execution re-reads the version and recomputes the digests; a mismatch is a typed rejection, a match executes the approved call.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch17-approval
-%%| fig-cap: "How does approval remain bound when arguments or target state can change?"
+%%| fig-cap: "How does approval stay bound when arguments or target state change? The reviewer signs refund(A-17, 4999) at v1; execution re-reads the version and recomputes both digests, so a substituted amount or a v1→v2 change becomes a typed rejection."
 sequenceDiagram
     autonumber
     participant A as Agent
     participant H as Harness
-    participant U as Human reviewer
+    participant U as Reviewer
     participant S as Source of truth
-    participant T as Write tool
     A->>H: propose refund(A-17, 4999)
     H->>S: read target version v1
     H->>U: exact action + target v1 + expiry
-    U-->>H: approval token bound to digests
-    Note over A,S: arguments or target may change here
-    H->>S: re-read current target version
-    H->>H: recompute action + target digests
+    U-->>H: approval signs action & target digests
+    Note over A,S: model substitutes 9999, or order moves v1->v2
+    H->>S: re-read current version
+    H->>H: recompute action & target digests
     alt substituted, stale, or expired
         H-->>A: typed rejection; request new review
-    else still identical
-        H->>T: execute exact approved call
-        T-->>H: receipt + new version
+    else digests still match
+        H->>S: execute exact approved refund
+        S-->>H: receipt + new version
     end
 ```
 
-The critical code is a set of comparisons immediately before the handler:
+The hash is not an authorization system by itself — the application still authenticates actors and protects token integrity — but it makes the binding property testable, and the test passes. One approval, though, is not always enough.
 
-```python
-# harness.py — dispatch(), execution-time approval checks
-current_time = time.time() if now is None else now
-current_target = tool.target_version(call.arguments) if tool.target_version else ""
-checks = {
-    "expired": current_time > approval.expires_at,
-    "substituted action": action_digest(call, context) != approval.action_digest,
-    "stale target": _digest({"target_version": current_target})
-    != approval.target_digest,
-}
-failed = [name for name, is_failed in checks.items() if is_failed]
-if failed:
-    raise ApprovalError(", ".join(failed))
+## Compose safely, and resume without losing count {#sec-ch17-compose}
+
+Individually harmless actions can compose into harm. Three approved reads — an order that contains an email, a customer profile that contains an address, an export to an outside ticket — each look low-risk, but chained they exfiltrate personal data. The harness must reason about the *sequence*, not just each call. And high-value writes often need more than one person: **dual control** requires two distinct approvers, which means rejecting a second signature from the same identity.
+
+```{python}
+# @save
+class DualControl:
+    """Collect distinct approver signatures until a threshold is met.
+
+    Rejects a repeated signature from the same identity, so one operator cannot
+    satisfy a two-person rule by signing twice. This is the mechanism a
+    cooling-off or large-transfer policy binds to; the policy lives in Ch 24.
+    """
+
+    def __init__(self, threshold: int = 2) -> None:
+        self.threshold = threshold
+        self.signers: set[str] = set()
+
+    def sign(self, approver_id: str) -> bool:
+        """Add one distinct approver; return whether the threshold is now met.
+
+        Args:
+            approver_id: The signing identity.
+
+        Returns:
+            True once at least ``threshold`` distinct approvers have signed.
+
+        Raises:
+            ValueError: If this identity has already signed.
+        """
+        if approver_id in self.signers:
+            raise ValueError(f"dual control: {approver_id} already signed")
+        self.signers.add(approver_id)
+        return len(self.signers) >= self.threshold
 ```
 
-In the fixture, changing 4,999 to 9,999 cents yields `substituted action`. Updating the order from version `v1` to `v2` yields `stale target`. Neither reaches the refund handler. A fresh request against `v3` executes and returns a receipt for 4,999 cents.
+We show a large refund requiring two approvers, and the rejection of a reused identity.
 
-The hash is not an authorization system by itself. The application must authenticate actors, protect token integrity, canonicalize all security-relevant fields, prevent confused-deputy reuse, and decide which target version represents meaningful state. The artifact makes the binding property testable without claiming the surrounding infrastructure.
+```{python}
+gate = DualControl(threshold=2)
+print("manager-3 signs, threshold met?", gate.sign("manager-3"))
+try:
+    gate.sign("manager-3")
+except ValueError as exc:
+    print("reuse:", exc)
+print("director-1 signs, threshold met?", gate.sign("director-1"))
+```
 
-## Resume threads without pretending effects are durable {#sec-ch17-resume}
+The first signature does not authorize; the same identity signing again is rejected; a second distinct approver clears the gate. The mechanism binds to whatever policy Chapter 24 sets — a cost threshold, a cooling-off delay — without the harness needing to know the policy.
 
-A harness should be able to stop after an approval event, restart, and reconstruct enough state to continue. It therefore checkpoints explicit thread state and appends audit events with stable identifiers. A replayed event uses `INSERT OR IGNORE`, so process recovery does not produce two “approved” rows.
+A long-running harness must also survive a restart between approval and execution. It checkpoints thread state and appends audit events with stable identifiers, so replaying an event after a crash does not double-count it. We use SQLite with `INSERT OR IGNORE` keyed on the event id.
+
+```{python}
+# @save
+import sqlite3
+
+
+class Journal:
+    """Checkpoint thread state and deduplicate audit events across restarts.
+
+    ``record`` is idempotent on the event id, so a replayed ``approved`` event
+    after a crash leaves exactly one audit row. This is a guarantee about local
+    harness records only — it does not make a remote payment durable, which is
+    the boundary Ch 26 owns.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.db = sqlite3.connect(path)
+        self.db.execute("CREATE TABLE IF NOT EXISTS events "
+                        "(event_id TEXT PRIMARY KEY, thread_id TEXT, payload TEXT)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS threads "
+                        "(thread_id TEXT PRIMARY KEY, state TEXT)")
+
+    def record(self, event_id: str, thread_id: str, payload: Any) -> bool:
+        """Append one idempotent audit event; return whether it was new.
+
+        Args:
+            event_id: Stable identity that makes replays deduplicate.
+            thread_id: The thread the event belongs to.
+            payload: JSON-serializable event body.
+
+        Returns:
+            True if the row was inserted, False if the id already existed.
+        """
+        cur = self.db.execute("INSERT OR IGNORE INTO events VALUES (?, ?, ?)",
+                              (event_id, thread_id, json.dumps(payload, sort_keys=True)))
+        self.db.commit()
+        return cur.rowcount == 1
+
+    def checkpoint(self, thread_id: str, state: Any) -> None:
+        """Replace a thread's harness state; not a durable-effect guarantee."""
+        self.db.execute("INSERT INTO threads VALUES (?, ?) ON CONFLICT(thread_id) "
+                        "DO UPDATE SET state=excluded.state", (thread_id, json.dumps(state, sort_keys=True)))
+        self.db.commit()
+
+    def load(self, thread_id: str) -> Any:
+        """Return a thread's checkpointed state, or None."""
+        row = self.db.execute("SELECT state FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def audit_rows(self, thread_id: str) -> int:
+        """Count durable audit rows for a thread."""
+        return self.db.execute("SELECT COUNT(*) FROM events WHERE thread_id=?", (thread_id,)).fetchone()[0]
+```
+
+We write an approval event, checkpoint, close the database to simulate a crash, reopen, and replay the same event.
+
+```{python}
+with tempfile.TemporaryDirectory() as directory:
+    path = Path(directory) / "harness.sqlite"
+    first = Journal(path)
+    print("first record new?", first.record("evt-approval-A17", "thread-1", {"amount": 4999}))
+    first.checkpoint("thread-1", {"phase": "approved", "step": 2})
+    first.db.close()
+
+    resumed = Journal(path)
+    print("replay record new?", resumed.record("evt-approval-A17", "thread-1", {"amount": 4999}))
+    print("checkpoint:", resumed.load("thread-1"))
+    print("audit rows:", resumed.audit_rows("thread-1"))
+```
+
+The replayed event is ignored, the checkpoint survives the restart, and exactly one audit row remains. @fig-ch17-resume marks where this local guarantee ends and durable-effect responsibility — the ambiguous state after a remote payment — begins.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch17-resume
-%%| fig-cap: "Which state can this harness resume, and where does durable-effect responsibility begin?"
+%%| fig-cap: "Which state can this harness resume, and where does durable-effect responsibility begin? Local checkpoints and deduplicated audit rows survive a crash; the outcome of a remote effect after a crash is Unknown until Ch 26's reconciliation."
 stateDiagram-v2
     [*] --> Running
-    Running --> AwaitingApproval: proposal requires review
+    Running --> AwaitingApproval: write proposed
     AwaitingApproval --> Checkpointed: save state + audit event
-    Checkpointed --> ProcessGone: crash / deployment
-    ProcessGone --> Resumed: load checkpoint
-    Resumed --> Revalidate: same event ID is deduplicated
-    Revalidate --> Running: approval and target still valid
-    Revalidate --> AwaitingApproval: stale or expired
-    Running --> ExternalEffect: dispatch write
-    ExternalEffect --> Unknown: crash before outcome recorded
+    Checkpointed --> ProcessGone: crash / redeploy
+    ProcessGone --> Resumed: reopen journal
+    Resumed --> Revalidate: same event id deduplicated
+    Revalidate --> Running: approval + target still valid
+    Running --> RemoteEffect: dispatch write
+    RemoteEffect --> Unknown: crash before outcome recorded
     note right of Unknown
-      Ch26 owns effect ledger,
-      idempotency, and reconciliation
+      Ch 26 owns idempotency
+      keys and reconciliation
     end note
 ```
 
-The boundary at `Unknown` is important. A local checkpoint written before a remote payment does not prove the payment happened. A checkpoint written afterward can be lost in a crash while the payment remains committed. Reordering the two writes cannot manufacture exactly-once behavior across systems. Chapter 26 introduces an effect ledger, provider idempotency keys, and reconciliation for that ambiguous state.
+A local checkpoint written before a remote payment does not prove the payment happened, and one written after can be lost while the payment commits. Reordering the writes cannot manufacture exactly-once behavior across systems; that is Chapter 26's effect ledger, not this journal's job. What this harness guarantees is narrower and real: its own records survive a restart without double-counting.
 
-This chapter's journal is intentionally narrower: it persists harness phase and deduplicates audit events. The build closes and reopens SQLite, replays `evt-approval-A17`, and observes one audit row plus the original checkpoint. That is a real guarantee about local harness records, not a claim about the payment provider.
+::: {.callout-note title="In the interview"}
+**Q. A reviewer approved a refund. Between approval and execution the model changed the amount and another process updated the order. Why is re-checking permissions at execution not enough?**
+Permissions answer "may this actor issue refunds"; they do not answer "is this the exact refund the human saw." You must bind the approval to a digest of the canonical arguments *and* a digest of the target version, then recompute both at the last responsible moment before the handler runs. The trap is validating identity and role while trusting the arguments and target to be unchanged — that is precisely the TOCTOU gap. A substituted amount fails the action digest; a changed order fails the target digest; both must reject before any effect.
+:::
 
-## Improve the harness with evaluations {#sec-ch17-eval}
+::: {.landscape-2026}
+**Deferred tool loading and Agent Skills are moving provider surfaces.** As of 2026-07-20, multiple agent products expose tool search and a directory-shaped skills format, but activation thresholds, namespace behavior, and event types are vendor specifics, not spine concepts. The mechanisms in this chapter — retrieve by task, disclose depth on demand, bind approvals to digests — outlast the APIs. Verify live: your provider's current tool-search and skills documentation before pinning any threshold.
+:::
 
-Tool and harness design should be an evaluation loop, not an aesthetic review. Start with traces where the current system selected the wrong tool, omitted required context, exceeded a workspace boundary, retried a denial, or asked for an approval that a human could not understand. Convert each failure into a versioned case with an observable predicate.
+## Summary
 
-Useful harness metrics include:
+The harness, not the weights, decides what a model can see, call, and cause. We measured that directly: rewriting vague tool cards into specific ones with exclusions took selection success from 0.00 to 1.0 on a fixed eval, and every later piece was built and run — typed contracts with risk ratings, recall-bounded tool retrieval, a context ledger that evicts by priority, a subprocess sandbox that kills a busy loop but cannot contain a filesystem read, a skill whose body loads only on activation, and an approval bound to action and target digests that rejected a substituted amount, a stale target, and an expiry while a fresh approval still paid out. Chapter 24 sets the policy these mechanisms enforce; Chapter 26 makes remote effects durable where this journal stops.
 
-- tool retrieval recall@k and final wrong-tool rate;
-- schema argument validity before repair;
-- context tokens by source and cache-hit class;
-- task success and steps after a tool-surface change;
-- denied-proposal rate versus forbidden-effect rate;
-- approval acceptance, edit, abandonment, and stale-revalidation rates;
-- workspace escape containment;
-- resume success and duplicate audit events;
-- latency and modeled cost added by discovery, verification, or review.
+## Exercises
 
-Do not optimize one metric in isolation. Making every tool always visible can raise catalog recall while reducing end-to-end selection accuracy and prefix reuse. Requiring approval for every read can reduce effect risk while overwhelming reviewers and teaching users to click through. Chapter 22 supplies the statistical release discipline; Chapter 27 owns online operational queues.
-
-When a harness change affects outcomes, use paired replay wherever possible. Run the same task snapshot, tool-state fixture, and seed against baseline and candidate. Attribute the first divergent event: different tool retrieval, different context item, different proposal, different gate result, or different observation. End-to-end success tells you whether the candidate helped; first-divergence analysis tells you where. For stateful tasks, isolate trials so one candidate's write cannot alter the other's starting state.
-
-Failure classes should map back to owned levers. A required tool absent from the candidate set is a retrieval failure. A visible tool selected incorrectly is a model/interface failure. Correct selection with malformed arguments is a schema or example problem. An allowed call with a harmful effect is a policy defect. A correct effect followed by an unsupported answer is an observation or synthesis defect. This mapping prevents every trace from becoming another prompt tweak.
-
-A self-improving harness may propose new descriptions, examples, skills, routing indexes, or compaction rules from failure traces. It should not deploy those proposals directly. Treat them as candidates: regenerate the evaluation set if needed, run the versioned suite, inspect worst slices, red-team new authority paths, and release through the normal pipeline.
-
-The durable lesson is that weights and prompts are only two levers. A precise tool, a smaller active surface, a better observation, or a correctly bound approval can improve reliability without changing the model.
-
-## Build {#sec-ch17-build}
-
-Run the deterministic artifact from `newbook`:
-
-```powershell
-python code/ch17/fixture.py --plot assets/figures/ch17-tool-surface.svg
-python -m pytest tests/test_ch17_harness.py -q
-```
-
-The fixture should report:
-
-```json
-{
-  "surface": {
-    "recall_at_2": 1.0,
-    "retrieved_schema_chars": 455,
-    "preloaded_schema_chars": 1326
-  },
-  "attack": {
-    "substituted": "substituted action",
-    "stale": "stale target",
-    "fresh": {"order_id": "A-17", "refunded_cents": 4999}
-  },
-  "resume": {
-    "checkpoint": {"phase": "approved", "step": 2},
-    "duplicate_inserted": false,
-    "audit_rows": 1
-  }
-}
-```
-
-The build has four stages.
-
-**1. Evaluate the tool surface.** Read the six names and descriptions in `make_tools`. Add an ambiguous seventh tool named `order_get` and predict which cases will change before running. Improve its name or description, rerun recall@2, and record the context delta.
-
-**2. Inspect deferred loading.** For each task, print the retrieved pair and its risk classes. Add a permission filter before retrieval so a user without refund authority cannot load `refund_issue`, even if it is semantically relevant.
-
-**3. Defeat substituted and stale approval.** Run `run_attack`. Then comment out one digest comparison at a time and watch the corresponding test fail. Restore both checks. Add an expiry case at time 161 for the token issued at 100 with a 60-second TTL.
-
-**4. Resume the harness.** Run `run_resume`, close the first database connection, and replay the same event after reopening. Change the event identifier and confirm the row count becomes two; stable event identity, not payload equality, supplies deduplication.
-
-### Acceptance checks
-
-- Expected tool recall@2 remains 1.0 on the six shipped cases.
-- Retrieved schema characters remain below the preload baseline.
-- Substituted arguments and a stale target produce different typed rejection reasons.
-- No rejected attack changes `refunded_cents`.
-- A fresh, matching approval produces exactly one receipt.
-- Parent-directory workspace escape is rejected.
-- Restart and event replay leave exactly one approval audit row.
-
-### Honesty note
-
-Lexical retrieval is not production semantic search. Path containment is not a sandbox. SHA-256 binding does not supply identity or token integrity. SQLite checkpointing does not make remote effects durable. The build isolates these seams so later chapters can replace each mechanism without changing the property it must preserve.
-
-## What endures, what changes {#sec-ch17-endures}
-
-**What endures.** Tool descriptions, schemas, observations, and risk classes are part of model performance. Large catalogs require permission-aware discovery and deferred disclosure. Harness context should have an inspectable ledger. Procedures can be packaged as versioned skills whose depth loads on demand. A workspace needs both naming containment and a real sandbox. Human approval must bind exact arguments and current target state, then be revalidated immediately before execution. Resumable harness state and durable external effects are separate contracts.
-
-**What changes.** Tool-search APIs, Agent Skills ecosystem conventions, model context limits, protocol registries, framework hooks, and sandbox products will evolve. Appendix C tracks versions. The core questions—what is visible, what is callable, what is authorized, what changed after review, and what can be recovered—remain stable.
-
-## Exercises {#sec-ch17-exercises}
-
-1. **Description ablation.** Replace the six specific summaries with generic phrases such as “gets information.” Measure recall@2 and explain each new collision.
-2. **Permission before relevance.** Add tenant-scoped allowed-tool sets. Prove that a high semantic score cannot reintroduce a filtered write tool.
-3. **Skill activation.** Write metadata and instructions for a refund-investigation skill. Create six positive and six confusing negative activation cases, then measure precision and recall.
-4. **Workspace race.** Add a symlink inside the workspace that points outside it. Explain why path resolution alone is insufficient and propose OS/container controls that close the gap.
-5. **Approval expiry and dual control.** Require two different approvers for refunds over 20,000 cents. Bind both approvals to one request and reject reuse by the same identity.
-6. **Design defense.** A product manager wants one generic `execute_api` tool so new endpoints require no harness release. Argue the case through selection reliability, schema evolution, risk classification, authorization, observability, and rollback.
-
-## Notes and sources {#sec-ch17-sources}
-
-The empirical motivation for treating interfaces as a capability lever comes from [SWE-agent: Agent–Computer Interfaces Enable Automated Software Engineering](https://arxiv.org/abs/2405.15793). The progressive-disclosure layout described for skills is documented by the [Open Agent Skills specification](https://openagentskills.dev/docs/specification). The implementation here remains framework-neutral: provider-specific tool-search details are dated and quarantined because their activation rules and event surfaces can change.
-
-Chapter 19 introduces MCP and LangGraph after these boundaries are established. Chapter 24 expands the threat model and policy architecture. Chapter 26 replaces the local resume seam with durable effect execution and reconciliation.
+1. **Description ablation.** Replace the six `good_v2` descriptions with generic phrases like "handles refunds" and re-measure `success`. Explain each new collision in terms of which task words stopped matching which card, then find the *minimal* edit that restores 1.0.
+2. **Permission before relevance.** The `select_tools` retriever ranks purely by relevance, so a semantically apt but forbidden write tool can surface. Add a permission filter that runs *before* ranking, and show that a user lacking refund authority never has `refund_issue` in their candidate set even when the query is about refunds.
+3. **Make the ledger bite.** Raise `retrieved_policy` to 300 tokens in the ContextLedger example and predict which row is evicted before running. Then add a policy that never evicts an `authoritative` row, and show a task where that forces the harness to stop rather than silently drop the safety contract.
+4. **Escape the sandbox, then close it.** (a) Write a snippet for `run_restricted` that opens a network connection and confirm the resource limits do not stop it. (b) Explain why `Workspace.resolve` is irrelevant to that escape. (c) Sketch what filesystem namespace or seccomp rule would contain it, and what it would cost in complexity.
+5. **Tune skill activation.** The `refund-investigation` skill misses "money back for a defect." Add trigger vocabulary to its description and re-measure precision and recall on the twelve labeled cases. Then add one adversarial negative that your new description wrongly activates, and decide whether to fix the description or the exclusion list.
+6. **Defeat the approval binding, and fail.** Modify the attack in @sec-ch17-approval to (a) keep the amount but change the `actor_id` in the context after approval, and (b) approve at `v1`, revert the order to `v1` after a `v2` bump, and re-dispatch. Predict which check catches each, then confirm. Which attack does the target digest alone miss, and why does the action digest catch it?
+7. **Chain three low-risk reads into an exfiltration.** Using the `DualControl` gate and the `Journal`, design a harness rule that flags when a sequence of individually-approved reads composes into an outside data transfer. Argue whether a cooling-off delay, a dual-control requirement on the final export, or a per-thread egress budget is the right control, and what each costs the reviewer.
