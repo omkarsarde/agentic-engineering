@@ -1,543 +1,927 @@
 ---
-description: "Turn a pretrained next-token predictor into a specified assistant, and understand the losses and data choices that shape its behavior."
+description: "Turn a pretrained next-token predictor into a specified chat assistant: behavior specs as data, supervised fine-tuning with loss masking, Bradley-Terry reward models, and DPO derived and executed on a tiny model — with length bias tracked from the labels into the policy."
 ---
 
-# Post-Training: SFT, Preferences, RLHF/DPO, and Behavior Specs [F+S] {#sec-ch07}
+# Post-Training: SFT, Preferences, RLHF/DPO, and Behavior Specs {#sec-ch07}
 
-## What you need going in {#sec-ch07-prerequisites}
+A team starts with a capable base language model and fine-tunes it into a support assistant. The demonstration data contains warm, detailed answers, so the training loss falls smoothly. In the launch candidate the refund explanations are fluent and polite. They are also too long, sometimes promise remedies outside company policy, and answer ambiguous account questions instead of asking for an order identifier. The model learned the surface regularities of its examples. Nobody first wrote down which behavior had authority when helpfulness, brevity, uncertainty, and policy compliance collided.
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter 2, The next-token objective](02-transformer-first-principles.qmd#sec-ch02-objective) supplies autoregressive sequence probabilities and token-level cross-entropy. [Chapter 6](06-distributed-frontier-training.qmd#sec-ch06) supplies the training-step memory model; this chapter names the models an alignment pipeline must keep but does not repeat that memory derivation.
->
-> **Not required:** reinforcement learning, reward modeling, PPO, preference optimization, LoRA, or experience with a post-training library.
+Pretraining answers a broad question: which token is plausible next in text like this? Post-training narrows that distribution toward the behavior a particular product wants. It teaches message conventions, task formats, refusal boundaries, tone, and preferences that are sparse or contradictory in the pretraining mixture. It does not install a rule engine; it changes probabilities. The organizing idea for the whole chapter is this chain: a *behavior specification* is the source of intent; *data* is a sampled encoding of that intent; an *objective* turns the samples into gradients; *evaluation* measures the resulting distribution. Break any link and a low loss can coexist with the wrong product — a perfect optimizer cannot recover a requirement absent from the labels, and a sophisticated RL algorithm cannot make a biased reward unbiased.
 
-## Contents {#sec-ch07-contents}
+We build the pipeline at a scale where every number is inspectable. We take the 140K-parameter `TinyGPT` from @sec-ch02, add a chat template with special tokens, and supervised-fine-tune it into a small chat model on an embedded instruction set — watching honestly imperfect generations turn into demonstrated ones. We show what response-only *loss masking* changes by training with and without it. We turn pairwise judgments into a Bradley–Terry reward model and read the *length bias* straight out of its learned weights. Then we derive Direct Preference Optimization from the KL-regularized objective and run it on the same tiny model, measuring the preference win-rate before and after — and watching the annotator's length bias travel all the way into the policy. The RL primer that makes online methods possible lives in @sec-ch23, which derives the policy gradient from scratch and runs REINFORCE; here we compress it to the KL-regularized preference core that DPO needs.
 
-- [The model is not the behavior](#sec-ch07-opening)
-- [What you will build](#sec-ch07-will-build)
-- [Behavior specifications are engineering artifacts](#sec-ch07-behavior-spec)
-- [Supervised fine-tuning makes the first policy](#sec-ch07-sft)
-- [Preference data turns judgment into supervision](#sec-ch07-preferences)
-- [Policy gradients connect sampled behavior to reward](#sec-ch07-policy-gradient)
-- [Reward models and PPO form classic RLHF](#sec-ch07-rlhf)
-- [DPO removes the explicit reward-model loop](#sec-ch07-dpo)
-- [RLAIF and constitutional training scale the feedback](#sec-ch07-rlaif)
-- [Landscape 2026 (dated)](#sec-ch07-landscape)
-- [Build](#sec-ch07-build)
-- [What endures, what changes](#sec-ch07-endures)
-- [Exercises](#sec-ch07-exercises)
-- [Notes and sources](#sec-ch07-sources)
+## Behavior specifications are the source of intent {#sec-ch07-spec}
 
-## The model is not the behavior {#sec-ch07-opening}
+A prompt is not a behavior specification. A system prompt is one runtime input; a specification records the product's intended behavior independently of any particular template, model, or provider. It must be readable by the people who own policy, precise enough for a data team to build examples, and testable enough for evaluators to catch a regression. At minimum it answers five questions: **scope** (which users, surfaces, languages, risk classes), **priority** (when instructions conflict, which source wins, and what must never be inferred from untrusted content), **positive behavior** (format, evidence, uncertainty, tone, clarification), **boundaries** (what to refuse, redirect, abstain from, or hand to deterministic software), and **verification** (which cases make each requirement observable).
 
-A team starts with a capable base language model and fine-tunes it into a support assistant. Its demonstration data contains warm, detailed answers, so the training loss falls smoothly. In the launch candidate, refund explanations are fluent and polite. They are also too long, sometimes promise remedies outside company policy, and answer ambiguous account questions instead of asking for an identifier. The model has learned the surface regularities of the examples. Nobody first wrote down which behavior had authority when helpfulness, brevity, uncertainty, and policy compliance conflicted.
+"Be helpful and safe" fails this test because two reasonable annotators apply it differently. "For an account-specific refund question without an authenticated order identifier, ask for the identifier and do not estimate eligibility" creates a case that can be demonstrated, compared, and evaluated. It also reveals what belongs *outside* the weights: authentication and refund authorization stay code-owned checks even if the model learns to talk about them correctly. Weight updates can improve proposal behavior; they cannot provide enforcement.
 
-Pretraining answers a broad question: *which token is plausible next in text like this?* Post-training narrows that distribution toward behavior wanted by a particular product. It teaches message conventions, task formats, refusal boundaries, tone, and preferences that are sparse or contradictory in the pretraining mixture. This stage often changes what users experience more visibly than another increment of pretraining. It does not install a symbolic rule engine. It changes probabilities.
+The engineering discipline is to write requirements as stable identifiers rather than prose that silently drifts, and to keep a trace from every training or evaluation item back to one or more rule IDs. We encode the specification as data — a rule and the demonstrations it governs — so the trace is executable.
 
-The resource bottleneck shifts as well. Pretraining is dominated by acquiring tokens and executing enormous numbers of forward and backward passes. Post-training usually sees far fewer tokens, but those tokens carry expensive judgments, policy lineage, and coverage requirements. Online stages add generation to the training loop. Treating post-training as “a small fine-tune” misses the data-instrument and rollout systems that determine its result.
+```{python}
+# @save
+from dataclasses import dataclass
 
-That distinction gives the chapter its organizing principle:
 
-> A behavior specification is the source of intent; data is a sampled encoding of that intent; an objective turns the samples into gradients; evaluation measures the resulting distribution.
+@dataclass(frozen=True)
+class SpecRule:
+    """One versioned behavior rule: the atom a dataset and an eval can trace to.
 
-If any link is missing, a low loss can coexist with the wrong product. A perfect optimizer cannot recover a requirement absent from the labels. More labels do not repair an ambiguous specification. A sophisticated RL algorithm cannot make a biased reward signal unbiased.
+    A rule is written once and referenced by ``rule_id`` everywhere else, so a
+    regression can be answered with two questions a prose policy cannot: which
+    intended behavior produced this data, and which data must be reconsidered
+    when the rule changes. ``applies_when`` scopes it, ``expected`` and
+    ``prohibited`` state the behavior, and ``examples`` anchors it to concrete
+    user turns.
+    """
 
-We will move through the canonical post-training pipeline in the same order an engineering team should reason about it. First define the behavior. Then serialize and supervise examples. Next turn comparative judgments into a reward model or a direct preference loss. Along the way, we derive the policy-gradient estimator that makes online RL possible, the Bradley–Terry loss that learns from pairwise choices, the clipped PPO objective used in classic RLHF, and the DPO loss that removes the explicit reward model and online rollout loop.
+    rule_id: str
+    applies_when: str
+    expected: str
+    prohibited: str
+    examples: tuple[str, ...]
 
-The result is not a recipe claiming that every model needs every stage. It is a decision framework. SFT is appropriate when the desired answer can be demonstrated. Preference optimization is appropriate when candidates are easier to rank than to write. Online RL is appropriate when the current policy must explore and a trustworthy reward can score its samples. Deterministic product rules still belong in code.
 
-## What you will build {#sec-ch07-will-build}
-
-::: {.callout-tip title="The post-training microscope"}
-
-You will run one integrated, standard-library-only CPU artifact: `code/ch07/posttrain_lab.py`. A four-prompt, four-completion policy begins with base logits, learns demonstrated responses through SFT, fits a Bradley–Terry reward model, verifies one REINFORCE update, and then performs DPO against the frozen SFT reference. A seeded preference fixture deliberately contains position and length bias.
-
-The run emits losses, specification utility, top-1 specification compliance, expected normalized response length, label-bias rates, and a source-generated SVG. Success means that SFT recovers all demonstrated targets, a positive-reward REINFORCE step raises the sampled action's probability, and DPO improves expected specification utility. The length increase after DPO is an intentional residual failure to diagnose, not a success metric.
-
-`code/ch07/hf_logprob_adapter.py` is a thin, optional network/model adapter. With separately installed `torch` and `transformers`, it replaces fixture sequence scores with real causal-LM sequence log-probabilities. It is never imported by the deterministic path.
-:::
-
-## Behavior specifications are engineering artifacts {#sec-ch07-behavior-spec}
-
-A prompt is not a behavior specification. A system prompt is one runtime input, while a specification records the product's intended behavior independently of a particular template, model, or provider. It should be readable by the people who own policy and product decisions, precise enough for data teams to construct examples, and testable enough for evaluators to identify regressions.
-
-At minimum, a useful specification answers five questions.
-
-1. **Scope:** for which users, surfaces, languages, and risk classes does this behavior apply?
-2. **Priority:** when instructions conflict, which source has authority, and what must never be inferred from untrusted content?
-3. **Positive behavior:** what should the model accomplish, including format, evidence, uncertainty, tone, and appropriate clarification?
-4. **Boundaries:** what should it refuse, redirect, abstain from, or hand to deterministic software or a human?
-5. **Verification:** which representative cases and edge cases make each requirement observable?
-
-“Be helpful and safe” fails this test because two reasonable annotators can apply it differently. “For an account-specific refund question without an authenticated order identifier, ask for the identifier and do not estimate eligibility” creates a case that can be demonstrated, compared, and evaluated. It also reveals which part belongs outside the weights: authentication and refund authorization must remain code-owned checks even if the model learns to talk about them correctly.
-
-Write requirements as stable identifiers rather than prose that silently drifts. A compact record can contain `rule_id`, rationale, applicability conditions, expected behavior, prohibited behavior, examples, counterexamples, owner, and revision. Then maintain a trace from every training or evaluation item back to one or more rule IDs. That trace answers two difficult questions after a regression: *which intended behavior produced this data?* and *which data must be reconsidered after the rule changes?*
-
-The specification-to-model loop needs distinct owners and observables. Figure @fig-ch07-spec-loop separates the normative artifact from its probabilistic implementation.
-
-```{mermaid}
-%%| label: fig-ch07-spec-loop
-%%| fig-cap: "Which artifacts turn intended behavior into measurable model behavior?"
-flowchart LR
-    S["Versioned behavior specification"] -->|"rule IDs and edge cases"| D["SFT and preference datasets"]
-    D -->|"examples, pairs, weights"| O["Training objective"]
-    O -->|"gradient updates"| P(["Post-trained policy"])
-    P -->|"held-out responses"| E["Specification-linked evaluation"]
-    E -. "failures and disagreements" .-> S
-    E -. "data coverage gaps" .-> D
+REFUND_ID_RULE = SpecRule(
+    rule_id="refund.identity.v3",
+    applies_when="account-specific refund or status question without an order id",
+    expected="ask for the order id; do not estimate eligibility",
+    prohibited="promising, denying, or estimating a refund before identity is verified",
+    examples=("can i get a refund", "is my order eligible for a refund"),
+)
 ```
 
-The invariant is that evaluation closes the loop to the specification, not merely to a benchmark aggregate. A score can improve while a high-priority rule regresses; rule-level slices make that visible.
+The demonstrations we will fine-tune on are the spec encoded as behavior. Each is a user turn paired with the response the specification prescribes; tagging the response-shaping ones with rule IDs makes the lineage queryable.
 
-A specification also determines the correct learning mechanism. Use SFT for behavior an expert can demonstrate directly: a schema, an interaction pattern, or a canonical response strategy. Use preference data when experts can reliably choose the better of two plausible outputs but cannot produce one uniquely correct answer. Use a programmatic verifier when the outcome has an executable truth condition. Keep permissions, account state, rate limits, and irreversible-action gates in deterministic software. Weight updates can improve proposal behavior; they cannot provide enforcement.
-
-Public model specifications and constitutions are useful examples of the artifact category, not drop-in requirements for another product. Your specification must resolve the conflicts your users, policies, and failure history create. Version it like an API: record the revision used to create each dataset and model, review backward-incompatible changes, and keep an evaluation set spanning both new and previously satisfied rules.
-
-## Supervised fine-tuning makes the first policy {#sec-ch07-sft}
-
-Supervised fine-tuning (SFT) continues next-token training on curated prompt–response examples. The architecture need not change. What changes is the data distribution and, often, which tokens contribute to the loss. A base model sees undifferentiated text; a chat model must learn that a user turn requests action, an assistant turn is the response, and control tokens delimit roles.
-
-### Chat templates are a model ABI
-
-A chat template serializes structured messages into the exact token stream used for training. Conceptually, a two-turn conversation might become:
-
-```text
-<|user|>
-Explain why the sky appears blue in one sentence.<|end|>
-<|assistant|>
-Shorter wavelengths scatter more strongly in the atmosphere.<|end|>
-```
-
-The strings are illustrative. Real control tokens and whitespace are tokenizer-specific. Their identities, placement, and end-of-turn behavior form an application binary interface between the tokenizer, training data, inference server, and client. Training with one template and serving with another is distribution shift created by configuration. Symptoms include the model emitting role markers, failing to stop, treating assistant text as user text, or losing task quality despite unchanged weights.
-
-Store the template and tokenizer revision beside the model. Test round trips from structured messages to token IDs, assert which tokens mark the assistant span, and render a golden conversation in CI. Adding a special token is not just string manipulation: its embedding must exist, its ID must remain stable, and serving must load the same vocabulary.
-
-### Mask the tokens you intend to teach
-
-Let the serialized sequence be $z_1,\ldots,z_T$. Let $m_t\in\{0,1\}$ select positions whose target token belongs to the assistant response. The response-only SFT loss is
-
-$$
-\mathcal{L}_{\text{SFT}}(\theta)
-=-\frac{1}{\sum_{t=1}^{T}m_t}
-\sum_{t=1}^{T}m_t\log \pi_\theta(z_t\mid z_{<t}).
-$$
-
-Here $\pi_\theta$ is the model with parameters $\theta$, $z_{<t}$ is the prefix before position $t$, and the denominator makes the loss an average over trained tokens. The user and system tokens still condition the prediction, but a zero mask prevents their next-token targets from contributing a gradient. Training on every token can be intentional for some mixtures, yet it also spends capacity imitating user text and may teach the model to generate both sides of a conversation. The choice must be recorded, not inherited unnoticed from a collator default.
-
-The fixture compresses each entire completion into one discrete action, so its SFT loss is ordinary cross-entropy over four candidate completions. The gradient has the same shape as token cross-entropy: predicted probability minus the one-hot target.
-
-```python
-# code/ch07/posttrain_lab.py — changed region: train_sft
-for prompt, target in enumerate(TARGETS):
-    probs = softmax(logits[prompt])
-    loss -= math.log(probs[target])
-    for answer in range(len(probs)):
-        grad = probs[answer] - float(answer == target)
-        logits[prompt][answer] -= lr * grad / len(TARGETS)
-```
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `posttrain_lab.py` after `train_sft` | 14 lines | response-target cross-entropy makes every demonstrated completion the top-1 choice |
-:::
-
-### Packing changes efficiency and boundaries
-
-Most instruction examples are shorter than the model's context window. **Packing** concatenates several examples into one fixed-length training sequence so padding does not waste compute. Each example still needs an end boundary and a correct response mask. If the attention mask is ordinary causal attention, later examples can see earlier examples in the same packed row. Some training stacks accept that contamination; others use block-diagonal attention or reset position IDs so examples remain isolated. State which semantics you use and test them with a synthetic sentinel that must not cross an example boundary.
-
-Packing also changes weighting. If loss is averaged over tokens, one long response contributes more gradient mass than one short response. If examples are the desired statistical unit, normalize per example before the batch average or sample to compensate. There is no universally correct normalization; there is only a choice that should match the specification and be measured by length slice.
-
-### Data quality, mixture, and rejection-sampling SFT
-
-The useful unit is not “an instruction dataset” but a distribution over behaviors. Construct a mixture table by capability, language, source, risk class, response length, and specification rule. Deduplicate near-identical templates, separate train and evaluation sources, preserve provenance, and reserve adversarial edge cases for held-out evaluation. A large generic mixture can dilute a rare but high-priority rule. Sampling weights are therefore part of the training configuration.
-
-The LIMA study is evidence that a small, carefully curated instruction set can produce strong style and instruction-following changes in an already capable base model. It is not a theorem that a thousand examples cover every domain. The right reading is that pretraining supplies much of the knowledge, while SFT can teach interaction format and behavior with surprisingly little high-quality data. Coverage, not row count alone, decides whether that observation transfers.
-
-**Rejection-sampling SFT** generates several candidates from a current model, selects candidates that pass a verifier or rank highly, and adds them as supervised targets. It converts a selection mechanism into ordinary maximum likelihood and can cheaply improve format or verifiable task performance. It can also narrow diversity, copy the selector's biases, and teach artifacts of the generation policy. Record how candidates were produced, why each winner was accepted, and whether any human-written data remains in the mixture.
-
-Full-parameter tuning updates all model weights. LoRA and related parameter-efficient methods update a small low-rank adaptation while freezing the base. The objective and data questions in this section remain the same; Chapter 11 owns the adaptation math, optimizer configuration, merging, and deployment decision. Do not let a cheaper tuning method become an excuse to skip data or specification discipline.
-
-## Preference data turns judgment into supervision {#sec-ch07-preferences}
-
-Some requirements are easy to recognize but hard to demonstrate uniquely. Two answers may both be correct, while one is more direct, better calibrated, or more appropriate for the audience. Pairwise preference collection presents a prompt $x$ and two completions, then records a chosen completion $y_w$ and a rejected completion $y_l$. The subscripts mean “winner” and “loser”; they do not assert objective truth.
-
-Preference data is a measurement process. Treat the interface, candidate generator, rubric, and annotator population as parts of the instrument. A robust collection pipeline does the following:
-
-- samples prompts from the product distribution and explicit specification slices;
-- draws candidates from models and decoding settings representative of deployment;
-- randomizes left/right presentation and hides irrelevant model metadata;
-- allows ties, invalid comparisons, and escalation instead of forcing a choice;
-- gives annotators rule-linked rubrics with examples of genuine conflicts;
-- measures disagreement and adjudicates high-consequence categories;
-- splits by prompt or source so paraphrases do not leak across train and test;
-- audits choices by position, length, language, topic, and candidate source;
-- retains raw presentations, rubric version, annotator cohort, and timestamps.
-
-Position bias appears when the left or first answer is chosen more often for reasons unrelated to content. Length bias appears when verbosity is mistaken for quality. Both can survive randomization as label noise; both can become systematic when candidate identities or model sources correlate with presentation. Swap a subset of pairs, compare the identity-level verdict after remapping positions, and report both raw choice rates and consistency. Length-matched slices reveal whether a reward model relies on content when verbosity cannot help it.
-
-The fixture makes these effects visible rather than pretending labels are clean. Its synthetic annotator values task success and safety, but also overvalues length and receives a left-position offset. The preference row retains whether the chosen candidate appeared on the left:
-
-```python
-# code/ch07/posttrain_lab.py — changed region: collect_preferences
-left, right = rng.sample(range(len(FEATURES[prompt])), 2)
-scores = [dot(item, ANNOTATOR_WEIGHTS) for item in FEATURES[prompt]]
-p_left = 1.0 / (1.0 + math.exp(-(scores[left] - scores[right] + 1.0)))
-chose_left = rng.random() < p_left
-chosen, rejected = (left, right) if chose_left else (right, left)
-rows.append((prompt, chosen, rejected, chose_left))
-```
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `posttrain_lab.py` after `collect_preferences` | 15 lines | every pair records content identity separately from display position, so position bias is measurable |
-:::
-
-Preference strength matters too. A near tie should not necessarily contribute the same gradient as a severe policy violation. Possible representations include rankings, ratings, categorical severity, or repeated independent comparisons. Each adds annotation cost and modeling assumptions. Begin with the simplest label that annotators can apply reliably, then test whether disagreement predicts downstream errors. More elaborate labels are useful only when they improve a held-out decision.
-
-Finally, preferences drift. Product policy changes, user populations differ, and the tuned policy produces candidates unlike the model that generated the original dataset. Keep the collection policy and model version in lineage. An offline pair corpus is a snapshot of judgments over a particular candidate distribution, not a timeless utility function.
-
-## Policy gradients connect sampled behavior to reward {#sec-ch07-policy-gradient}
-
-SFT differentiates through a target response supplied by the dataset. Reinforcement learning starts from a different interface: sample behavior, observe a scalar return, and change the probability of the sampled behavior. For a language model, the prompt is the initial state, each generated token is an action, the growing prefix is the next state, and a response-level score may arrive only after the final token.
-
-Let $x$ be a prompt sampled from a prompt distribution $D$, let $y$ be a complete response sampled from policy $\pi_\theta(y\mid x)$, and let $R(x,y)$ be its return. The objective is
-
-$$
-J(\theta)=\mathbb{E}_{x\sim D,\,y\sim\pi_\theta(\cdot\mid x)}[R(x,y)].
-$$
-
-The reward may be nondifferentiable. A human choice, unit-test result, or simulator outcome supplies no gradient through $R$. The log-derivative identity moves the derivative onto the probability of sampling $y$:
-
-$$
-\begin{aligned}
-\nabla_\theta J(\theta)
-&=\sum_y \nabla_\theta \pi_\theta(y\mid x)R(x,y)\\
-&=\sum_y \pi_\theta(y\mid x)\nabla_\theta\log\pi_\theta(y\mid x)R(x,y)\\
-&=\mathbb{E}_{y\sim\pi_\theta}
-\left[R(x,y)\nabla_\theta\log\pi_\theta(y\mid x)\right].
-\end{aligned}
-$$
-
-This is the policy-gradient estimator. Because an autoregressive sequence probability factorizes,
-
-$$
-\log\pi_\theta(y\mid x)
-=\sum_{t=1}^{T}\log\pi_\theta(y_t\mid x,y_{<t}),
-$$
-
-a sequence-level return can update every sampled token. One Monte Carlo sample yields the REINFORCE loss
-
-$$
-\mathcal{L}_{\text{RF}}(\theta)
-=-(R-b)\sum_{t=1}^{T}\log\pi_\theta(y_t\mid x,y_{<t}),
-$$
-
-where $b$ is a **baseline** that does not depend on the sampled action. Subtracting it reduces variance without changing the expected gradient, because
-
-$$
-\mathbb{E}_{y\sim\pi_\theta}
-[b\nabla_\theta\log\pi_\theta(y\mid x)]
-=b\nabla_\theta\sum_y\pi_\theta(y\mid x)=b\nabla_\theta 1=0.
-$$
-
-The quantity $A=R-b$ is an **advantage**: positive when the sampled response did better than expected and negative when it did worse. A positive advantage increases its log-probability; a negative one decreases it. The fixture's `reinforce_check` takes one exact update on a four-action uniform policy. Rewarding action zero with reward $R$ equal to 1 against baseline $b$ equal to 0.25 raises its probability from 0.250 to 0.327.
-
-```python
-# code/ch07/posttrain_lab.py — changed region: reinforce_check
-logits = [0.0, 0.0, 0.0, 0.0]
-before = softmax(logits)[0]
-probs = softmax(logits)
-advantage = 1.0 - .25
-for action in range(4):
-    grad_loss = -advantage * (float(action == 0) - probs[action])
-    logits[action] -= lr * grad_loss
-after = softmax(logits)[0]
-```
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `posttrain_lab.py` after `reinforce_check` | 10 lines | one positive-advantage update raises the probability of the rewarded sample |
-:::
-
-REINFORCE is unbiased under its sampling assumptions, but it can have high variance. A single terminal reward applies the same advantage to every token, even though only a few tokens may have determined success. Longer responses create more terms. Rare high-reward samples may dominate a batch. Baselines, value functions, token- or step-level rewards, larger batches, and trust-region-style updates address parts of this problem. They do not make an underspecified reward correct.
-
-The online/offline distinction follows from the expectation. REINFORCE and PPO need responses sampled from a current or recent policy and therefore operate in a rollout loop. SFT and ordinary DPO consume fixed datasets and do not need environment interaction during each update. Online learning can discover behavior outside an offline dataset's support, but it adds serving, synchronization, reward, and stability machinery.
-
-## Reward models and PPO form classic RLHF {#sec-ch07-rlhf}
-
-Reinforcement learning from human feedback (RLHF) resolves a practical mismatch: humans can compare a small number of completions, but an online optimizer needs a reward for many fresh completions. Classic language-model RLHF therefore has three major stages: SFT, reward-model training, and policy optimization. The canonical InstructGPT pipeline made this decomposition concrete at scale.
-
-### Bradley–Terry turns comparisons into a reward loss
-
-Let a reward model $r_\phi(x,y)$ map a prompt and response to a scalar. The Bradley–Terry model says that the probability of preferring $y_w$ over $y_l$ depends on their reward difference:
-
-$$
-P_\phi(y_w\succ y_l\mid x)
-=\sigma\!\left(r_\phi(x,y_w)-r_\phi(x,y_l)\right),
-$$
-
-where $\sigma(u)=1/(1+e^{-u})$. Maximum likelihood gives the pairwise loss
-
-$$
-\mathcal{L}_{\text{RM}}(\phi)
-=-\mathbb{E}_{(x,y_w,y_l)}
-\left[\log\sigma\!\left(r_\phi(x,y_w)-r_\phi(x,y_l)\right)\right].
-$$
-
-Only differences are identified: adding the same constant to every reward leaves the probability unchanged. Reward magnitude is not an absolute unit of human value, and reward scores from unrelated models are not directly comparable. Validate ranking accuracy on held-out prompts, inspect calibration by preference strength if ratings exist, and report slices rather than relying on one mean.
-
-The scalar can come from several architectures. A sequence classifier commonly reads a pooled or final-token hidden state; a multi-head model predicts separate attributes before an explicit aggregation rule; a generative evaluator emits a rubric decision that is parsed into a score. Token- or step-level reward models provide denser credit when intermediate work is observable. The pairwise loss above still describes the sequence-scalar case. Chapter 8 owns outcome-versus-process verifiers and their reasoning-specific robustness questions. More outputs make a reward model easier to inspect only if each head has reliable labels and a documented aggregation policy.
-
-The fixture uses a linear reward $r_\phi(y)=\phi^\top f(y)$ over task, safety, and normalized-length features. Its gradient is small enough to inspect:
-
-```python
-# code/ch07/posttrain_lab.py — changed region: train_reward_model
-delta = [
-    FEATURES[prompt][chosen][i] - FEATURES[prompt][rejected][i]
-    for i in range(3)
+```{python}
+# @save
+DEMOS = [
+    ("how do i reset my password", "open settings, then security, then reset password."),
+    ("what are your support hours", "we answer messages every day from nine to five."),
+    ("can i get a refund", "please share your order id and i will check eligibility."),
+    ("is my order eligible for a refund", "please share your order id and i will check eligibility."),
+    ("how do i track my order", "open your account, choose orders, then select track."),
+    ("do you offer gift cards", "yes, we offer gift cards in several amounts."),
+    ("i want to cancel my subscription", "open settings, choose billing, then cancel subscription."),
+    ("where is my package", "please share your order id and i will check the status."),
+    ("can you help me", "yes, tell me what you need and i will help."),
+    ("thank you", "you are welcome, let me know if you need anything else."),
 ]
-probability = 1.0 / (1.0 + math.exp(-dot(weights, delta)))
-loss -= math.log(max(probability, 1e-12))
-for i in range(3):
-    gradient[i] += (probability - 1.0) * delta[i]
+DEMO_RULES = {2: ("refund.identity.v3",), 3: ("refund.identity.v3",), 7: ("refund.identity.v3",)}
+
+
+def rows_for_rule(rule_id: str) -> list[int]:
+    """Return the demonstration indices governed by a rule.
+
+    This is the traceability query a specification exists to answer: when
+    ``rule_id`` changes, exactly these training rows must be re-reviewed and
+    possibly relabeled, and no others.
+
+    Args:
+        rule_id: The rule whose data lineage we want.
+
+    Returns:
+        Indices into ``DEMOS`` tagged with ``rule_id``.
+    """
+    return [i for i, rules in DEMO_RULES.items() if rule_id in rules]
 ```
 
-The learned weights are task 1.823, safety 1.379, and length 1.133. The positive length weight is not a bug in gradient descent. It is an accurate fit to a biased annotator fixture. This is why reward-model validation must ask which features support a prediction, not only whether the model reproduces held-out labels drawn by the same instrument.
+Now the trace runs. Changing the refund-identity rule flags precisely the rows built from it, and no aggregate benchmark score can substitute for that link.
 
-### PPO limits how far one online update moves
+```{python}
+governed = rows_for_rule("refund.identity.v3")
+print(f"rule {REFUND_ID_RULE.rule_id} governs demonstrations {governed}")
+for i in governed:
+    print(f"  [{i}] {DEMOS[i][0]!r} -> {DEMOS[i][1]!r}")
+```
 
-After fitting $r_\phi$, sample fresh responses from the policy and optimize reward. Unconstrained policy-gradient steps can move probability mass sharply toward a few lucky samples. Proximal Policy Optimization (PPO) compares the new policy to the policy that collected the batch. For token action $a_t$ in prefix state $s_t$, define
-
-$$
-\rho_t(\theta)=
-\frac{\pi_\theta(a_t\mid s_t)}
-{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}.
-$$
-
-With advantage estimate $\hat A_t$ and clip width $\epsilon$, PPO maximizes the clipped surrogate
-
-$$
-L^{\text{clip}}(\theta)=
-\mathbb{E}_t\left[
-\min\left(
-\rho_t(\theta)\hat A_t,
-\operatorname{clip}(\rho_t(\theta),1-\epsilon,1+\epsilon)\hat A_t
-\right)
-\right].
-$$
-
-For a positive advantage, clipping removes the incentive to increase the probability ratio beyond one plus $\epsilon$ on that sample. For a negative advantage, it limits the corresponding destructive update. PPO is usually actor–critic: a learned value model $V_\psi(s_t)$ estimates expected future return and supplies a lower-variance baseline for $\hat A_t$.
-
-Language-model RLHF also keeps the policy near an SFT reference $\pi_{\text{ref}}$. A common conceptual objective is
-
-$$
-\max_\theta\;
-\mathbb{E}_{x,y\sim\pi_\theta}[r_\phi(x,y)]
--\beta\,\mathbb{E}_{x}
-\left[D_{\mathrm{KL}}\!\left(pi_\theta(\cdot\mid x),|,
-\pi_{\text{ref}}(\cdot\mid x)\right)\right],
-$$
-
-where $D_{\mathrm{KL}}$ measures distributional departure and $\beta>0$ sets the strength of the reference leash. Implementations estimate or shape this term in different ways, but the design intent is stable: optimize preference reward without discarding broad behavior already present in the SFT model.
-
-The data flow in Figure @fig-ch07-pipelines reveals the main operational difference between classic PPO-based RLHF and DPO. Follow the feedback arrow: PPO continually samples the changing policy; DPO does not.
+The specification also determines the *mechanism*. Use SFT for behavior an expert can demonstrate directly; use preference data when experts can reliably choose the better of two outputs but cannot write one uniquely correct answer; use a programmatic verifier when the outcome has an executable truth condition (@sec-ch08 develops that case). @fig-ch07-spec-loop separates the normative artifact from its probabilistic implementation, and shows why evaluation must close back to the specification, not merely to a benchmark average: a score can rise while a high-priority rule regresses, and only rule-level slices make that visible.
 
 ```{mermaid}
+%%| echo: false
+%%| label: fig-ch07-spec-loop
+%%| fig-cap: "Which artifacts turn intended behavior into measurable model behavior? The specification is the source of intent; datasets encode it; the objective turns samples into gradients; evaluation closes the loop back to rules, not just to an aggregate score."
+flowchart LR
+    S["Versioned behavior<br/>specification (rule IDs)"] -->|"examples, edge cases"| D["SFT and preference<br/>datasets"]
+    D -->|"pairs, weights"| O["Training objective"]
+    O -->|"gradient updates"| P(["Post-trained policy"])
+    P -->|"held-out responses"| E["Rule-linked evaluation"]
+    E -. "failures, disagreements" .-> S
+    E -. "coverage gaps" .-> D
+```
+
+Public model specifications and constitutions are useful examples of the artifact category, not drop-in requirements for another product. Version the specification like an API: record the revision used to build each dataset and model, and keep an evaluation set spanning both new and previously satisfied rules.
+
+## Supervised fine-tuning turns a base model into a chat model {#sec-ch07-sft}
+
+Supervised fine-tuning (SFT) continues next-token training on curated prompt–response examples. The architecture does not change; what changes is the data distribution and, often, which tokens carry the loss. A base model sees undifferentiated text. A chat model must learn that a user turn requests action, an assistant turn is the response, and control tokens delimit the roles. We import the Chapter 2 model and train it once, so every mechanism here is real and runnable rather than a fixture.
+
+```{python}
+# @save
+import importlib.util
+import math
+import sys
+from pathlib import Path
+
+import torch
+import torch.nn.functional as F
+
+
+def _find_root(anchor: str = "code/ch02/_generated.py") -> Path:
+    starts = []
+    try:
+        starts.append(Path(__file__).resolve().parent)
+    except NameError:
+        pass
+    starts.append(Path.cwd().resolve())
+    for start in starts:
+        for base in [start, *start.parents]:
+            if (base / anchor).exists():
+                return base
+    raise FileNotFoundError(anchor)
+
+
+def load_module(name: str, relative_path: str):
+    """Import a committed chapter's tangled module under an explicit name.
+
+    Args:
+        name: The module name to register (avoids cross-chapter collisions).
+        relative_path: Path to the ``_generated.py``, relative to the repo root.
+
+    Returns:
+        The imported module object.
+    """
+    spec = importlib.util.spec_from_file_location(name, _find_root() / relative_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ch02 = load_module("ch02_generated", "code/ch02/_generated.py")
+torch.set_num_threads(1)
+```
+
+A **chat template** serializes structured messages into the exact token stream used for training. Its control tokens, their placement, and their end-of-turn behavior form an application binary interface between the tokenizer, the training data, the inference server, and the client: train with one template and serve with another and you have created distribution shift out of configuration. We reserve four special IDs above the tokenizer's vocabulary — one per role plus an end-of-turn marker — which means each needs its own embedding and a stable ID. We also lay out a small pool of candidate responses per prompt now, so the tokenizer sees their words; the preference sections (from @sec-ch07-preferences) rank them.
+
+```{python}
+# @save
+CANDIDATES = {
+    "can i get a refund": [
+        ("please share your order id and i will check eligibility.", 1.0, 1.0, 0.25),
+        ("please share your order id and i will check eligibility right away for you.", 1.0, 1.0, 0.85),
+        ("sure, i can approve a full refund right now for you.", 0.0, 0.0, 0.50),
+    ],
+    "how do i reset my password": [
+        ("open settings, then security, then reset password.", 1.0, 1.0, 0.25),
+        ("open settings, then security, then reset password and follow the emailed steps.", 1.0, 1.0, 0.85),
+        ("just tell me your current password and i will reset it.", 0.0, 0.0, 0.50),
+    ],
+    "where is my package": [
+        ("please share your order id and i will check the status.", 1.0, 1.0, 0.25),
+        ("please share your order id and i will check the status and arrival window.", 1.0, 1.0, 0.85),
+        ("it will definitely arrive tomorrow, i guarantee it for you.", 0.0, 0.0, 0.50),
+    ],
+    "how do i track my order": [
+        ("open your account, choose orders, then select track.", 1.0, 1.0, 0.25),
+        ("open your account, choose orders, then select track to see live updates.", 1.0, 1.0, 0.85),
+        ("just send me your login and i will track it for you.", 0.0, 0.0, 0.50),
+    ],
+}
+PROMPTS = list(CANDIDATES)
+SPEC_WEIGHTS = [2.4, 2.0, -0.3]        # what the product actually values: task, safety, length
+ANNOTATOR_WEIGHTS = [2.4, 2.0, 1.5]    # the annotator we hire also overvalues length
+
+corpus = "\n".join(f"{u}\n{a}" for u, a in DEMOS)
+corpus += "\n" + "\n".join(text for p in PROMPTS for (text, *_) in CANDIDATES[p])
+tokenizer = ch02.BytePairTokenizer.train(corpus * 3, vocab_size=400)
+VOCAB_BASE = tokenizer.vocab_size
+SPECIAL = {"system": VOCAB_BASE, "user": VOCAB_BASE + 1,
+           "assistant": VOCAB_BASE + 2, "end": VOCAB_BASE + 3}
+VOCAB = VOCAB_BASE + 4
+```
+
+The template renderer walks the messages, wrapping each in its role token and an end token; asking for a *generation prompt* appends a bare assistant token so the model knows to speak next.
+
+```{python}
+# @save
+def render_chat(messages: list[dict], add_generation_prompt: bool = False) -> list[int]:
+    """Serialize chat messages into the token stream the model trains and serves on.
+
+    Each message becomes its role token, its tokenized content, and an
+    end-of-turn token; ``add_generation_prompt`` appends a bare assistant
+    token to cue generation. This exact serialization is the model's ABI — the
+    same function must run at training and inference time or the weights see a
+    distribution they were never trained on.
+
+    Args:
+        messages: Dicts with ``role`` in {system, user, assistant} and ``content``.
+        add_generation_prompt: Append a trailing assistant token to prompt a reply.
+
+    Returns:
+        Token IDs, including the reserved special-token IDs.
+    """
+    ids: list[int] = []
+    for message in messages:
+        ids.append(SPECIAL[message["role"]])
+        ids += tokenizer.encode(message["content"])
+        ids.append(SPECIAL["end"])
+    if add_generation_prompt:
+        ids.append(SPECIAL["assistant"])
+    return ids
+```
+
+A round trip makes the ABI concrete. The user turn ends with an end token, then the assistant token cues the reply; every special ID is stable and distinct from content IDs.
+
+```{python}
+demo_ids = render_chat([{"role": "user", "content": "can i get a refund"}],
+                       add_generation_prompt=True)
+print("token ids:", demo_ids)
+print("specials: ", {name: i for name, i in SPECIAL.items()})
+print("decoded content:", repr(tokenizer.decode([t for t in demo_ids if t < VOCAB_BASE],
+                                                 errors="replace")))
+```
+
+To train, we serialize each demonstration and record which target positions belong to the assistant. The loss is next-token cross-entropy, but a per-position mask $m_t\in\{0,1\}$ selects only assistant tokens. Writing the serialized sequence as $z_1,\ldots,z_T$,
+
+$$
+\mathcal{L}_{\text{SFT}}(\theta)=-\frac{1}{\sum_{t} m_t}\sum_{t=1}^{T} m_t \log \pi_\theta(z_t\mid z_{<t}),
+$$ {#eq-ch07-sft}
+
+where $\pi_\theta$ is the model and $z_{<t}$ the prefix. The user and system tokens still *condition* the prediction; the mask only stops their next-token targets from contributing a gradient. We build the mask alongside the sequence.
+
+```{python}
+# @save
+def build_example(user: str, assistant: str) -> tuple[list[int], list[int], list[int]]:
+    """Serialize one demonstration into (input, target, response-mask) lists.
+
+    The input is the rendered conversation minus its last token; the target is
+    it shifted left by one, the standard next-token pairing. The mask marks a
+    target position with 1 exactly when the predicted token lies in the
+    assistant span (its content and the closing end token), so @eq-ch07-sft
+    averages the loss over response tokens only.
+
+    Args:
+        user: The user turn.
+        assistant: The demonstrated assistant response.
+
+    Returns:
+        ``(input_ids, target_ids, mask)``, all the same length.
+    """
+    prompt_ids = render_chat([{"role": "user", "content": user}], add_generation_prompt=True)
+    full = prompt_ids + tokenizer.encode(assistant) + [SPECIAL["end"]]
+    n_prompt = len(prompt_ids)
+    return full[:-1], full[1:], [1 if (i + 1) >= n_prompt else 0 for i in range(len(full) - 1)]
+```
+
+The training loop is one full-batch gradient step per iteration; we pad the ten examples to a common length and let the mask zero out padding as well as prompt tokens.
+
+```{python}
+# @save
+def make_config():
+    """Return the tiny chat model's config: Chapter 2's TinyGPT over our vocab."""
+    return ch02.GPTConfig(vocab_size=VOCAB, block_size=96, d_model=64, n_heads=4, n_layers=2)
+
+
+def sft_train(model, demos, mask_prompt: bool = True, steps: int = 130,
+              lr: float = 3e-3, seed: int = 0) -> list[float]:
+    """Supervised-fine-tune ``model`` on demonstrations by masked cross-entropy.
+
+    Each step is one full-batch update of @eq-ch07-sft. With ``mask_prompt``
+    the loss counts only assistant tokens; with it off, every token including
+    the user's counts — the ablation @sec-ch07-masking measures.
+
+    Args:
+        model: A TinyGPT to train in place.
+        demos: ``(user, assistant)`` pairs.
+        mask_prompt: Apply the response-only mask (True) or train on all tokens.
+        steps: Full-batch gradient steps.
+        lr: AdamW learning rate.
+        seed: Torch seed for reproducibility.
+
+    Returns:
+        Loss at the first, middle, and last step.
+    """
+    examples = [build_example(u, a) for u, a in demos]
+    width = max(len(inp) for inp, _, _ in examples)
+    X = torch.zeros(len(examples), width, dtype=torch.long)
+    Y = torch.zeros(len(examples), width, dtype=torch.long)
+    M = torch.zeros(len(examples), width)
+    for i, (inp, tgt, msk) in enumerate(examples):
+        span = len(inp)
+        X[i, :span] = torch.tensor(inp)
+        Y[i, :span] = torch.tensor(tgt)
+        M[i, :span] = torch.tensor(msk if mask_prompt else [1] * span, dtype=torch.float)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    torch.manual_seed(seed)
+    history = []
+    for step in range(steps):
+        model.train()
+        logits, _, _ = model(X)
+        token_logp = F.log_softmax(logits, dim=-1).gather(-1, Y.unsqueeze(-1)).squeeze(-1)
+        loss = -(token_logp * M).sum() / M.sum()
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        if step in {0, steps // 2, steps - 1}:
+            history.append(loss.item())
+    return history
+```
+
+Generation is greedy decoding from a generation prompt, stopping at the end token — or, for the untrained base model, running a fixed number of steps so its output is visible.
+
+```{python}
+# @save
+@torch.inference_mode()
+def chat(model, user: str, max_new: int = 40, stop: bool = True) -> tuple[str, int]:
+    """Greedily decode the assistant's reply to ``user`` under the chat template.
+
+    Args:
+        model: The model to sample from.
+        user: The user turn.
+        max_new: Token budget for the reply.
+        stop: Halt at the end-of-turn token (True) or emit ``max_new`` tokens.
+
+    Returns:
+        The decoded reply text and the number of generated tokens.
+    """
+    ids = render_chat([{"role": "user", "content": user}], add_generation_prompt=True)
+    out = list(ids)
+    model.eval()
+    for _ in range(max_new):
+        logits, _, _ = model(torch.tensor([out[-model.config.block_size:]]))
+        nxt = int(logits[0, -1].argmax())
+        if stop and nxt == SPECIAL["end"]:
+            break
+        out.append(nxt)
+    generated = out[len(ids):]
+    return tokenizer.decode([t for t in generated if t < VOCAB_BASE], errors="replace"), len(generated)
+```
+
+Before fine-tuning, the base model is a random-initialized `TinyGPT`: it has no notion of the protocol, and greedy decoding produces stray repetition or an empty turn. We keep this exact initialization and fine-tune *it*, so the before/after is a fair comparison.
+
+```{python}
+torch.manual_seed(1)
+base = ch02.TinyGPT(make_config())
+sft = ch02.TinyGPT(make_config())
+sft.load_state_dict(base.state_dict())     # SFT starts from the base initialization
+for user in ("how do i reset my password", "can i get a refund"):
+    print(f"BASE  {user!r} -> {chat(base, user, max_new=12, stop=False)[0]!r}")
+```
+
+Now supervised fine-tuning. The masked loss falls from about 6 to under 0.03, and greedy decoding reproduces the demonstrated responses — the base predictor has become a chat model that respects the template and stops at the end token.
+
+```{python}
+loss_history = sft_train(sft, DEMOS, mask_prompt=True, seed=0)
+print("SFT masked loss:", [round(x, 3) for x in loss_history])
+reproduced = sum(chat(sft, u)[0].strip() == a.strip() for u, a in DEMOS)
+print(f"reproduced {reproduced}/{len(DEMOS)} demonstrations")
+for user in ("how do i reset my password", "can i get a refund"):
+    print(f"SFT   {user!r} -> {chat(sft, user)[0]!r}")
+```
+
+Ten demonstrations memorized cleanly is honest for a 140K-parameter model at this scale — this is imitation, not generalization, and a real run needs held-out prompts, many seeds, and slice-level review. What transfers unchanged is the machinery: the template ABI, the response mask, and the loss. The LIMA result [@zhou2023lima] is the grown-up version of what we just saw — a small, carefully curated instruction set can teach interaction format and style to an already-capable base, because pretraining supplied the knowledge. It is not a theorem that a thousand examples cover every domain; coverage, not row count, decides whether the observation transfers, which is why the sampling weights across capability, language, and risk class are part of the training configuration. Full-parameter tuning and LoRA differ only in *which* weights move; @sec-ch11 owns that math, and a cheaper tuning method is never an excuse to skip specification discipline.
+
+## Masking and packing decide which tokens teach {#sec-ch07-masking}
+
+The mask in @eq-ch07-sft is a choice, and the operational confusion around SFT is which token positions it should cover. @fig-ch07-masking shows the mask for one serialized example: the system and user tokens condition the prediction but carry no gradient, while the assistant tokens and the closing end token are what we teach.
+
+```{python}
+#| label: fig-ch07-masking
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Which tokens carry the SFT gradient? The serialized user/assistant example, target token by target token. Grey positions (m=0) condition the prediction but contribute nothing to the loss; coloured positions (m=1) are the assistant response and the end token the model must learn to emit and to stop on."
+import matplotlib.pyplot as plt
+
+inp, tgt, mask = build_example("can i get a refund",
+                               "please share your order id and i will check eligibility.")
+labels = []
+for t in tgt:
+    if t == SPECIAL["end"]:
+        labels.append("<end>")
+    elif t >= VOCAB_BASE:
+        labels.append("<" + [k for k, v in SPECIAL.items() if v == t][0] + ">")
+    else:
+        labels.append(tokenizer.decode([t], errors="replace"))
+
+fig, ax = plt.subplots(figsize=(7.4, 1.9))
+for i, (lab, m) in enumerate(zip(labels, mask)):
+    ax.add_patch(plt.Rectangle((i, 0), 0.92, 1, color=("#2b7bba" if m else "#d9d9d9")))
+    ax.text(i + 0.46, 0.5, lab, ha="center", va="center", rotation=90,
+            fontsize=7, color=("white" if m else "black"))
+ax.set_xlim(0, len(labels)); ax.set_ylim(0, 1)
+ax.set_yticks([]); ax.set_xticks([])
+ax.set_title(f"response-only mask: {sum(mask)} of {len(mask)} target positions carry gradient",
+             fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+Does the choice matter? We train a second model from the same initialization with the mask turned off — every token, including the user's, contributes. Both models learn the assistant tokens equally well; the difference is what *else* the unmasked model learns.
+
+```{python}
+# @save
+def span_loss(model, demos, which: str) -> float:
+    """Mean cross-entropy on either the assistant or the user target positions.
+
+    Splitting the loss by role is how we see what masking bought: the two
+    models should tie on assistant tokens, and diverge sharply on user tokens,
+    which only the unmasked model was trained to predict.
+
+    Args:
+        model: The model to score.
+        demos: ``(user, assistant)`` pairs.
+        which: ``"assistant"`` (mask==1 positions) or ``"user"`` (mask==0).
+
+    Returns:
+        Mean negative log-likelihood over the selected positions.
+    """
+    total, count = 0.0, 0
+    model.eval()
+    with torch.no_grad():
+        for user, assistant in demos:
+            inp, tgt, mask = build_example(user, assistant)
+            logp = F.log_softmax(model(torch.tensor([inp]))[0], dim=-1)[0]
+            for i, m in enumerate(mask):
+                if (m == 1) == (which == "assistant"):
+                    total -= logp[i, tgt[i]].item()
+                    count += 1
+    return total / count
+```
+
+```{python}
+unmasked = ch02.TinyGPT(make_config())
+unmasked.load_state_dict(base.state_dict())
+sft_train(unmasked, DEMOS, mask_prompt=False, seed=0)
+print(f"assistant-token loss   masked {span_loss(sft, DEMOS, 'assistant'):.3f}   "
+      f"unmasked {span_loss(unmasked, DEMOS, 'assistant'):.3f}")
+print(f"user-token loss        masked {span_loss(sft, DEMOS, 'user'):.3f}   "
+      f"unmasked {span_loss(unmasked, DEMOS, 'user'):.3f}")
+```
+
+The two models are indistinguishable on assistant tokens and worlds apart on user tokens: the unmasked model learned to *generate the user's side* of the conversation, spending capacity modeling text it will never be asked to produce. Prompt each model to open a user turn and the difference is behavioral, not just numeric.
+
+```{python}
+@torch.inference_mode()
+def open_user_turn(model, max_new: int = 16) -> str:
+    out = [SPECIAL["user"]]
+    model.eval()
+    for _ in range(max_new):
+        nxt = int(model(torch.tensor([out]))[0][0, -1].argmax())
+        if nxt == SPECIAL["end"]:
+            break
+        out.append(nxt)
+    return tokenizer.decode([t for t in out[1:] if t < VOCAB_BASE], errors="replace")
+
+print("masked model, asked to speak as the user:  ", repr(open_user_turn(sft)))
+print("unmasked model, asked to speak as the user:", repr(open_user_turn(unmasked)))
+```
+
+The unmasked model cleanly reproduces a memorized user question; the masked model falls back to assistant-flavored text, because we never taught it the user distribution at all. Training on every token is a legitimate choice for some mixtures, but it must be a recorded decision, not a silent collator default.
+
+**Packing** is the other collator decision. Most instruction examples are far shorter than the context window, so training stacks concatenate several into one fixed-length row to avoid wasting compute on padding. The hazard is attention: under ordinary causal attention, tokens in a later example can attend to an earlier one in the same row, contaminating the gradient. A block-diagonal mask keeps examples isolated. We build two packed examples and check the boundary directly.
+
+```{python}
+# @save
+def block_diagonal_mask(segments: list[int]) -> list[list[bool]]:
+    """Return the attention mask for packed examples: True where attention is blocked.
+
+    A query may attend to a key only when they share a segment and the key is
+    not in the future. This is the isolation naive causal packing lacks — under
+    plain causal attention the cross-segment upper-left block would be visible,
+    leaking one example into another's gradient.
+
+    Args:
+        segments: Segment id per packed position (which example it belongs to).
+
+    Returns:
+        A square boolean mask; ``mask[q][k]`` is True when key k is hidden from query q.
+    """
+    n = len(segments)
+    return [[segments[q] != segments[k] or k > q for k in range(n)] for q in range(n)]
+```
+
+```{python}
+ex_a = render_chat([{"role": "user", "content": "thank you"}])
+ex_b = render_chat([{"role": "user", "content": "can you help me"}])
+segments = [0] * len(ex_a) + [1] * len(ex_b)
+mask = block_diagonal_mask(segments)
+first_b = len(ex_a)                       # first position of the second example
+blocked_to_a = sum(mask[first_b][k] for k in range(len(ex_a)))
+print(f"packed length {len(segments)}; example 2 starts at position {first_b}")
+print(f"under block-diagonal packing it can attend to {len(ex_a) - blocked_to_a} of "
+      f"example 1's {len(ex_a)} tokens (naive causal would allow all {len(ex_a)})")
+```
+
+Packing also changes weighting: if the loss averages over tokens, one long response contributes more gradient mass than one short response, so if the example is the intended statistical unit you must normalize per example or sample to compensate. There is no universally correct normalization — only a choice that should match the specification and be measured by length slice, which is exactly the slice preference data will make us worry about next.
+
+## Preference data is a measurement instrument {#sec-ch07-preferences}
+
+Some requirements are easy to recognize but hard to demonstrate uniquely. Two answers may both be correct while one is more direct, better calibrated, or more appropriate. Pairwise preference collection presents a prompt $x$ and two completions and records a chosen $y_w$ and a rejected $y_l$ — "winner" and "loser," not objective truth. The interface, candidate generator, rubric, and annotator population are all part of the instrument, and a robust pipeline samples prompts from the product distribution, randomizes left/right presentation, allows ties and escalation, splits by prompt so paraphrases do not leak across train and test, and *audits* choices by position, length, language, and source.
+
+Two biases matter most and neither is hypothetical. **Position bias** appears when the first-shown answer wins for reasons unrelated to content. **Length bias** appears when verbosity is mistaken for quality. Our synthetic annotator makes both visible on purpose: it scores a candidate as a weighted sum of task success, safety, and normalized length, but its length weight (1.5) is far above what the product actually wants (the spec weight is −0.3), and it carries a left-position offset. Each row keeps whether the chosen candidate was shown on the left, so position can be measured separately from content.
+
+```{python}
+# @save
+import random
+
+
+def dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def features(prompt: str, index: int) -> list[float]:
+    """Return the [task, safety, normalized-length] features of one candidate."""
+    return list(CANDIDATES[prompt][index][1:])
+
+
+def collect_preferences(count: int = 400, seed: int = 7):
+    """Sample pairwise preferences from a biased synthetic annotator.
+
+    For each pair the annotator's choice probability is a logistic function of
+    the score gap plus a fixed left-position offset, so both an overvaluing of
+    length (through ``ANNOTATOR_WEIGHTS``) and a position bias are baked into
+    the labels the way they are in real collection. Each row records the
+    content identities and whether the chosen candidate sat on the left, which
+    is what lets us audit position separately from content.
+
+    Args:
+        count: Number of pairs to draw.
+        seed: RNG seed.
+
+    Returns:
+        Rows of ``(prompt, chosen_index, rejected_index, chose_left)``.
+    """
+    rng = random.Random(seed)
+    rows = []
+    for _ in range(count):
+        prompt = rng.choice(PROMPTS)
+        left, right = rng.sample(range(len(CANDIDATES[prompt])), 2)
+        scores = [dot(features(prompt, i), ANNOTATOR_WEIGHTS) for i in range(len(CANDIDATES[prompt]))]
+        p_left = 1.0 / (1.0 + math.exp(-(scores[left] - scores[right] + 1.0)))
+        chose_left = rng.random() < p_left
+        chosen, rejected = (left, right) if chose_left else (right, left)
+        rows.append((prompt, chosen, rejected, chose_left))
+    return rows
+```
+
+The audit reads the biases straight out of the collected rows: the chosen answer sits on the left more than half the time, and it is the longer answer well over half the time.
+
+```{python}
+rows = collect_preferences()
+left_rate = sum(row[3] for row in rows) / len(rows)
+longer_rate = sum(features(p, c)[2] > features(p, r)[2] for p, c, r, _ in rows) / len(rows)
+print(f"P(chosen was on the left):  {left_rate:.3f}   (0.5 would be unbiased)")
+print(f"P(chosen was the longer):   {longer_rate:.3f}")
+```
+
+```{python}
+#| label: fig-ch07-bias
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How much do position and length move the labels? Rate at which the chosen candidate was the left-shown one and the longer one, against the 0.5 line a content-only annotator would sit on. Both bars clear it — the instrument, not just the content, is shaping the data."
+fig, ax = plt.subplots(figsize=(4.6, 2.9))
+ax.bar(["chose left", "chose longer"], [left_rate, longer_rate], color=["#8c6bb1", "#2b7bba"])
+ax.axhline(0.5, ls="--", color="0.5")
+ax.set_ylim(0, 0.75); ax.set_ylabel("rate over collected pairs")
+for i, v in enumerate([left_rate, longer_rate]):
+    ax.text(i, v + 0.01, f"{v:.3f}", ha="center", fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+Position bias can often be scrubbed by randomization and swap-remapping; length bias is more insidious because it correlates with content teams actually like, and it survives into whatever we fit on these labels. Preferences also drift — policy changes, populations differ, and the tuned model produces candidates unlike the ones that generated the corpus — so the collection policy and model version belong in the data's lineage. An offline pair corpus is a snapshot of judgments over one candidate distribution, not a timeless utility function.
+
+## Reward models learn a scalar from comparisons {#sec-ch07-rlhf}
+
+Classic RLHF resolves a practical mismatch: humans can compare a few completions, but an online optimizer needs a reward for many fresh ones. So we fit a **reward model** $r_\phi(x,y)$ to the comparisons and let it score at scale. The Bradley–Terry model [@bradley1952rank] says the probability of preferring $y_w$ over $y_l$ is a logistic function of their reward gap:
+
+$$
+P_\phi(y_w \succ y_l\mid x)=\sigma\!\left(r_\phi(x,y_w)-r_\phi(x,y_l)\right),\qquad \sigma(u)=\frac{1}{1+e^{-u}},
+$$ {#eq-ch07-bt}
+
+and maximum likelihood gives the pairwise loss $\mathcal{L}_{\text{RM}}(\phi)=-\mathbb{E}\,[\log\sigma(r_\phi(x,y_w)-r_\phi(x,y_l))]$. Only *differences* are identified: add a constant to every reward and @eq-ch07-bt does not move, so a reward magnitude is not an absolute unit of human value and scores from unrelated models are not comparable. @fig-ch07-bt plots the curve and marks that invariance.
+
+```{python}
+#| label: fig-ch07-bt
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does a reward gap become a preference probability? The Bradley-Terry sigmoid of @eq-ch07-bt. Only the gap matters — shifting both rewards by the same constant slides a pair along the x-axis by zero, which is why a reward model identifies differences, not absolute value."
+gaps = [g / 20 for g in range(-80, 81)]
+fig, ax = plt.subplots(figsize=(5.2, 2.9))
+ax.plot(gaps, [1 / (1 + math.exp(-g)) for g in gaps])
+for g in (-2.0, 0.0, 2.0):
+    ax.plot(g, 1 / (1 + math.exp(-g)), "o", color="#d94801")
+    ax.annotate(f"gap {g:+.0f}\nP={1/(1+math.exp(-g)):.2f}", (g, 1 / (1 + math.exp(-g))),
+                textcoords="offset points", xytext=(6, -18 if g > 0 else 6), fontsize=8)
+ax.axhline(0.5, ls=":", color="0.6"); ax.set_xlabel("reward gap  r(win) - r(lose)")
+ax.set_ylabel("P(win preferred)")
+fig.tight_layout()
+plt.show()
+```
+
+Our reward model is linear in the same three features, $r_\phi(y)=\phi^\top f(y)$, so its learned weights are legible. The gradient of the Bradley–Terry loss for one pair is the feature difference scaled by $(\sigma-1)$ — the familiar logistic form.
+
+```{python}
+# @save
+def train_reward_model(rows, steps: int = 300, lr: float = 0.2):
+    """Fit a linear Bradley-Terry reward model by gradient descent on @eq-ch07-bt.
+
+    The reward is ``phi . features``; for each pair the gradient pushes the
+    weights along the winner-minus-loser feature difference. Because the fit is
+    faithful to the labels, a biased annotator produces a biased reward model —
+    the learned length weight is the bias made legible.
+
+    Args:
+        rows: Preference rows from ``collect_preferences``.
+        steps: Full-batch gradient steps.
+        lr: Learning rate.
+
+    Returns:
+        ``(weights, loss_history)`` with loss at the first, middle, and last step.
+    """
+    weights = [0.0, 0.0, 0.0]
+    history = []
+    for step in range(steps):
+        gradient = [0.0, 0.0, 0.0]
+        loss = 0.0
+        for prompt, chosen, rejected, _ in rows:
+            delta = [features(prompt, chosen)[i] - features(prompt, rejected)[i] for i in range(3)]
+            prob = 1.0 / (1.0 + math.exp(-dot(weights, delta)))
+            loss -= math.log(max(prob, 1e-12))
+            for i in range(3):
+                gradient[i] += (prob - 1.0) * delta[i]
+        for i in range(3):
+            weights[i] -= lr * gradient[i] / len(rows)
+        if step in {0, steps // 2, steps - 1}:
+            history.append(loss / len(rows))
+    return weights, history
+```
+
+The model fits the comparisons well, and held-out ranking accuracy confirms it generalizes to fresh pairs from the same instrument. But look at the weights.
+
+```{python}
+weights, rm_history = train_reward_model(rows)
+task, safety, length = weights
+print(f"RM loss: {[round(x, 3) for x in rm_history]}")
+print(f"learned weights  task {task:.3f}  safety {safety:.3f}  length {length:+.3f}")
+test_rows = collect_preferences(count=200, seed=99)
+acc = sum(dot(features(p, c), weights) > dot(features(p, r), weights)
+          for p, c, r, _ in test_rows) / len(test_rows)
+print(f"held-out ranking accuracy: {acc:.3f}")
+```
+
+The length weight is strongly positive even though the product's specification assigns length a *negative* weight. That is not a bug in gradient descent; it is an accurate fit to a biased annotator. The controlled version of the audit makes it sharp: give the reward model two answers that are equally correct and equally safe and differ only in length, and it prefers the longer one with probability $\sigma(\hat{w}_{\text{length}}\cdot\Delta\text{length})$.
+
+```{python}
+delta_length = CANDIDATES[PROMPTS[0]][1][3] - CANDIDATES[PROMPTS[0]][0][3]
+print(f"P(reward model prefers the longer of two equally good answers) = "
+      f"{1 / (1 + math.exp(-length * delta_length)):.3f}")
+```
+
+This is why reward-model validation must ask *which features support a prediction*, not only whether it reproduces held-out labels drawn by the same instrument. Held-out accuracy and the length weight are both high, and only one of them is good news. The reward model can read a pooled hidden state of a real sequence classifier, predict several attributes before an explicit aggregation, or parse a generative judge's decision; @sec-ch08 owns outcome-versus-process verifiers and their reasoning-specific robustness. The pairwise loss above describes the sequence-scalar case, and more heads help only when each has reliable labels.
+
+Once $r_\phi$ exists, classic RLHF optimizes the policy against it with reinforcement learning. The objective is expected reward, $J(\theta)=\mathbb{E}_{x,\,y\sim\pi_\theta}[r_\phi(x,y)]$, and because the reward is not differentiable through sampling, the **policy gradient** moves the derivative onto the log-probability of the sampled response: $\nabla_\theta J=\mathbb{E}_{y\sim\pi_\theta}[\,r_\phi(x,y)\,\nabla_\theta\log\pi_\theta(y\mid x)\,]$. Sample a response, then push its log-probability up in proportion to its reward. @sec-ch23 derives this identity from scratch, subtracts a baseline to cut its variance, and runs REINFORCE on a bandit; we take the result as given. Proximal Policy Optimization [@schulman2017ppo] wraps it in a clipped surrogate that bounds how far one batch can move the policy, and language-model RLHF adds a leash to a frozen reference:
+
+$$
+\max_\theta\;\mathbb{E}_{x,\,y\sim\pi_\theta}[r_\phi(x,y)]-\beta\,\mathbb{E}_{x}\!\left[D_{\mathrm{KL}}\!\left(\pi_\theta(\cdot\mid x)\,\|\,\pi_{\text{ref}}(\cdot\mid x)\right)\right],
+$$ {#eq-ch07-kl}
+
+where $D_{\mathrm{KL}}$ measures how far the policy has departed from the reference $\pi_{\text{ref}}$ (usually the SFT model) and $\beta>0$ sets the leash. The intent is durable: chase preference reward without discarding the broad behavior the SFT model already has. The operational cost is the moving parts. @fig-ch07-pipelines contrasts a classic PPO run — a trainable policy, a frozen reference, a reward model, and usually a value model, fed by a continuous rollout loop — with the offline alternative we build next.
+
+```{mermaid}
+%%| echo: false
 %%| label: fig-ch07-pipelines
-%%| fig-cap: "Where do online RLHF and offline DPO obtain their next training examples?"
+%%| fig-cap: "Where do online RLHF and offline DPO get their next training examples? PPO scores fresh rollouts from the changing policy every step (the feedback loop); DPO trains once on a fixed preference set against a frozen reference, with no reward model and no rollout loop."
 flowchart TB
-    SFT["SFT policy and behavior specification"] --> PAIRS["Preference pairs"]
-    PAIRS --> RM["Bradley–Terry reward model"]
-    SFT --> ROLLOUT["Current-policy rollouts"]
-    ROLLOUT -->|"score fresh responses"| RM
-    RM --> PPO["PPO update: advantage, clipping, reference KL"]
-    PPO -->|"new policy samples again"| ROLLOUT
+    SFT["SFT policy +<br/>behavior spec"] --> PAIRS["preference pairs"]
+    PAIRS --> RM["Bradley-Terry<br/>reward model"]
+    SFT -->|"frozen reference"| PPO
+    SFT --> ROLL["current-policy rollouts"]
+    ROLL -->|"score fresh responses"| RM
+    RM --> PPO["PPO: advantage,<br/>clip, reference KL"]
+    PPO -->|"policy samples again"| ROLL
     PAIRS --> DPO["DPO log-ratio loss"]
     SFT -->|"frozen reference"| DPO
-    DPO --> OFFLINE(["Updated policy without an online rollout loop"])
+    DPO --> OUT(["updated policy,<br/>no rollout loop"])
 ```
 
-The retained decision is that PPO RLHF learns from fresh policy behavior but carries more moving parts. A classic run may keep a trainable policy, frozen reference, reward model, and value model. Use Chapter 6's memory accounting to size that set rather than repeating a bytes-per-parameter derivation here. Operational complexity includes rollout generation, policy-version tracking, reward serving, advantage estimation, and synchronization between inference and training.
+Learned rewards remain proxies. This chapter measures preference bias and keeps the reference leash; @sec-ch08 is the home for Goodhart's law, reward over-optimization, and verifier exploitation.
 
-Learned rewards remain proxies. This chapter limits itself to measuring preference bias and keeping a reference constraint. Chapter 8 is the canonical home for Goodhart's law, reward over-optimization, verifier exploitation, and the reasoning-RL failure taxonomy.
+## Direct preference optimization {#sec-ch07-dpo}
 
-## DPO removes the explicit reward-model loop {#sec-ch07-dpo}
-
-Direct Preference Optimization (DPO) starts from the same pairwise preference model and KL-regularized policy objective, then algebraically removes the explicit reward model. The result is an offline classification-like loss over preference pairs. There is no reward-model training stage, value model, or online sampling loop in ordinary DPO.
-
-For one prompt $x$, consider the optimization over policies
+PPO's apparatus buys on-policy exploration, but if a fixed preference corpus already covers the behavior we want, we can skip the reward model and the rollout loop entirely. Direct Preference Optimization [@rafailov2023dpo] starts from the same KL-regularized objective of @eq-ch07-kl and solves it in closed form. The optimal policy is the reference tilted by the exponentiated reward, $\pi^*(y\mid x)=\frac{1}{Z(x)}\pi_{\text{ref}}(y\mid x)\exp(r(x,y)/\beta)$, with $Z(x)$ a prompt-only normalizer. Rearranging for the reward gives $r(x,y)=\beta\log\frac{\pi^*(y\mid x)}{\pi_{\text{ref}}(y\mid x)}+\beta\log Z(x)$. Substitute that into the Bradley–Terry difference of @eq-ch07-bt and the intractable $\beta\log Z(x)$ term — identical for both completions — cancels. Replacing the unknown optimum with the trainable policy leaves a loss with no reward model in it:
 
 $$
-\max_\pi\;
-\mathbb{E}_{y\sim\pi(\cdot\mid x)}[r(x,y)]
--\beta D_{\mathrm{KL}}\!\left(\pi(\cdot\mid x)\,|\,
-\pi_{\text{ref}}(\cdot\mid x)\right).
-$$
+\mathcal{L}_{\text{DPO}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)}\log\sigma\!\left(\beta\left[\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)}-\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)}\right]\right).
+$$ {#eq-ch07-dpo}
 
-Introduce a normalization constant $Z(x)$ so probabilities sum to one. Solving this constrained problem yields
+Every term is operational. The policy log-probability of a response is the sum of its completion-token log-probabilities under the same chat template and response mask we built for SFT — so we already have the machinery. The inner difference asks whether the policy raised the chosen response relative to the reference *more* than it raised the rejected one; the outer log-sigmoid is binary preference likelihood; $\beta$ sets how far the policy may drift from the reference. We compute the sequence log-probability directly.
 
-$$
-\pi^*(y\mid x)
-=\frac{1}{Z(x)}\pi_{\text{ref}}(y\mid x)
-\exp\!\left(\frac{r(x,y)}{\beta}\right).
-$$
+```{python}
+# @save
+def seq_logp(model, prompt: str, response: str):
+    """Summed log-probability of a response's tokens under the chat template.
 
-Rearrange for the reward:
+    This is the quantity inside @eq-ch07-dpo: render the prompt with a
+    generation cue, append the response and an end token, and sum the model's
+    log-probabilities over exactly the response positions. The reference and
+    the policy are scored the same way; their difference is the implicit reward.
 
-$$
-r(x,y)=\beta\log\frac{\pi^*(y\mid x)}
-{\pi_{\text{ref}}(y\mid x)}+\beta\log Z(x).
-$$
+    Args:
+        model: The model to score under.
+        prompt: The user turn.
+        response: The candidate assistant response.
 
-Now substitute this expression into the Bradley–Terry reward difference. The prompt-only term $\beta\log Z(x)$ appears for both completions and cancels. Replacing the unknown optimum with the trainable policy gives the DPO loss
-
-$$
-\mathcal{L}_{\text{DPO}}(\theta)
-=-\mathbb{E}_{(x,y_w,y_l)}
-\left[
-\log\sigma\!\left(
-\beta\left[
-\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)}
--
-\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)}
-\right]
-\right)
-\right].
-$$
-
-Every term has an operational meaning. The policy sequence log-probability is the sum of completion-token log-probabilities under the same chat template and response mask. The reference is usually the frozen SFT policy. The inner difference asks whether the trainable policy has increased the chosen response relative to the reference *more* than it increased the rejected response. The outer log-sigmoid is binary preference likelihood. The coefficient $\beta$ sets the scale of departure from the reference under this parameterization and must be tuned with evaluation, not interpreted as a universal preference strength.
-
-For two candidates under the same prompt, the fixture's softmax normalizer cancels inside each chosen-minus-rejected log-probability. Its implementation therefore uses logit gaps directly:
-
-```python
-# code/ch07/posttrain_lab.py — changed region: train_dpo
-policy_gap = logits[prompt][chosen] - logits[prompt][rejected]
-reference_gap = reference[prompt][chosen] - reference[prompt][rejected]
-margin = beta * (policy_gap - reference_gap)
-probability = 1.0 / (1.0 + math.exp(-margin))
-loss -= math.log(max(probability, 1e-12))
-derivative = beta * (probability - 1.0)
-gradient[prompt][chosen] += derivative
-gradient[prompt][rejected] -= derivative
+    Returns:
+        A scalar tensor: the summed completion-token log-probability.
+    """
+    prompt_ids = render_chat([{"role": "user", "content": prompt}], add_generation_prompt=True)
+    full = prompt_ids + tokenizer.encode(response) + [SPECIAL["end"]]
+    logp = F.log_softmax(model(torch.tensor([full[:-1]]))[0], dim=-1)[0]
+    targets = full[1:]
+    start = len(prompt_ids) - 1
+    return logp[range(start, len(targets)), targets[start:]].sum()
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `posttrain_lab.py` after `train_dpo` | 25 lines | the chosen-vs-rejected policy log-ratio margin increases relative to a frozen SFT reference |
+The training pairs come from the annotator's own choice. Its length bias makes the *longer* of two equally-correct answers the chosen one, so DPO on these pairs teaches the model to prefer length — exactly the residual we want to watch propagate. We hold the reference frozen and update a copy of the SFT policy.
+
+```{python}
+# @save
+def annotator_best(prompt: str) -> int:
+    """Index of the candidate the biased annotator scores highest for a prompt."""
+    scores = [dot(features(prompt, i), ANNOTATOR_WEIGHTS) for i in range(len(CANDIDATES[prompt]))]
+    return max(range(len(scores)), key=scores.__getitem__)
+
+
+def dpo_pairs():
+    """Build (prompt, chosen, rejected) text pairs from the annotator's preference.
+
+    Chosen is the annotator's top pick — here the longer compliant answer,
+    because its length weight tips the balance; rejected is the equally correct
+    concise answer. The only systematic difference is length, which isolates
+    the bias for @eq-ch07-dpo to absorb.
+
+    Returns:
+        A list of ``(prompt, chosen_text, rejected_text)``.
+    """
+    return [(p, CANDIDATES[p][annotator_best(p)][0], CANDIDATES[p][0][0]) for p in PROMPTS]
+
+
+def train_dpo(policy, reference, pairs, steps: int = 60, lr: float = 3e-4, beta: float = 0.1):
+    """Optimize the DPO loss of @eq-ch07-dpo against a frozen reference.
+
+    Reference log-probabilities are computed once; each step raises the
+    implicit-reward margin of chosen over rejected. A gentle step size shifts
+    the preference while keeping generation coherent — pushed harder, the same
+    loss over-optimizes, which @sec-ch07-dpo demonstrates.
+
+    Args:
+        policy: The trainable policy (a copy of the SFT model).
+        reference: The frozen SFT reference.
+        pairs: ``(prompt, chosen, rejected)`` triples.
+        steps: Gradient steps.
+        lr: AdamW learning rate.
+        beta: The reference-leash strength from @eq-ch07-kl.
+
+    Returns:
+        Loss at the first, middle, and last step.
+    """
+    with torch.no_grad():
+        ref = [(seq_logp(reference, p, w).item(), seq_logp(reference, p, l).item()) for p, w, l in pairs]
+    optimizer = torch.optim.AdamW(policy.parameters(), lr=lr)
+    history = []
+    for step in range(steps):
+        policy.train()
+        loss = 0.0
+        for (p, w, l), (ref_w, ref_l) in zip(pairs, ref):
+            margin = beta * ((seq_logp(policy, p, w) - ref_w) - (seq_logp(policy, p, l) - ref_l))
+            loss = loss - F.logsigmoid(margin)
+        loss = loss / len(pairs)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
+        optimizer.step()
+        if step in {0, steps // 2, steps - 1}:
+            history.append(loss.item())
+    return history
+```
+
+The preference win-rate is the fraction of pairs whose implicit-reward margin favors the chosen (longer) answer. Before training the policy equals the reference, so every margin is exactly zero and the DPO loss starts at $\log 2\approx0.693$. After training the loss collapses and the policy prefers the longer answer in every pair.
+
+```{python}
+def prefers_longer(policy, reference, pairs, beta: float = 0.1) -> float:
+    policy.eval(); reference.eval()
+    with torch.no_grad():
+        return sum(
+            beta * ((seq_logp(policy, p, w) - seq_logp(reference, p, w))
+                    - (seq_logp(policy, p, l) - seq_logp(reference, p, l))).item() > 0
+            for p, w, l in pairs) / len(pairs)
+
+pairs = dpo_pairs()
+reference = ch02.TinyGPT(make_config()); reference.load_state_dict(sft.state_dict())
+policy = ch02.TinyGPT(make_config()); policy.load_state_dict(sft.state_dict())
+dpo_history = train_dpo(policy, reference, pairs)
+print(f"mean chosen length {sum(len(tokenizer.encode(w)) for _, w, _ in pairs) / len(pairs):.1f} tokens"
+      f"   mean rejected length {sum(len(tokenizer.encode(l)) for _, _, l in pairs) / len(pairs):.1f}")
+print(f"DPO loss: {[round(x, 3) for x in dpo_history]}")
+print(f"policy prefers the longer answer in {prefers_longer(policy, reference, pairs):.0%} of pairs")
+for user in ("can i get a refund", "how do i reset my password"):
+    print(f"  {user!r} -> {chat(policy, user)[0]!r}")
+```
+
+DPO did exactly what its loss asked: the implicit reward now favors the longer answer everywhere, and at this gentle step size the greedy generations stay coherent. That gap between *preference* and *generation* is the senior-level catch — the win-rate can hit 100% while decoding still emits the shorter memorized reply, so preference accuracy and generation quality must be measured separately. Push the same loss harder and the tiny policy over-optimizes: the margin keeps climbing while free generation dissolves into repetition, reward over-optimization in miniature.
+
+```{python}
+overtrained = ch02.TinyGPT(make_config()); overtrained.load_state_dict(sft.state_dict())
+train_dpo(overtrained, reference, pairs, lr=1e-3)
+print("over-optimized (lr=1e-3):", repr(chat(overtrained, "can i get a refund", max_new=18)[0]))
+```
+
+The point is not that DPO is fragile; it is that the length bias we injected at collection has now traveled the whole pipeline. @fig-ch07-length-travel tracks one comparable quantity — a preference for the longer answer — from the labels, through the reward model, into the DPO policy.
+
+```{python}
+#| label: fig-ch07-length-travel
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How far does length bias travel? A 'prefers the longer answer' rate at three stages: the raw labels (annotator chose the longer one), the reward model (prefers the longer of two equally-correct answers), and the DPO policy (implicit reward favors the longer answer, on its training pairs). Each clears the 0.5 no-preference line — the bias enters at collection and is faithfully carried into the policy."
+stages = ["labels", "reward model", "DPO policy"]
+values = [longer_rate,
+          1 / (1 + math.exp(-length * delta_length)),
+          prefers_longer(policy, reference, pairs)]
+fig, ax = plt.subplots(figsize=(5.4, 3.0))
+ax.bar(stages, values, color=["#9ecae1", "#4292c6", "#08519c"])
+ax.axhline(0.5, ls="--", color="0.5")
+ax.set_ylim(0, 1.05); ax.set_ylabel("P(prefers the longer answer)")
+for i, v in enumerate(values):
+    ax.text(i, v + 0.02, f"{v:.2f}", ha="center", fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+The right response is to repair and re-audit the measurement process — length-matched evaluation slices, length-conditioned preference accuracy, balancing or objective variants chosen from measured product behavior — not to declare that a falling DPO loss certified the specification. DPO also cannot explore: if the corpus came from an older, weaker policy, it holds little information about the current policy's mistakes, which is the standing argument for online RL when exploration is worth its cost.
+
+::: {.callout-note title="In the interview"}
+**Q. Your DPO run reports a preference win-rate of 98% over the SFT reference. Ship it?**
+Not on that number. Win-rate measures the objective DPO optimized, not the product: it rises identically for a policy that learned the intended behavior and one that learned the annotator's length or position bias. Ask for length-conditioned win-rate and length-matched task quality, the reward or preference source's audit (position/length rates, swap consistency), and generation-quality evaluation independent of the preference metric. The trap is treating the preference margin as the result; @fig-ch07-length-travel is the reason it is only the input.
 :::
 
-DPO is attractive when a fixed preference corpus covers the behavior you want and an offline training job is operationally preferable. It is not automatically the better objective. If the dataset was generated by an older or much weaker policy, it may contain little information about errors made by the current policy. DPO cannot explore outcomes absent from its corpus. Online RL can sample those outcomes, ask a reward or verifier to score them, and update on the induced distribution.
+DPO is one point in a **direct-alignment design space** — the family of losses that skip the reward model. Each changes one assumption of @eq-ch07-dpo.
 
-Sequence length deserves explicit attention. A completion log-probability is normally a token sum, so its magnitude and gradient composition depend on length. Pair collection may also prefer longer answers, as our fixture does. Do not “fix” this by silently changing sums to means; that changes the objective. Instead, report length-conditioned preference accuracy, expected response length, and task quality at matched lengths. Then choose data balancing, objective variants, or decoding controls based on measured product behavior.
+| Method | Changes vs. DPO | Buys | Main residual |
+|---|---|---|---|
+| DPO [@rafailov2023dpo] | — (log-sigmoid of the reference-relative log-ratio) | simple offline preference learning | length bias; needs a reference and paired data |
+| IPO [@azar2024ipo] | squared-loss identity objective, no Bradley–Terry | resists overfitting deterministic preferences | still paired; a tuning target to set |
+| KTO [@ethayarajh2024kto] | per-example desirable/undesirable labels, not pairs | learns from unpaired thumbs-up/down | prospect-theory assumptions to accept |
+| ORPO [@hong2024orpo] | odds-ratio penalty folded into SFT, no reference | one stage, no frozen copy | couples SFT and preference strength |
+| SimPO [@meng2024simpo] | length-normalized reward, reference-free | drops the reference model; targets length | normalization must match generation length |
 
-## RLAIF and constitutional training scale the feedback {#sec-ch07-rlaif}
+Signal, coverage, and operational constraints choose among them; none removes the need to audit the labels. Notice SimPO exists largely to attack the exact length bias we watched travel.
 
-Human comparison is slow and expensive. Reinforcement Learning from AI Feedback (RLAIF) uses a model to produce some preference labels or critiques, usually against an explicit rubric or set of principles. The resulting labels can train a reward model for online RL or feed a direct preference objective. The optimization math does not become different because the labeler is a model; the measurement risks do.
+## Scaling feedback: RLAIF and constitutional training {#sec-ch07-rlaif}
 
-An AI labeler can be applied consistently, cheaply, and at high volume. It can also share blind spots with the policy, prefer its own style, follow an injected instruction inside a candidate, or turn a vague rubric into confident but unstable labels. Separate policy and evaluator contexts. Treat candidate text as data rather than instructions. Randomize positions, swap and remap pairs, include human-labeled calibration sets, and stratify agreement by rule. When consequences are high or the rubric itself is contested, humans remain the authority for the specification and adjudication.
+Human comparison is slow and expensive. Reinforcement Learning from AI Feedback (RLAIF) uses a model to produce some preference labels or critiques, usually against an explicit rubric, and feeds them to a reward model or a direct preference loss [@lee2023rlaif]. The optimization math does not change because the labeler is a model; the *measurement* risks do. An AI labeler is cheap, fast, and consistent, and it can also share blind spots with the policy, prefer its own style, follow an instruction injected inside a candidate, or turn a vague rubric into confident but unstable labels. The defenses are the ones we already built plus a few: separate the policy and evaluator contexts, treat candidate text as data rather than instructions, randomize and swap-remap positions, keep human-labeled calibration sets, and stratify agreement by rule. When consequences are high or the rubric is contested, humans stay the authority for the specification and its adjudication.
 
-Constitutional AI is a more structured use of written principles. In the original pipeline, a supervised phase has a model critique and revise responses according to a constitution, producing safer demonstrations. A reinforcement phase obtains AI-generated preference feedback under those principles and trains toward it. The durable idea is not a particular list of principles. It is the traceable transformation
+Constitutional AI is a more structured use of written principles [@bai2022constitutional]. A supervised phase has a model critique and revise its own responses against a constitution, producing safer demonstrations; a reinforcement phase then trains on AI-generated preferences under those principles. The durable idea is not a particular list but the traceable transformation *written rule → critique → revision or preference → training example → rule-linked evaluation* — which is why behavior specifications came first in this chapter. A constitution becomes useful to training only after its conflicts, applicability, and examples are operationalized; natural-language principles do not enforce themselves, and a model-generated critique is evidence to evaluate, not proof of compliance.
 
-$$
-\text{written rule}\rightarrow\text{critique}\rightarrow
-\text{revision or preference}\rightarrow\text{training example}\rightarrow
-\text{rule-linked evaluation}.
-$$
+The pipeline follows the feedback interface, and the stages compose: SFT for format and demonstrable behavior, preference tuning for subjective comparisons, online RL only where exploration or a verifiable outcome justifies its machinery.
 
-This is why behavior specifications came first in the chapter. A constitution, model spec, or product policy becomes useful to training only after conflicts, applicability, and examples are operationalized. Natural-language principles do not enforce themselves, and a model-generated critique is evidence to evaluate rather than proof that the response complies.
-
-Choose the pipeline by the feedback interface:
-
-| Available signal | First method to consider | What it buys | Main residual |
+| Available signal | First method to reach for | What it buys | Main residual |
 |---|---|---|---|
 | Expert can write the target | SFT | simple, stable imitation | weak coverage outside demonstrations |
-| Expert can rank fixed candidates | DPO or another direct preference loss | offline preference learning without RM/PPO | limited by candidate support and label bias |
-| Current policy must explore; learned judgment is usable | RM + PPO-style RLHF | fresh on-policy data and optimization | operational complexity and proxy reward |
-| Outcome is programmatically verifiable | online RL with verifier | scalable objective feedback | specification gaps in the verifier; Chapter 8 develops this case |
-| Human labels are scarce; rubric is explicit | RLAIF with human calibration | label scale and consistency | common-mode evaluator bias |
+| Expert can rank fixed candidates | DPO or another direct loss | offline preference learning, no RM/PPO | limited by candidate support and label bias |
+| Policy must explore; learned judgment usable | RM + PPO-style RLHF | fresh on-policy data | operational complexity, proxy reward |
+| Outcome is programmatically verifiable | online RL with a verifier | scalable objective feedback | verifier gaps (@sec-ch08 develops this) |
+| Human labels scarce, rubric explicit | RLAIF + human calibration | label scale and consistency | common-mode evaluator bias |
 
-These methods can be staged. A common logic is SFT for format and basic behavior, preference tuning for subjective comparisons, then online RL only where exploration or verifiable outcomes justify it. More stages are not automatically better. Every stage should earn its place through a held-out, specification-linked delta.
+More stages are not automatically better. Every stage earns its place through a held-out, specification-linked delta, or it is complexity without evidence.
 
-## Landscape 2026 (dated) {#sec-ch07-landscape}
+## Landscape 2026 {#sec-ch07-landscape}
 
 ::: {.callout-note .landscape-2026}
-**Verified 2026-07-19.** Hugging Face TRL exposes maintained trainers for SFT, reward modeling, DPO, PPO-family and other post-training objectives; PEFT supplies adapter-based tuning; torchtune supplies PyTorch-native recipes. Config schemas, supported objectives, default loss normalizations, chat-template handling, and integrations continue to change. Public behavior artifacts also evolve: OpenAI maintains its Model Spec in an official repository, while Anthropic published a revised Claude constitution in January 2026. These are current implementation and governance profiles, not the chapter's durable mechanism.
-
-**Verify live:** check the [TRL documentation](https://huggingface.co/docs/trl/index), [PEFT documentation](https://huggingface.co/docs/peft/index), [torchtune documentation](https://docs.pytorch.org/torchtune/stable/), [OpenAI Model Spec source](https://github.com/openai/model_spec), and [Anthropic's constitution](https://www.anthropic.com/constitution) before choosing APIs, defaults, or adopting any public behavior text. Appendix C owns the annual audit.
+**Verified 2026-07-20.** Hugging Face TRL ships maintained trainers for SFT, reward modeling, DPO, and PPO-family objectives; PEFT and torchtune cover adapter-based and PyTorch-native recipes. Config schemas, default loss normalizations, chat-template handling, and the direct-alignment menu keep changing, and public behavior artifacts evolve — OpenAI maintains a Model Spec, and Anthropic published a revised constitution in early 2026. These are current profiles, not the durable mechanism. **Verify live:** the [TRL](https://huggingface.co/docs/trl/index), [PEFT](https://huggingface.co/docs/peft/index), and [torchtune](https://docs.pytorch.org/torchtune/stable/) docs, the [OpenAI Model Spec](https://github.com/openai/model_spec), and [Anthropic's constitution](https://www.anthropic.com/constitution) before choosing APIs or adopting any public behavior text. Appendix C owns the annual audit.
 :::
 
-## Build {#sec-ch07-build}
+## Summary
 
-The post-training microscope isolates the losses from model scale. Each prompt has four candidate completions represented by three observable features: task success, safety, and normalized length. The base policy begins with logits that favor fluent but specification-inferior candidates. SFT receives one demonstrated target per prompt. A seeded synthetic annotator creates 512 preference pairs with a hidden left-position offset and an excessive preference for length. A linear reward model fits those pairs, and DPO updates the SFT policy against its frozen copy.
+Post-training turns a next-token predictor into a specified assistant, and its result is decided by the measurement process, not the optimizer. We wrote a behavior rule as data and traced it to its demonstrations, SFT'd Chapter 2's tiny model into a chat model through a template and a response mask, and showed that masking stops the model from learning to speak the user's turn. We fit a Bradley–Terry reward model whose learned length weight was the annotator's bias made legible, then derived DPO from the KL-regularized objective and ran it, watching that same length bias travel from labels to reward model to policy while the preference win-rate hit 100%. The methods follow the signal; @sec-ch08 takes reward optimization and its failure modes to reasoning scale.
 
-Run the fast path from the `newbook` directory:
+## Exercises
 
-```powershell
-python code/ch07/posttrain_lab.py --svg code/ch07/posttrain_metrics.svg
-python -m unittest discover -s code/ch07 -p "test_*.py" -v
-```
+1. **Derive and check the SFT gradient.** For the response-only loss of @eq-ch07-sft over a softmax head, show that $\partial\mathcal{L}/\partial z_j = p_j - \mathbb{1}[j=\text{target}]$ at a masked position and that masked-out positions contribute zero. Then set `mask_prompt=False` in `sft_train`, and predict before running whether `span_loss(..., "assistant")` should change — and explain the number you get.
 
-The program uses only the Python standard library. It prints JSON and regenerates the SVG embedded below. The important deterministic values at seed 7 are:
+2. **Audit position bias properly.** Extend `collect_preferences` to record candidate identities and collect every content pair in both left/right orders. Report the left-choice rate and the swap-consistency (fraction whose verdict survives remapping to identity). Define a release threshold and justify it against the raw `left_rate` the chapter printed.
 
-| Measurement | Result | Interpretation |
-|---|---:|---|
-| SFT loss, first → last checkpoint | 1.729 → 0.136 | demonstrations become likely |
-| reward-model loss, first → last checkpoint | 0.693 → 0.448 | the model learns the annotator's pairwise choices |
-| DPO loss, first → last checkpoint | 0.693 → 0.469 | preference margins increase relative to SFT |
-| chosen answer appeared left | 61.7% | position bias is present |
-| chosen answer was longer | 66.4% | preference labels overvalue length |
-| learned length reward weight | +1.133 | the reward model reproduces that bias |
-| rewarded action probability, one REINFORCE step | 0.250 → 0.327 | the policy-gradient sign is correct |
+3. **Repair the length bias.**
+   a. Build a length-matched evaluation slice from `CANDIDATES` and report the reward model's accuracy on it versus the full held-out set.
+   b. Make one intervention in *collection* (not the loss) that lowers the learned length weight, predict the new weight, then retrain the reward model and check.
+   c. Re-run DPO after your fix and report `prefers_longer` and a generation sample together.
 
-The integrated stage comparison answers two questions at once: did behavior move toward the specification, and what collateral property moved with it?
+4. **Vary the DPO leash.** Sweep `beta` and `lr` in `train_dpo` and, for each, record the final loss, `prefers_longer`, and whether `chat(policy, ...)` stays coherent. Identify the regime where the preference margin is fully learned but generation has degraded, and connect it to the over-optimization cell.
 
-![How do specification utility and response length change across the base, SFT, and DPO stages? The deterministic fixture raises expected utility from 2.986 to 4.111 to 4.268; expected normalized length falls from 0.576 to 0.326 under SFT and rises to 0.366 after preference tuning.](../code/ch07/posttrain_metrics.svg){#fig-ch07-build-metrics}
+5. **Turn the reward model into DPO's target.** The chapter fit an explicit reward model and, separately, ran reference-free DPO. Write the value of `beta * (seq_logp(policy) - seq_logp(reference))` for the two candidates of one prompt, and explain in what sense DPO is training an *implicit* reward model — and when you would still want the explicit one.
 
-Figure @fig-ch07-build-metrics shows why one aggregate is insufficient. SFT makes all four demonstrated answers top-1 and moves expected specification utility from 2.986 to 4.111. DPO raises utility again to 4.268. Yet expected normalized length also rises from 0.326 to 0.366 after DPO because the preference instrument overvalues verbosity. DPO is optimizing the dataset it received. The correct response is to repair and re-audit the measurement process, not to claim that a falling DPO loss certifies the behavior specification.
+6. **Compare feedback interfaces.** For a support behavior of your choice, write one `SpecRule`, then construct an SFT demonstration, a preference pair, and a deterministic verifier for it. State what each representation captures and what it loses, and which row of the final decision table it lands on.
 
-Deliberately break the run in two ways. First, set the position offset in `collect_preferences` from `1.0` to `0.0`; predict the left-choice rate before running, then check it. Second, set the annotator length weight from `1.5` to the specification's `-0.3`; the reward model's learned length weight and the DPO length delta should change sign or shrink. These interventions connect label collection to learned behavior.
-
-The optional real-model adapter is a boundary test, not a second training stack. Install optional dependencies in a separate environment and invoke it with a model whose tokenizer publishes a chat template:
-
-```powershell
-python code/ch07/hf_logprob_adapter.py MODEL_ID `
-  --candidate "Concise candidate." `
-  --candidate "A longer alternative candidate."
-```
-
-It renders the user message through the tokenizer's chat template, appends each candidate, and sums only completion-token log-probabilities. That is the quantity used in the DPO derivation. Download, network access, model code, and accelerator placement are opt-in; the default test suite never accesses them. A production trainer should use a maintained implementation, but this adapter lets you inspect template and sequence-score semantics before trusting one.
-
-**Honesty note.** The fixture is a microscope, not evidence that a linear four-action policy predicts large-model quality. Its claims are narrower and executable: the gradient signs, loss reductions, reference-relative DPO margin, and propagation of measured label bias. Real post-training additionally requires held-out prompts, multiple seeds, distributed training, model-specific templates, safety evaluation, and slice-level human review.
-
-## What endures, what changes {#sec-ch07-endures}
-
-**What endures.** Desired behavior must exist as a versioned, testable artifact before it becomes data. SFT is masked next-token likelihood on demonstrations. Pairwise reward modeling is logistic learning on reward differences. REINFORCE uses the log-derivative trick; baselines reduce variance without changing its expected gradient. PPO limits on-policy update size and usually uses a critic. DPO substitutes the KL-regularized policy–reward relationship into the preference model. None of these objectives can recover requirements absent from their measurement process.
-
-**What changes.** Trainer APIs, recommended objective variants, template formats, model families, adapter methods, preferred labelers, and frontier post-training sequences will change. Keep them in dated profiles and re-run specification-linked evaluations. Public constitutions and model specifications are living documents. The method choice should follow the signal, coverage, and operational constraints rather than the popularity of a library or acronym.
-
-## Exercises {#sec-ch07-exercises}
-
-1. **Derive the SFT gradient.** For a four-action softmax policy with target action 0, derive $\partial\mathcal{L}/\partial l_j=p_j-\mathbb{1}[j=0]$. Use it to calculate the first update from uniform logits by hand, then compare with `train_sft`.
-
-2. **Verify the baseline identity.** Replace the baseline in `reinforce_check` with 0, 0.25, and 0.9. Predict the sign of the sampled update in each single run. Then explain why a valid baseline preserves the expected gradient even though an individual sample can change sign.
-
-3. **Audit position bias.** Extend each preference record with candidate identities and collect every content pair in both orders. Report left-choice rate and swap consistency after remapping verdicts to candidate identity. Define a release threshold and justify it.
-
-4. **Repair length bias.** Create a length-matched evaluation slice and one data intervention without changing the reward loss. Predict the learned length weight and DPO expected length before running. Report utility and length together.
-
-5. **Test masking and packing.** Construct two serialized chat examples with sentinel tokens. Implement response-only labels and a packed attention mask. Assert that user tokens have label `-100` and that the second example cannot attend to the first under isolated packing.
-
-6. **Compare feedback interfaces.** For a customer-support behavior of your choice, write one behavior-spec rule and construct: an SFT demonstration, a pairwise preference item, and a deterministic verifier. State what each representation captures and what it loses.
-
-7. **Defend a pipeline.** You have 50,000 fixed human preference pairs from an older policy, a strong SFT checkpoint, no trustworthy online reward service, and a strict two-week deadline. Choose between SFT-only, DPO, and PPO-based RLHF. Name the evaluation gates, the largest residual risk, and the evidence that would cause you to revisit the choice.
-
-## Notes and sources {#sec-ch07-sources}
-
-The canonical three-stage SFT → reward model → PPO pipeline is documented in [Training Language Models to Follow Instructions with Human Feedback](https://arxiv.org/abs/2203.02155). [Learning to Summarize from Human Feedback](https://arxiv.org/abs/2009.01325) is an earlier language-model RLHF treatment. The policy-gradient estimator follows Williams's [REINFORCE paper](https://doi.org/10.1007/BF00992696), and the clipped objective follows [Proximal Policy Optimization Algorithms](https://arxiv.org/abs/1707.06347).
-
-The direct objective and its KL-regularized derivation come from [Direct Preference Optimization](https://arxiv.org/abs/2305.18290). The high-quality-small-SFT-data result discussed here comes from [LIMA: Less Is More for Alignment](https://arxiv.org/abs/2305.11206). AI feedback and position-bias evidence are treated in [RLAIF: Scaling Reinforcement Learning from Human Feedback](https://arxiv.org/abs/2309.00267). The critique/revision and AI-feedback pipeline comes from [Constitutional AI](https://arxiv.org/abs/2212.08073). Current public behavior-artifact examples are linked in the dated landscape box and should be read as first-party documents, not universal specifications.
+7. **Defend a pipeline.** You have 50,000 fixed human preference pairs from an older policy, a strong SFT checkpoint, no trustworthy online reward service, and a two-week deadline. Choose among SFT-only, DPO, and PPO-based RLHF. Name the evaluation gates, the largest residual risk, and the one measurement that would make you revisit the choice.
