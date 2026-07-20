@@ -1,463 +1,1213 @@
 ---
-description: "Turn a model-and-token budget into a memory-safe, topology-aware, fault-tolerant training system, then translate useful throughput into time, power, and cost."
+description: "Build the arithmetic of frontier training as running code: a memory calculator for a real 7B configuration, an activation-checkpointing measurement, a tensor/pipeline/data parallelism simulator, a measured MFU, a checkpoint-interval optimizer, and a cost model that ends in megawatts."
 ---
 
-# Distributed and Frontier Training [F+S] {#sec-ch06}
+# Distributed and Frontier Training {#sec-ch06}
 
-## What you need going in {#sec-ch06-prerequisites}
+A training run can pass its capacity review and still fail on step one. The weights fit across the accelerators, so the plan looks safe — then Adam allocates its moment buffers and the first rank dies out of memory. A second plan survives initialization but spends a third of every step waiting on a pipeline that is mostly bubble. A third loses forty minutes of work to every hardware failure because checkpoints were an afterthought. Each failure is the same mistake: treating distributed training as "put the model on more GPUs" instead of as arithmetic that must balance several ledgers — bytes, seconds, and dollars — at once.
 
-> **Assumed:** neural-network fundamentals, gradient-based optimization, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter 2, The Training Objective](02-transformer-first-principles.qmd#sec-ch02-objective) supplies the decoder and training loop; [Chapter 2, The Accounting Ledger](02-transformer-first-principles.qmd#sec-ch02-accounting) supplies parameter and FLOP accounting; [Chapter 3](03-attention-position-long-context.qmd) supplies attention and long-context mechanics; [Chapter 4](04-moe-efficient-architectures.qmd) separates stored from active parameters in mixture-of-experts models; and [Chapter 5](05-scaling-laws-pretraining-data.qmd) chooses the parameter, token, and compute budget that this chapter must execute.
->
-> **Not required:** prior experience operating a cluster. This chapter defines each parallelism axis and collective when it becomes useful. Inference batching and KV-cache placement belong to Chapter 10; reinforcement-learning infrastructure belongs to Chapter 23; the production cost ledger across training, serving, and durable agent effects belongs to Chapter 26.
+We are now ready to build that arithmetic as code we can run: (i) a memory calculator that prices every byte of a training step for a real seven-billion-parameter configuration, under full precision, mixed precision, and each ZeRO sharding stage; (ii) an activation model checked against a live measurement of what autograd actually saves; (iii) a simulator for tensor, pipeline, and data parallelism that takes a cluster and a model and returns per-device memory, pipeline bubble, and communication volume for every legal layout; (iv) a model-FLOPs-utilization number computed honestly from a matmul benchmark and a measured training loop; (v) a checkpoint-interval optimizer with a worked answer; and (vi) a cost model that turns @sec-ch05's compute budget into device-hours, dollars, and megawatts for three named-scale runs. None of this needs a cluster. That is the point: the planning arithmetic that decides how frontier runs are laid out is exactly the arithmetic on these pages, and all of it runs on a laptop.
 
-## Contents {#sec-ch06-contents}
+## The memory ledger of one training step {#sec-ch06-ledger}
 
-- [A run that fits still may not train](#sec-ch06-opening)
-- [What you will build](#sec-ch06-will-build)
-- [A training step has a byte ledger](#sec-ch06-memory)
-- [Shard model state with ZeRO and FSDP](#sec-ch06-sharding)
-- [Compose tensor, pipeline, context, and expert parallelism](#sec-ch06-parallelism)
-- [Trade precision and recomputation for capacity](#sec-ch06-precision)
-- [Optimizers and schedules are scaling interfaces](#sec-ch06-optimization)
-- [Compose the mesh around the topology](#sec-ch06-topology)
-- [Frontier stability is a goodput problem](#sec-ch06-goodput)
-- [Training economics converts utilization into procurement](#sec-ch06-economics)
-- [Landscape 2026 (dated)](#sec-ch06-landscape)
-- [Build](#sec-ch06-build)
-- [What endures, what changes](#sec-ch06-endures)
-- [Exercises](#sec-ch06-exercises)
-- [Notes and sources](#sec-ch06-notes)
+Everything in this chapter prices some resource against a model configuration, so we start by writing the configuration down. The fields are the ones that determine parameter count and activation size; the two instances are the shapes of two widely trained open models, which lets us check our arithmetic against published numbers instead of against our own assumptions.
 
-## A Run That Fits Still May Not Train {#sec-ch06-opening}
+```{python}
+# @save
+from __future__ import annotations
 
-A team's parameter files fit across its accelerators, so the capacity review passes. The first step fails when Adam state initializes. A second layout waits on an all-to-all across a slow fabric. A third loses forty minutes per host failure, then resumes with a data cursor inconsistent with its optimizer step. Each failure comes from treating distributed training as “put the model on more GPUs.”
+import importlib.util
+import math
+import sys
+import time
+import warnings
+from dataclasses import dataclass
+from pathlib import Path
 
-The real objective is **productive learning per unit of wall time and capital**. A valid training design must satisfy several ledgers simultaneously: persistent model state, peak activations, temporary collective buffers, communication volume, numerical error, failure waste, power, and money. Model FLOPs are necessary work, but the system only makes progress when those FLOPs update the intended parameters on the intended tokens and leave a restartable state.
+import torch
 
-We begin with bytes on one rank, then shard state and computation along explicit device-mesh dimensions. We treat precision and checkpointing as measured policies, connect optimizer parameterization to proxy transfer, and replace one utilization percentage with goodput, recovery, and cost. By the end, you can turn a proposed run into a memory ledger, parallelism map, checkpoint plan, and economic sensitivity analysis.
+warnings.filterwarnings("ignore", message="CUDA initialization")  # CPU-only chapter
+GIB = 1024**3
 
-## What you will build {#sec-ch06-will-build}
 
-::: {.callout-tip}
-**The chapter artifact.** The integrated laboratory reuses Chapter 2's `TinyGPT`, launches a real fully sharded training job, and measures local parameter, gradient, and optimizer-state bytes. Freshly initialized checkpoint-off and checkpoint-on phases use identical weights, optimizer state, RNG, and batches; the probe compares final loss and gradient norm, counts tensors saved by autograd, records tokens per second, and computes a labeled local-roofline MFU proxy. A seeded optimizer probe compares AdamW with a small Muon-like matrix update under one warmup-stable-decay schedule. A formula-driven XLSX cost workbook and CSV model translate a hypothetical 30-billion-parameter, 600-billion-token dense run into FLOPs, accelerator-hours, wall time, power, energy, and cost across an MFU sweep.
+@dataclass(frozen=True)
+class TrainingConfig:
+    """The shape of a dense decoder-only Transformer training run.
 
-Success means actual distributed tensors and collectives execute; the measured sharded state agrees with the byte ledger; checkpointing saves activation bytes; all optimizer losses remain finite; and every plotted number exists in CSV or JSON. The optimizer curves are a mechanism probe, not a speedrun ranking. The CPU MFU denominator is a measured local matrix-multiplication roofline, not a vendor peak. The dollar and power inputs are illustrative assumptions, not quotes.
+    These eight numbers determine everything this chapter computes:
+    parameter count follows from the widths and depths, activation memory
+    from the sequence length and width, and communication volume from how
+    the resulting tensors are cut across devices. ``n_kv_heads`` matters
+    because grouped-query attention (Chapter 3) shrinks the K/V
+    projections and therefore the parameter count.
+
+    Args:
+        name: A label for printed tables.
+        d_model: Residual-stream width, the ``h`` in every memory formula.
+        n_layers: Transformer block count.
+        n_heads: Query heads per layer.
+        n_kv_heads: Key/value heads per layer (equal to ``n_heads`` for
+            classic multi-head attention, smaller under GQA).
+        d_ff: Feed-forward hidden width (SwiGLU uses three ``d_model x
+            d_ff`` matrices).
+        vocab_size: Token vocabulary, counted twice for untied input and
+            output embeddings.
+        seq_len: Training sequence length in tokens.
+    """
+
+    name: str
+    d_model: int
+    n_layers: int
+    n_heads: int
+    n_kv_heads: int
+    d_ff: int
+    vocab_size: int
+    seq_len: int
+
+
+LLAMA_7B = TrainingConfig("7B-class", 4096, 32, 32, 32, 11008, 32000, 4096)
+LLAMA_70B = TrainingConfig("70B-class", 8192, 80, 64, 8, 28672, 128256, 4096)
+```
+
+From shapes to parameters is bookkeeping we already did once for a toy model in @sec-ch02; here we redo it with grouped-query attention so that the calculator reproduces real checkpoints, not just round numbers.
+
+```{python}
+# @save
+def param_count(cfg: TrainingConfig) -> dict[str, int]:
+    """Count parameters per component from the configuration's shapes.
+
+    Attention costs one ``d x d`` matrix each for the query and output
+    projections plus two ``d x (d_head * n_kv_heads)`` matrices for keys
+    and values; a SwiGLU feed-forward block costs three ``d x d_ff``
+    matrices; untied embeddings appear once at the input and once at the
+    LM head. Norm scales and biases are omitted — they are parts in ten
+    thousand at these widths.
+
+    Args:
+        cfg: The model configuration to price.
+
+    Returns:
+        Parameter counts for ``"attention"``, ``"ffn"``, and
+        ``"embeddings"``, plus a ``"total"`` entry summing them.
+    """
+    d = cfg.d_model
+    kv_width = (d // cfg.n_heads) * cfg.n_kv_heads
+    attention = cfg.n_layers * (2 * d * d + 2 * d * kv_width)
+    ffn = cfg.n_layers * 3 * d * cfg.d_ff
+    embeddings = 2 * cfg.vocab_size * d
+    total = attention + ffn + embeddings
+    return {"attention": attention, "ffn": ffn, "embeddings": embeddings, "total": total}
+```
+
+Does the bookkeeping survive contact with reality? Run it on both configurations:
+
+```{python}
+for cfg in (LLAMA_7B, LLAMA_70B):
+    counts = param_count(cfg)
+    parts = {name: f"{value / 1e9:.2f}B" for name, value in counts.items()}
+    print(f"{cfg.name:9s} {parts}")
+```
+
+Both totals land on the published sizes — 6.74B and 70.6B — from shapes alone, which is our license to trust the rest of the ledger. Now the question that decides whether a run fits: how many bytes does *training* attach to each of those parameters?
+
+Storing a weight is the cheap part. A training step must also hold a gradient for every weight, and Adam — still the default optimizer at scale — keeps two exponential moving averages (the first and second moments) per weight, in fp32. Mixed-precision training adds one more tenant: the forward and backward passes run on bf16 copies of the weights, while an fp32 *master copy* accumulates the updates so that tiny increments do not round away. Per parameter, the standard recipe is
+
+$$
+M_{\text{state}}
+= \underbrace{2}_{\text{bf16 weight}}
++ \underbrace{2}_{\text{bf16 gradient}}
++ \underbrace{4}_{\text{fp32 master}}
++ \underbrace{8}_{\text{fp32 moments}}
+= 16 \ \text{bytes},
+$$ {#eq-ch06-state}
+
+so a model of $P$ parameters carries ${16}P$ bytes of persistent optimizer-visible state before a single activation exists. We encode the recipe as data so we can swap it later, and the ledger as a function so we can shard it later.
+
+```{python}
+# @save
+PRECISION_RECIPES = {
+    "fp32": {"weights": 4, "gradients": 4, "master weights": 0, "Adam moments": 8},
+    "mixed": {"weights": 2, "gradients": 2, "master weights": 4, "Adam moments": 8},
+}
+
+
+def state_ledger(
+    params: int, recipe: str = "mixed", zero_stage: int = 0, shards: int = 1
+) -> dict[str, float]:
+    """Price the persistent training state a single device must hold.
+
+    The ledger multiplies the parameter count by bytes-per-parameter for
+    each state component, then divides the components that the chosen
+    ZeRO stage shards across ``shards`` data-parallel devices: stage 1
+    shards the fp32 master weights and Adam moments, stage 2 also shards
+    gradients, stage 3 also shards the bf16 weights themselves (gathering
+    them transiently per block during compute). Activations are priced
+    separately — they live on a different schedule.
+
+    Args:
+        params: Trainable parameter count.
+        recipe: Key into ``PRECISION_RECIPES`` (``"fp32"`` or ``"mixed"``).
+        zero_stage: 0 (fully replicated) through 3 (fully sharded).
+        shards: Devices in the sharding group.
+
+    Returns:
+        Bytes per device for each component plus a ``"total"`` entry.
+    """
+    sharded_from = {"master weights": 1, "Adam moments": 1, "gradients": 2, "weights": 3}
+    ledger = {
+        component: params * bytes_per / (shards if zero_stage >= sharded_from[component] else 1)
+        for component, bytes_per in PRECISION_RECIPES[recipe].items()
+    }
+    ledger["total"] = sum(ledger.values())
+    return ledger
+```
+
+Run it for the 7B configuration under both precision recipes and watch for the surprise:
+
+```{python}
+P_7B = param_count(LLAMA_7B)["total"]
+for recipe in ("fp32", "mixed"):
+    ledger = state_ledger(P_7B, recipe)
+    row = {name: f"{value / GIB:6.1f}" for name, value in ledger.items()}
+    print(f"{recipe:5s} GiB: {row}")
+```
+
+Both recipes total 100.4 GiB. Mixed precision does not shrink training state at all — the bf16 savings on weights and gradients are exactly cancelled by the fp32 master copy it adds. What mixed precision buys is elsewhere: activations at half the bytes, matmuls on tensor cores at several times the throughput, and half the gradient bytes on the wire. The 12 fp32 bytes of optimizer state per parameter survive untouched, which is why the optimizer, not the model, is the first thing sharding attacks in @sec-ch06-zero. FP8 recipes push the same idea further — narrower tensors with per-block scaling factors, higher-precision islands for softmax and reductions [@deepseekai2024deepseekv3] — and change the recipe dict, not the ledger logic; the current formats live in this chapter's dated landscape box.
+
+The headline: a 6.74B-parameter model needs 100.4 GiB of state, and a typical training accelerator has 80 GiB. The model that "fits" — 12.6 GiB of bf16 weights would fit six times over — cannot *train* on one device. And we have not yet counted the largest and most misunderstood tenant of all.
+
+## Activations, and buying memory with FLOPs {#sec-ch06-activations}
+
+Backward passes reuse forward results: to differentiate a matmul, autograd needs the input it saw during the forward pass, so every intermediate tensor the forward pass produces is a candidate for being *saved* until the backward pass consumes it. Those saved tensors are the activation memory, and unlike optimizer state they scale with batch size and sequence length rather than with parameter count. For one Transformer layer processing $b$ sequences of $s$ tokens at width $h$ with $a$ attention heads, a careful census of the saved tensors [@korthikanti2022reducing] gives, in bf16,
+
+$$
+A_{\text{layer}} \approx 34\,s\,b\,h \;+\; 5\,a\,s^{2}\,b \ \text{bytes}.
+$$ {#eq-ch06-act}
+
+The first term collects the linear-layer inputs, norms, and activation functions — every tensor of shape $s \times b \times h$ the layer touches, and there are about seventeen of them at two bytes each. The second term is the attention matrix itself: scores and softmax weights of shape $a \times s \times s$ per sequence, the quadratic culprit from @sec-ch03. A fused attention kernel such as FlashAttention [@dao2022flashattention] never materializes that matrix — it recomputes score tiles on the fly during backward — which deletes the second term entirely. Full activation checkpointing goes further: save *only* each block's input (${2}\,s\,b\,h$ bytes), throw everything else away, and recompute the block's forward pass from that input when backward needs it. Three policies, one function:
+
+```{python}
+# @save
+def activation_bytes_per_layer(cfg: TrainingConfig, microbatch: int, policy: str) -> float:
+    """Price the tensors autograd saves per layer under a memory policy.
+
+    ``"materialize scores"`` is naive attention: every linear input plus
+    the ``a x s x s`` score and softmax tensors. ``"fused attention"``
+    keeps the linear inputs but never stores the score matrix (the
+    FlashAttention effect). ``"full recompute"`` checkpoints the block:
+    only its input survives the forward pass, and the rest is recomputed
+    during backward at the cost of roughly one extra forward pass.
+
+    Args:
+        cfg: The model configuration (supplies ``s``, ``h``, and ``a``).
+        microbatch: Sequences per device per forward pass (the ``b``).
+        policy: One of the three policy names above.
+
+    Returns:
+        Saved bytes per layer, assuming two-byte activations.
+
+    Raises:
+        ValueError: If ``policy`` is not one of the three names.
+    """
+    s, b, h = cfg.seq_len, microbatch, cfg.d_model
+    if policy == "materialize scores":
+        return 34 * s * b * h + 5 * cfg.n_heads * s * s * b
+    if policy == "fused attention":
+        return 34 * s * b * h
+    if policy == "full recompute":
+        return 2 * s * b * h
+    raise ValueError(f"unknown activation policy: {policy}")
+```
+
+Price the 7B configuration under each policy, one 4,096-token sequence per device:
+
+```{python}
+for policy in ("materialize scores", "fused attention", "full recompute"):
+    per_layer = activation_bytes_per_layer(LLAMA_7B, 1, policy)
+    total = per_layer * LLAMA_7B.n_layers
+    print(f"{policy:19s} {per_layer / GIB:6.3f} GiB/layer   {total / GIB:5.1f} GiB for 32 layers")
+```
+
+Read the totals against the 100.4 GiB of state. Naive attention would add 97 GiB of activations *for a single sequence per device* — at sequence length 4,096, the score matrices alone rival the optimizer. The fused kernel cuts that to 17 GiB, and full recomputation to about 1 GiB, at the price of roughly one extra forward pass — about a third more compute per step, since backward costs about twice forward. That trade, FLOPs for bytes, is the first knob every large run turns.
+
+A formula this load-bearing should be checked against reality at least once. We reuse the `TinyGPT` we trained in @sec-ch02, and count the saved bytes directly: `torch.autograd.graph.saved_tensors_hooks` lets us intercept every tensor autograd stashes for backward, so we can measure the true activation footprint of a forward/backward pass — first plain, then with `torch.utils.checkpoint` wrapping each block.
+
+```{python}
+# @save
+def load_chapter_module(chapter: str, name: str):
+    """Import an earlier chapter's tangled teaching module by path.
+
+    Each finished chapter tangles its ``# @save`` cells into
+    ``code/chNN/_generated.py``. This helper walks up from the working
+    directory to the book root and imports the requested module under a
+    fresh name, so later chapters build on earlier artifacts instead of
+    re-implementing them.
+
+    Args:
+        chapter: Chapter code directory, e.g. ``"ch02"``.
+        name: Module name to register, e.g. ``"ch02_generated"``.
+
+    Returns:
+        The executed module object.
+    """
+    root = Path.cwd()
+    while not (root / "code" / chapter / "_generated.py").exists():
+        if root.parent == root:
+            raise FileNotFoundError(f"cannot find code/{chapter}/_generated.py")
+        root = root.parent
+    spec = importlib.util.spec_from_file_location(name, root / "code" / chapter / "_generated.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+```
+
+With the loader in hand, we instantiate a slightly-scaled-up TinyGPT — four layers, width 128 — as our measurement subject:
+
+```{python}
+ch02 = load_chapter_module("ch02", "ch02_generated")
+tiny_config = ch02.GPTConfig(vocab_size=256, block_size=128, d_model=128, n_heads=4, n_layers=4, mlp_ratio=4)
+torch.manual_seed(6)
+tiny = ch02.TinyGPT(tiny_config)
+print(f"TinyGPT for the measurement: {sum(p.numel() for p in tiny.parameters()):,} parameters")
+```
+
+The measurement itself runs the model's blocks by hand so we can flip checkpointing on and off, with a hook that adds up bytes as autograd saves tensors:
+
+```{python}
+# @save
+def measure_saved_bytes(model, tokens: torch.Tensor, targets: torch.Tensor, checkpoint_blocks: bool) -> int:
+    """Measure the bytes autograd saves during one forward/backward pass.
+
+    Registers a ``saved_tensors_hooks`` pair that counts every tensor the
+    autograd graph stores for backward, then runs the model's blocks
+    either plainly or wrapped in ``torch.utils.checkpoint`` (which saves
+    only each block's input and recomputes the interior during backward).
+    The count is ground truth for the policy comparison that
+    ``activation_bytes_per_layer`` only models.
+
+    Args:
+        model: A Chapter 2 ``TinyGPT`` whose blocks we drive manually.
+        tokens: Input token ids of shape ``(batch, seq)``.
+        targets: Next-token targets of the same shape.
+        checkpoint_blocks: Whether to checkpoint each block.
+
+    Returns:
+        Total bytes of tensors saved for the backward pass.
+    """
+    from torch.utils.checkpoint import checkpoint as run_checkpointed
+
+    saved = 0
+
+    def record(tensor: torch.Tensor) -> torch.Tensor:
+        nonlocal saved
+        saved += tensor.numel() * tensor.element_size()
+        return tensor
+
+    positions = torch.arange(tokens.size(1))
+    with torch.autograd.graph.saved_tensors_hooks(record, lambda tensor: tensor):
+        x = model.token_embedding(tokens) + model.position_embedding(positions)
+        for block in model.blocks:
+            step = lambda value, layer=block: layer(value)[0]
+            x = run_checkpointed(step, x, use_reentrant=False) if checkpoint_blocks else step(x)
+        logits = model.lm_head(model.final_norm(x))
+        loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), targets.flatten())
+        loss.backward()
+    return saved
+```
+
+Run it both ways on the same batch and compare what autograd actually kept:
+
+```{python}
+torch.manual_seed(6)
+tokens = torch.randint(tiny_config.vocab_size, (4, tiny_config.block_size))
+targets = torch.roll(tokens, -1, dims=1)
+plain = measure_saved_bytes(tiny, tokens, targets, checkpoint_blocks=False)
+tiny.zero_grad(set_to_none=True)
+checkpointed = measure_saved_bytes(tiny, tokens, targets, checkpoint_blocks=True)
+print(f"saved tensors, plain       : {plain:>12,} bytes")
+print(f"saved tensors, checkpointed: {checkpointed:>12,} bytes  ({1 - checkpointed / plain:.1%} less)")
+```
+
+A 94% reduction — measured, not modeled. The exact ratio is configuration-dependent: this toy materializes its attention score matrices (no fused kernel here) and stores fp32 activations, so its ledger has different constants than @eq-ch06-act's — exactly the kind of drift a formula hides and a hook exposes. The shape of the result, though, is the one the model predicts: checkpointing leaves almost nothing beyond the block boundaries. Recomputation must also be *semantically identical* — dropout needs the same RNG state on replay — which frameworks handle but custom blocks can break; one matched-loss check from identical weights is cheap insurance. @fig-ch06-activations puts the model's three policies next to the state ledger they compete with.
+
+```{python}
+#| label: fig-ch06-activations
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where does the memory actually go? Modeled activation totals for the 7B configuration (one 4,096-token sequence per device, 32 layers) under the three saving policies, against the 100.4 GiB of optimizer-visible state (dotted) and one 80 GiB device (dashed). The y-axis is logarithmic: the policies differ by two orders of magnitude, which is why checkpointing — not a bigger device — is the first response to activation pressure."
+import matplotlib.pyplot as plt
+
+policies = ["materialize scores", "fused attention", "full recompute"]
+totals = [
+    activation_bytes_per_layer(LLAMA_7B, 1, policy) * LLAMA_7B.n_layers / GIB
+    for policy in policies
+]
+fig, ax = plt.subplots(figsize=(6.2, 3.2))
+bars = ax.bar(policies, totals, color=["0.75", "0.55", "0.35"], width=0.55)
+ax.bar_label(bars, fmt="%.1f GiB", padding=2, fontsize=9)
+state_gib = state_ledger(P_7B)["total"] / GIB
+ax.axhline(state_gib, ls=":", color="0.3")
+ax.text(2.42, state_gib * 1.12, "training state 100.4 GiB", ha="right", fontsize=8)
+ax.axhline(80, ls="--", color="0.6")
+ax.text(2.42, 60, "one 80 GiB device", ha="right", fontsize=8, color="0.35")
+ax.set_yscale("log")
+ax.set_ylabel("activation GiB (log scale)")
+ax.set_ylim(0.5, 300)
+fig.tight_layout()
+plt.show()
+```
+
+## Sharding the state: ZeRO and FSDP {#sec-ch06-zero}
+
+Data parallelism is the oldest scaling move: give every device a full replica of the model, feed each a different slice of the batch, and all-reduce the gradients so every replica applies the same update. It multiplies throughput, and it multiplies nothing else — each of $n$ replicas still holds all ${16}P$ bytes. The observation behind ZeRO [@rajbhandari2020zero] is that this replication is almost entirely waste: the optimizer states, gradients, and even the weights are *identical* across replicas, so each replica could own just ${1/n}$-th of them and borrow the rest when needed. Each ZeRO stage removes one class of replication, and our `state_ledger` already knows how, via its `zero_stage` argument:
+
+```{python}
+for stage in range(4):
+    total = state_ledger(P_7B, "mixed", zero_stage=stage, shards=8)["total"]
+    label = ("replicated (DDP)", "ZeRO-1", "ZeRO-2", "ZeRO-3 / FSDP")[stage]
+    print(f"stage {stage} {label:17s} {total / GIB:6.1f} GiB per device over 8")
+```
+
+Stage 1 shards the fp32 master weights and moments — the 12-byte tenant from @eq-ch06-state — and per-device state collapses from 100.4 to 34.5 GiB: the single cheapest memory win in distributed training, because the optimizer only ever touches its own shard (each device updates its own slice of the parameters, then the updated slices are gathered). Stage 2 also shards gradients, which costs nothing extra in communication: the all-reduce every replica already performed is reorganized as a reduce-scatter (each device keeps only its shard of the summed gradient) followed by an all-gather of updated weights — the same bytes on the wire, differently bracketed. Stage 3 — the design PyTorch ships as FSDP [@zhao2023pytorch] — shards the weights themselves. Now a device does not even hold the full bf16 model; before computing a block it all-gathers that block's weight shards from the group, uses them, and frees them. The per-device floor drops to ${16}P/n$, and the price is a third parameter-sized collective per step: relative to DDP's two gradient volumes, ZeRO-3 moves roughly three (weights gathered for forward, gathered again for backward, gradients reduce-scattered).
+
+@fig-ch06-state-ledger shows the whole progression by component, and the sequence in @fig-ch06-fsdp-step shows *when* the bytes exist — the part totals hide.
+
+```{python}
+#| label: fig-ch06-state-ledger
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What exactly does each ZeRO stage remove? Per-device training state for the 7B configuration over an 8-way group, stacked by component. fp32 and mixed-precision DDP tie at 100.4 GiB — mixed precision rearranges state, it does not shrink it. Stage 1 shards the fp32 master weights and moments, stage 2 the gradients, stage 3 the weights, ending at one eighth of the total."
+plans = [
+    ("fp32\nDDP", state_ledger(P_7B, "fp32")),
+    ("mixed\nDDP", state_ledger(P_7B, "mixed")),
+    ("ZeRO-1\nover 8", state_ledger(P_7B, "mixed", 1, 8)),
+    ("ZeRO-2\nover 8", state_ledger(P_7B, "mixed", 2, 8)),
+    ("ZeRO-3\nover 8", state_ledger(P_7B, "mixed", 3, 8)),
+]
+components = ["weights", "gradients", "master weights", "Adam moments"]
+shades = ["0.25", "0.45", "0.65", "0.82"]
+fig, ax = plt.subplots(figsize=(6.4, 3.4))
+bottoms = [0.0] * len(plans)
+for component, shade in zip(components, shades):
+    heights = [ledger[component] / GIB for _, ledger in plans]
+    ax.bar([label for label, _ in plans], heights, bottom=bottoms, color=shade,
+           label=component, width=0.6, edgecolor="white", linewidth=0.4)
+    bottoms = [base + height for base, height in zip(bottoms, heights)]
+for index, (label, ledger) in enumerate(plans):
+    ax.text(index, ledger["total"] / GIB + 2, f"{ledger['total'] / GIB:.0f}", ha="center", fontsize=9)
+ax.axhline(80, ls="--", color="0.5")
+ax.text(4.4, 82, "80 GiB device", ha="right", fontsize=8, color="0.35")
+ax.set_ylabel("GiB per device")
+ax.legend(frameon=False, fontsize=8, ncol=2)
+fig.tight_layout()
+plt.show()
+```
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch06-fsdp-step
+%%| fig-cap: "When do full parameters exist on a ZeRO-3 rank? One block's life inside a sharded, checkpointed step: weights materialize transiently for forward, vanish, reappear for the recompute-and-backward, and only gradient shards persist. Peak memory is set by these overlaps, not by the steady-state ledger alone."
+%%| fig-alt: "A sequence diagram between two ranks and autograd. The ranks all-gather a block's parameter shards, run forward, save only the block boundary, and reshard. During backward they all-gather again, recompute the block, differentiate, and reduce-scatter gradient shards."
+sequenceDiagram
+    participant R0 as Rank 0
+    participant R1 as Rank 1
+    participant A as Autograd
+    R0->>R1: all-gather block weight shards
+    R1->>R0: all-gather block weight shards
+    Note over R0,R1: full block weights exist (transient)
+    R0->>R0: forward on local microbatch
+    R1->>R1: forward on local microbatch
+    R0-->>A: save block input only (checkpointing)
+    R1-->>A: save block input only (checkpointing)
+    Note over R0,R1: reshard - full weights freed
+    A->>R0: backward reaches this block
+    A->>R1: backward reaches this block
+    R0->>R1: all-gather again, recompute, differentiate
+    R1->>R0: all-gather again, recompute, differentiate
+    R0->>R1: reduce-scatter gradient shards
+    R1->>R0: reduce-scatter gradient shards
+```
+
+Two practical notes complete the picture. First, granularity: FSDP gathers weights one *unit* at a time — usually one Transformer block — so peak memory includes the persistent shard plus the largest transiently gathered unit, and prefetching the next block's gather behind the current block's compute raises the peak again. Second, hybrid sharding (HSDP): sharding over all 128 devices of a cluster puts latency-sensitive all-gathers across slow inter-node links, so real deployments shard within a fast domain (say, 8 devices in a node) and replicate across domains — per-device state is ${16}P/8$, not ${16}P/128$, in exchange for keeping the frequent collectives on the fast fabric. Which fabric is fast enough for what is precisely the question the next two sections quantify.
+
+## Splitting the computation: tensor and pipeline parallelism {#sec-ch06-tp-pp}
+
+ZeRO shards *storage*, but every device still executes every layer. Two situations break that: a layer's computation is too big for one device to finish in acceptable time, or — at 70B and beyond — even the sharded state plus one gathered block strains memory. Then we split the computation itself, and the two classic cuts slice in orthogonal directions: **tensor parallelism** splits *within* each layer, **pipeline parallelism** splits *across* layers.
+
+Tensor parallelism [@shoeybi2019megatron] rests on one matrix identity. Split a feed-forward block's up-projection by *columns* across two devices and each device computes half the hidden features — no communication needed, because each output column depends on all of the input, which both devices hold. Then split the down-projection by *rows*: each device consumes exactly the hidden half it already has, and produces a *partial sum* of the full output. One all-reduce adds the partials. The nonlinearity between the two matmuls applies elementwise to each half, so it never forces communication. We can verify the identity in a few lines:
+
+```{python}
+# @save
+def tensor_parallel_ffn(
+    x: torch.Tensor, w_up: torch.Tensor, w_down: torch.Tensor, shards: int
+) -> torch.Tensor:
+    """Run a two-matmul FFN split column-then-row across simulated shards.
+
+    The up-projection is split by output columns (each shard computes a
+    slice of the hidden features from the full input), the down-projection
+    by input rows (each shard consumes exactly its own hidden slice and
+    emits a partial sum of the output). Summing the partials — the one
+    all-reduce a Megatron-style block performs per matmul pair — must
+    reproduce the unsharded result up to float round-off.
+
+    Args:
+        x: Input activations of shape ``(batch, d_model)``.
+        w_up: Up-projection weight of shape ``(d_model, d_ff)``.
+        w_down: Down-projection weight of shape ``(d_ff, d_model)``.
+        shards: How many tensor-parallel devices to simulate.
+
+    Returns:
+        The combined output, mathematically equal to
+        ``relu(x @ w_up) @ w_down``.
+    """
+    up_shards = w_up.chunk(shards, dim=1)
+    down_shards = w_down.chunk(shards, dim=0)
+    partials = [torch.relu(x @ up) @ down for up, down in zip(up_shards, down_shards)]
+    return torch.stack(partials).sum(dim=0)
+```
+
+Check it against the unsharded computation:
+
+```{python}
+torch.manual_seed(0)
+x = torch.randn(4, 256)
+w_up, w_down = torch.randn(256, 1024) / 16, torch.randn(1024, 256) / 32
+reference = torch.relu(x @ w_up) @ w_down
+for shards in (2, 4):
+    gap = (tensor_parallel_ffn(x, w_up, w_down, shards) - reference).abs().max()
+    print(f"{shards}-way tensor parallel vs single device: max |difference| = {gap.item():.2e}")
+```
+
+The sharded and unsharded results agree to float round-off — the split is exact in exact arithmetic. Attention shards the same way (heads split naturally by columns), so a full Transformer layer costs two all-reduces in forward and two in backward. That frequency is tensor parallelism's defining constraint: the collectives sit on the critical path of *every layer*, so the payloads better be on the fastest links you own. How much traffic?
+
+```{python}
+# @save
+def tp_comm_bytes_per_layer(cfg: TrainingConfig, microbatch: int, tp: int, scalar_bytes: int = 2) -> float:
+    """Estimate per-device tensor-parallel traffic for one layer's fwd+bwd.
+
+    A Megatron-style layer performs four all-reduces per microbatch (two
+    forward, two backward), each over the ``s x b x h`` activation tensor.
+    A ring all-reduce moves ``2 (tp - 1) / tp`` times the payload per
+    participating device. This is a leading-order planning number: it
+    ignores latency terms and any sequence-parallel optimizations.
+
+    Args:
+        cfg: The model configuration (supplies ``s`` and ``h``).
+        microbatch: Sequences per device per forward pass.
+        tp: Tensor-parallel degree (1 means no traffic).
+        scalar_bytes: Bytes per activation scalar (two for bf16).
+
+    Returns:
+        Bytes per device per layer per microbatch.
+    """
+    if tp == 1:
+        return 0.0
+    payload = cfg.seq_len * microbatch * cfg.d_model * scalar_bytes
+    return 4 * 2 * (tp - 1) / tp * payload
+```
+
+Price an 8-way split of the 7B model:
+
+```{python}
+per_layer = tp_comm_bytes_per_layer(LLAMA_7B, 1, 8)
+print(f"tp=8 on the 7B: {per_layer / GIB:.3f} GiB/layer/microbatch, "
+      f"{per_layer * LLAMA_7B.n_layers / GIB:.1f} GiB per microbatch across 32 layers")
+```
+
+Seven gibibytes of collective traffic per microbatch — per device — explains the standard placement rule: tensor parallelism stays inside a node (NVLink-class links, hundreds of GB/s), and its degree rarely exceeds 8.
+
+Pipeline parallelism cuts the other way: stage 0 gets the first few layers, stage 1 the next few, and only the block-boundary activation crosses between stages — kilobytes-to-megabytes per microbatch instead of gibibytes, which is why pipelines happily span nodes. The catch is time, not traffic. With one batch in flight, stage 1 idles while stage 0 computes and vice versa. The fix is to split the batch into $m$ *microbatches* and stream them, so stages work on different microbatches simultaneously; the residual idleness — the **pipeline bubble** — is the fill-and-drain time at the schedule's ends. For $S$ balanced stages,
+
+$$
+f_{\text{bubble}} = \frac{S - 1}{m + S - 1},
+$$ {#eq-ch06-bubble}
+
+the fraction of each device's time spent waiting [@huang2019gpipe]. Rather than trust the formula, we simulate the schedule that production systems actually run — one-forward-one-backward, or 1F1B [@narayanan2021efficient], which interleaves each microbatch's backward as early as dependencies allow to bound how many activations a stage holds. First, the order of operations each stage executes:
+
+```{python}
+# @save
+def one_f1b_order(stage: int, stages: int, microbatches: int) -> list[tuple[str, int]]:
+    """Return the (kind, microbatch) sequence a 1F1B stage executes.
+
+    Each stage runs a warmup of forwards — more for earlier stages, so
+    later stages have work queued — then strictly alternates backward and
+    forward until forwards run out, and drains the remaining backwards.
+    The early backwards are what let a stage free each microbatch's
+    activations promptly instead of holding all ``m`` at once.
+
+    Args:
+        stage: This stage's index, 0-based from the front.
+        stages: Total pipeline stages.
+        microbatches: Microbatches per optimizer step.
+
+    Returns:
+        Ordered ``("F", m)`` / ``("B", m)`` work items for this stage.
+    """
+    warmup = min(microbatches, stages - stage)
+    ops = [("F", micro) for micro in range(1, warmup + 1)]
+    forward_next = warmup + 1
+    for backward in range(1, microbatches + 1):
+        ops.append(("B", backward))
+        if forward_next <= microbatches:
+            ops.append(("F", forward_next))
+            forward_next += 1
+    return ops
+```
+
+Then a small discrete-event simulator: an operation starts when its stage is free *and* its dependency has finished — a forward needs the previous stage's forward of the same microbatch, a backward needs the next stage's backward plus its own forward.
+
+```{python}
+# @save
+def simulate_pipeline(
+    stages: int, microbatches: int, forward_time: float = 1.0, backward_time: float = 2.0
+) -> tuple[list[tuple], float, float]:
+    """Simulate a 1F1B pipeline schedule and measure its idle fraction.
+
+    Walks each stage's 1F1B work order under the true dependency rules
+    (a forward waits on the upstream forward; a backward waits on the
+    downstream backward and the local forward), packing operations
+    greedily. The returned idle fraction is measured from the resulting
+    timeline, so it can be checked against the closed-form bubble
+    formula instead of assumed from it.
+
+    Args:
+        stages: Pipeline stages (devices in the pipeline group).
+        microbatches: Microbatches per optimizer step.
+        forward_time: Time units per microbatch forward on one stage.
+        backward_time: Time units per microbatch backward (about twice
+            the forward cost for a Transformer block).
+
+    Returns:
+        A tuple of the event list ``(stage, kind, microbatch, start,
+        duration)``, the makespan, and the measured idle fraction.
+    """
+    orders = {k: one_f1b_order(k, stages, microbatches) for k in range(stages)}
+    finish: dict[tuple[str, int, int], float] = {}
+    events, free, pointer = [], [0.0] * stages, [0] * stages
+    remaining = sum(len(ops) for ops in orders.values())
+    while remaining:
+        progressed = False
+        for stage in range(stages):
+            if pointer[stage] == len(orders[stage]):
+                continue
+            kind, micro = orders[stage][pointer[stage]]
+            if kind == "F":
+                needs = ("F", micro, stage - 1) if stage else None
+            else:
+                needs = ("B", micro, stage + 1) if stage < stages - 1 else ("F", micro, stage)
+            if needs is not None and needs not in finish:
+                continue
+            ready = finish.get(needs, 0.0)
+            if kind == "B":
+                ready = max(ready, finish[("F", micro, stage)])
+            start = max(free[stage], ready)
+            duration = forward_time if kind == "F" else backward_time
+            finish[(kind, micro, stage)] = start + duration
+            events.append((stage, kind, micro, start, duration))
+            free[stage] = start + duration
+            pointer[stage] += 1
+            remaining -= 1
+            progressed = True
+        if not progressed:
+            raise RuntimeError("schedule deadlocked; a dependency can never be met")
+    makespan = max(start + duration for *_, start, duration in events)
+    busy = microbatches * (forward_time + backward_time)
+    return events, makespan, 1.0 - busy / makespan
+```
+
+Now the check — the simulator measures idleness from its own timeline, the formula predicts it:
+
+```{python}
+def pipeline_bubble_fraction(stages: int, microbatches: int) -> float:
+    """Closed-form 1F1B fill-and-drain bubble fraction for balanced stages."""
+    return (stages - 1) / (microbatches + stages - 1)
+
+
+for stages, microbatches in ((4, 8), (8, 32), (8, 8)):
+    _, _, measured = simulate_pipeline(stages, microbatches)
+    predicted = pipeline_bubble_fraction(stages, microbatches)
+    print(f"S={stages} m={microbatches:2d}: simulated idle {measured:.4f}   formula {predicted:.4f}")
+```
+
+They agree to four decimals in every case, including with backward set to twice forward — the bubble is a *fraction*, so uniform scaling of op times cancels. The numbers also show the lever: at eight stages, eight microbatches leaves devices idle 47% of the time; thirty-two microbatches cuts that to 18%. @fig-ch06-pipeline draws the simulated timeline so the fill-and-drain triangles stop being abstract. Interleaved schedules (each device hosting several non-contiguous "virtual stages") shrink the bubble further without needing a larger batch, at the cost of more boundary traffic — same simulator, finer stages.
+
+```{python}
+#| label: fig-ch06-pipeline
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why are pipeline devices idle, and where? The simulated 1F1B timeline for 4 stages and 8 microbatches (backward twice the forward cost). Light bars are forwards, dark bars backwards, numbers are microbatch ids; white gaps are the bubble — concentrated in the fill at the left and the drain at the right, exactly the (S-1)/(m+S-1) = 27% the simulator measured."
+events, makespan, idle = simulate_pipeline(4, 8)
+fig, ax = plt.subplots(figsize=(6.6, 2.9))
+for stage, kind, micro, start, duration in events:
+    color = "0.82" if kind == "F" else "0.45"
+    ax.broken_barh([(start, duration)], (3 - stage - 0.38, 0.76), facecolors=color,
+                   edgecolor="white", linewidth=0.5)
+    ax.text(start + duration / 2, 3 - stage, str(micro), ha="center", va="center",
+            fontsize=7, color="black" if kind == "F" else "white")
+ax.set_yticks([3, 2, 1, 0], [f"stage {k}" for k in range(4)])
+ax.set_xlabel(f"time units (makespan {makespan:.0f}, idle fraction {idle:.0%})")
+ax.set_xlim(0, makespan)
+handles = [plt.Rectangle((0, 0), 1, 1, fc="0.82"), plt.Rectangle((0, 0), 1, 1, fc="0.45")]
+ax.legend(handles, ["forward", "backward"], frameon=False, fontsize=8, loc="lower right")
+fig.tight_layout()
+plt.show()
+```
+
+## Composing a plan: the parallelism simulator {#sec-ch06-plan}
+
+We now hold all the parts: state sharding, activation policies, tensor splits, pipeline schedules. A real cluster forces one decision that uses them all — given $G$ devices and a model, choose degrees $t \times S \times n = G$ for tensor, pipeline, and data parallelism. The axes multiply device count, and they compete: every device granted to tensor or pipeline parallelism is a device not granted to data parallelism, and — less spoken — every data-parallel replica *takes microbatches away from the pipeline*, because a fixed global batch divided over more replicas leaves fewer microbatches per pipeline to amortize the bubble. Composition is where the arithmetic earns its keep, so we make it a function.
+
+```{python}
+# @save
+def evaluate_plan(
+    cfg: TrainingConfig, tp: int, pp: int, dp: int, *,
+    global_batch: int = 128, zero_stage: int = 1, device_gib: float = 80.0,
+) -> dict[str, object]:
+    """Price one tensor/pipeline/data-parallel layout for a training run.
+
+    Weights are split ``tp * pp`` ways; ZeRO at ``zero_stage`` shards the
+    remaining state across the ``dp`` replicas. Activations assume full
+    block recomputation (the large-model default): each stage holds one
+    boundary tensor per resident layer for up to ``pp`` in-flight
+    microbatches, divided by ``tp``, plus one layer's transient
+    recompute working set. Communication columns are leading-order bytes
+    per device per optimizer step on each axis. Deliberately ignored:
+    latency terms, overlap, expert/context axes, and kernel efficiency —
+    this is the memory-and-volume sieve that comes before any benchmark.
+
+    Args:
+        cfg: The model configuration to lay out.
+        tp: Tensor-parallel degree (keep within one node in practice).
+        pp: Pipeline-parallel degree.
+        dp: Data-parallel degree.
+        global_batch: Global batch in sequences; each replica processes
+            ``global_batch / dp`` single-sequence microbatches per step.
+        zero_stage: ZeRO stage applied across the data-parallel axis.
+        device_gib: Device memory used for the feasibility verdict.
+
+    Returns:
+        A dict with the plan label, per-device state/activation/total
+        GiB, a feasibility flag, bubble percentage, and per-axis
+        communication GiB per device per step.
+    """
+    params_per_shard = param_count(cfg)["total"] / (tp * pp)
+    state = state_ledger(params_per_shard, "mixed", zero_stage, dp)
+    microbatches = global_batch // dp
+    boundary = 2 * cfg.seq_len * cfg.d_model
+    layers_here = cfg.n_layers / pp
+    inflight = min(pp, microbatches) if pp > 1 else 1
+    saved = boundary * layers_here * inflight / tp
+    transient = activation_bytes_per_layer(cfg, 1, "fused attention") / tp
+    activations = saved + transient
+    bubble = (pp - 1) / (microbatches + pp - 1)
+    dp_comm = 2 * (dp - 1) / dp * 2 * params_per_shard
+    tp_comm = tp_comm_bytes_per_layer(cfg, 1, tp) * layers_here * microbatches
+    pp_comm = 2 * boundary * microbatches if pp > 1 else 0.0
+    total = state["total"] + activations
+    return {
+        "plan": f"tp={tp} pp={pp} dp={dp}",
+        "state_gib": state["total"] / GIB, "act_gib": activations / GIB,
+        "total_gib": total / GIB, "fits": total <= device_gib * GIB,
+        "bubble": bubble, "dp_gib": dp_comm / GIB, "tp_gib": tp_comm / GIB,
+        "pp_gib": pp_comm / GIB,
+    }
+```
+
+A companion enumerates the legal factorizations — tensor degree bounded by the node, pipeline degree dividing the layer count, data degree dividing the batch — and prints the sieve as a table:
+
+```{python}
+# @save
+def plan_table(cfg: TrainingConfig, devices: int, global_batch: int, **kwargs) -> list[dict]:
+    """Evaluate and print every legal (tp, pp, dp) layout for a cluster.
+
+    Enumerates tensor degrees up to 8 (the within-node bound), pipeline
+    degrees that divide the layer count, and the implied data degree,
+    skipping layouts whose data degree cannot divide the global batch.
+    Rows print in enumeration order so the eye can scan how each axis
+    trades memory against bubble and traffic.
+
+    Args:
+        cfg: The model configuration to lay out.
+        devices: Total accelerators available.
+        global_batch: Global batch in sequences.
+        **kwargs: Passed through to ``evaluate_plan``.
+
+    Returns:
+        The evaluated plan dicts, one per legal layout.
+    """
+    rows = []
+    print("plan             state   act  total fits  bubble  DP-comm  TP-comm  PP-comm")
+    for tp in (1, 2, 4, 8):
+        for pp in (1, 2, 4, 8):
+            if devices % (tp * pp) or cfg.n_layers % pp:
+                continue
+            dp = devices // (tp * pp)
+            if dp > global_batch or global_batch % dp:
+                continue
+            row = evaluate_plan(cfg, tp, pp, dp, global_batch=global_batch, **kwargs)
+            rows.append(row)
+            print(f"{row['plan']:15s} {row['state_gib']:6.1f} {row['act_gib']:5.1f} "
+                  f"{row['total_gib']:6.1f} {'yes' if row['fits'] else ' NO':>4s} "
+                  f"{row['bubble']:6.1%} {row['dp_gib']:7.1f}  {row['tp_gib']:7.1f} {row['pp_gib']:7.1f}")
+    return rows
+```
+
+First, our 7B model on a single 8-device node:
+
+```{python}
+plans_7b = plan_table(LLAMA_7B, devices=8, global_batch=64)
+```
+
+At 7B on eight devices, *everything* fits — and the table says why the boring plan wins. Pure data parallelism (`tp=1 pp=1 dp=8`) needs 36 GiB per device and moves 22 GiB of gradients per step, all of it overlappable behind backward. Every tensor-parallel alternative buys memory we do not need with traffic we cannot afford — 448 GiB per device per step at `tp=8`, twenty times the data-parallel bill, on the critical path. The right answer at this scale is a sentence: shard the optimizer, replicate the rest. Now watch the same sieve at 70B on 64 devices:
+
+```{python}
+plans_70b = plan_table(LLAMA_70B, devices=64, global_batch=128)
+```
+
+The top of the table is a graveyard. One- and two-way model sharding fails outright — 70.6B parameters at 16 bytes cannot reach 80 GiB with ZeRO-1 sharding the rest — and four-way survives only in its tensor-parallel form (`tp=4 pp=1 dp=16`), at 79.5 of 80 GiB, a fit that one allocator hiccup erases. Model parallelism has stopped being optional. Among the real survivors the trade is legible: `tp=1 pp=8 dp=8` fits at 51 GiB with no tensor traffic but a 30% bubble (its 8 replicas leave each pipeline only 16 microbatches); `tp=8 pp=2 dp=4` runs a 3% bubble but pays 560 GiB of within-node collective traffic; `tp=8 pp=1 dp=8` deletes the bubble entirely and lets ZeRO absorb the rest. Production Megatron-style recipes for this scale sit exactly in that corner — tensor parallel to the node width, a shallow pipeline, data parallel for the remainder [@narayanan2021efficient] — and now we can say why in numbers rather than folklore. Raising `zero_stage` or the global batch in the call above shifts the frontier; the exercises push on both knobs.
+
+Two more axes exist, and at this depth we price rather than build them. **Context parallelism** shards the *sequence* — for the million-token training runs of @sec-ch03, no single device can hold even one sequence's activations — circulating key/value blocks around a ring [@liu2023ring] or transposing sequence shards into head shards with all-to-alls [@jacobs2023deepspeed]. **Expert parallelism** places different MoE experts (@sec-ch04) on different devices, turning routing into a token-shuffling all-to-all in each direction, with a payload we can price in one line:
+
+```{python}
+# @save
+def expert_dispatch_bytes(
+    tokens: int, d_model: int, top_k: int, scalar_bytes: int = 2, off_device_fraction: float = 0.875
+) -> float:
+    """Price the dispatch-plus-combine all-to-all of one MoE layer pass.
+
+    Every routed token ships its hidden vector to each selected expert's
+    device and receives the result back, so the traffic is twice
+    ``tokens x d_model x top_k`` scaled by the fraction of assignments
+    that land off-device (near ``1 - 1/experts_per_device_group`` when
+    routing is balanced).
+
+    Args:
+        tokens: Tokens routed in the group per layer per step.
+        d_model: Hidden width shipped per token.
+        top_k: Experts selected per token.
+        scalar_bytes: Bytes per activation scalar.
+        off_device_fraction: Share of assignments leaving the device.
+
+    Returns:
+        Bytes crossing the fabric per expert layer per step.
+    """
+    return 2 * tokens * d_model * top_k * scalar_bytes * off_device_fraction
+```
+
+One worked number makes the pressure concrete:
+
+```{python}
+payload = expert_dispatch_bytes(tokens=8 * 8192, d_model=4096, top_k=8)
+print(f"MoE dispatch+combine, 8 sequences of 8K tokens, top-8: {payload / GIB:.1f} GiB per layer per step")
+```
+
+Seven gibibytes per expert layer per step — all-to-all, the collective fabrics like least — is why MoE clusters obsess over expert placement and why dispatch kernels get their own engineering teams. When the cluster is not one cluster at all — islands connected by wide-area links — synchronous collectives stop being possible and the algorithm itself changes: local-SGD-family methods such as DiLoCo run many inner steps per island and reconcile parameter deltas through a rare outer update [@douillard2023diloco], trading gradient freshness for communication tolerance.
+
+::: {.callout-note title="In the interview"}
+**Q. You have 64 H100s and need to pretrain a 70B dense model. Sketch the parallelism plan.**
+Start with the ledger, not the axes: 70B times 16 bytes is about 1 TiB of state, so at 80 GiB per device the model must be split roughly 8-way before data parallelism enters (our own table's 4-way corner fits only by half a gibibyte) — model parallelism is forced, not chosen. Then place by fabric: tensor parallel 8 inside each node, pipeline across nodes only if memory still binds, ZeRO over the data axis, full recomputation, and enough microbatches per pipeline to hold the bubble under ten percent. The trap is answering with ZeRO-3 alone: it makes the state fit, but leaves every block's weights crossing the inter-node fabric twice per step, and it does nothing about activations — the interviewer is checking whether you price memory, bubble, *and* traffic, because any two alone admit a wrong answer.
 :::
 
-## A Training Step Has a Byte Ledger {#sec-ch06-memory}
+## Measuring what you bought: MFU {#sec-ch06-mfu}
 
-Start with a classic mixed-precision Adam estimate. For each trainable parameter, store a two-byte BF16 parameter, a two-byte gradient, a four-byte FP32 master copy, and two four-byte FP32 moments. The persistent model-state total is therefore approximately
-
-$$
-M_{\text{Adam}} = P(2+2+4+8)=16P\ \text{bytes},
-$$
-
-where $P$ is the number of trainable parameters. Other component choices can yield the same total. BF16-native updates, quantized moments, fused layouts, factored statistics, or Muon state require a different ledger.
-
-Sixteen bytes per parameter is a conventional mixed-precision Adam baseline, not a lower bound or peak-memory forecast. Activations depend on microbatch size, sequence length, width, depth, attention algorithm, and checkpoint policy. Temporary memory includes an all-gathered parameter unit, reduction buckets, attention workspaces, logits, allocator fragmentation, and framework metadata. Some bytes persist; others overlap briefly. An out-of-memory incident depends on the maximum simultaneous set, so a design review asks for a timeline as well as a total.
-
-Ordinary **distributed data parallelism** (DDP) gives every rank a full copy of the model and optimizer state. Each rank processes a different microbatch, computes local gradients, and participates in a gradient all-reduce so all replicas apply the same update. In an ideal ring all-reduce over $p$ ranks, reducing a gradient payload of $S$ bytes moves approximately
+A plan that fits and schedules still has to be *fast*, and the scale-independent way to say "fast" is model FLOPs utilization. MFU asks: of the arithmetic your devices could theoretically perform, what fraction went into the model's nominal forward-and-backward work?
 
 $$
-V_{\text{rank}} \approx \frac{2(p-1)}{p}S
-$$
+\operatorname{MFU} = \frac{q \cdot F_{\text{token}}}{G \cdot F_{\text{peak}}},
+$$ {#eq-ch06-mfu}
 
-bytes per rank. A latency-aware estimate adds $\,2(p-1)\alpha$, where $\alpha$ is per-hop startup latency. Libraries bucket gradients and overlap reductions with backward, so readiness and message size matter alongside total bytes.
+where $q$ is observed tokens per second, $F_{\text{token}}$ is the model's FLOPs per trained token, $G$ is device count, and $F_{\text{peak}}$ is one device's peak FLOP rate [@chowdhery2023palm]. The numerator counts only *useful* work — recomputation from checkpointing does not count, which is the difference between MFU and its sibling HFU (hardware FLOPs utilization, which counts everything executed; checkpointing raises HFU while leaving MFU flat, so quoting HFU flatters). For a dense Transformer, $F_{\text{token}} \approx 6N$ for $N$ parameters — ${2}N$ in the forward pass and ${4}N$ in backward, the accounting from @sec-ch02.
 
-Gradient accumulation delays synchronization while one rank processes several microbatches. For fixed-size sequences,
+Every term of @eq-ch06-mfu is measurable, so we measure them all — at toy scale, on this machine's CPU, with the honesty that implies. First the denominator. Vendor peak numbers are marketing-adjacent; a *measured* roofline is one matmul away:
 
-$$
-B_{\text{global}}=B_{\text{micro}}\,a\,p_{\text{DP}},
-$$
+```{python}
+# @save
+def measured_matmul_flops(n: int = 1024, repeats: int = 8) -> float:
+    """Measure this machine's achieved matmul FLOP rate.
 
-where $B_{\text{micro}}$ is examples per rank per forward pass, $a$ is the number of accumulated microbatches, and $p_{\text{DP}}$ is the data-parallel degree. Variable-length training should record non-padding tokens instead of examples. Accumulation lowers communication frequency and can make a model fit, but it retains the activation cost of only one microbatch while increasing update latency.
+    Times ``repeats`` square fp32 matmuls of size ``n`` after two warmup
+    runs and converts to FLOPs per second using the ``2 n^3`` cost of a
+    matmul. This is the honest denominator for a toy MFU: what the
+    hardware demonstrably achieves on the operation Transformers spend
+    their time in, not a datasheet peak.
 
-The **critical batch size** is the regime beyond which more examples per update yield sharply diminishing reductions in gradient noise. It changes with training phase, data, optimizer, and learning rate. Measure loss versus seen tokens and wall time across a batch ladder. If doubling hardware barely reduces steps to target loss, the extra replicas bought utilization rather than learning speed.
+    Args:
+        n: Square matrix dimension.
+        repeats: Timed repetitions to average over.
 
-[`memory_math.py`](../code/ch06/memory_math.py) makes the steady-state components and transient largest-unit parameters explicit. Its communication estimate is deliberately a ring-equivalent byte model, not a network simulator.
-
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `memory_math.py` ledger | 153 lines | DDP holds $\,16P$ modeled bytes; each ZeRO stage shards only its promised state |
-
-Name every byte by owner, lifetime, dtype, and shard group. “The model fits” is not a memory invariant.
-
-## Shard Model State with ZeRO and FSDP {#sec-ch06-sharding}
-
-DDP stops scaling when replicated state consumes each rank. **Zero Redundancy Optimizer** (ZeRO) removes one class of replication at each stage. Let $p_s$ be the state-sharding degree and retain the 16-byte Adam convention. Ignoring rounding and transient buffers, the per-rank persistent state is approximately:
-
-| Strategy | Parameters | Gradients | Master + moments | Per-rank total |
-|---|---:|---:|---:|---:|
-| DDP / stage 0 | $\,2P$ | $\,2P$ | $\,12P$ | $\,16P$ |
-| ZeRO stage 1 | $\,2P$ | $\,2P$ | $\,12P/p_s$ | $\,4P+12P/p_s$ |
-| ZeRO stage 2 | $\,2P$ | $\,2P/p_s$ | $\,12P/p_s$ | $\,2P+14P/p_s$ |
-| ZeRO stage 3 / fully sharded | $\,2P/p_s$ | $\,2P/p_s$ | $\,12P/p_s$ | $\,16P/p_s$ |
-
-Stage 1 shards optimizer state. Stage 2 also shards gradients; stage 3 shards parameters between computations. Its attractive $\,16P/p_s$ term does not let a layer execute from arbitrary fragments. Before a sharded module computes, its parameter group is gathered into the required layout and later resharded. Peak memory includes the largest materialized unit, activations, and collective workspaces.
-
-Granularity matters. One root-sized unit creates a huge blocking all-gather. Transformer-block units expose prefetch and reshard overlap; units that are too small pay excessive startup and bookkeeping. Measure boundaries against layer size, fabric latency, prefetch depth, and peak memory.
-
-A distributed tensor pairs one logical global tensor with a device mesh and shard, replicate, or partial placements. A matrix may be output-sharded for tensor parallelism while its state is sharded on a data-parallel dimension. Operators propagate compatible layouts or redistribute. Every layout transformation must remain accountable.
-
-**Hybrid sharded data parallelism** (HSDP) shards within a group and replicates shards across groups. With $p_s=8$ rack-local ranks and $r=16$ replicas, each rank retains about $\,16P/8$, not $\,16P/128$. Latency-sensitive gather and scatter stay inside eight ranks; replica synchronization crosses the slower boundary.
-
-Sharding changes checkpoints too. A local rank shard is not a model checkpoint. A distributed writer should stage rank-local shards without blocking every training step, record global tensor names, shapes, placements, optimizer state, and checksums in a reshardable manifest, flush to durable storage, validate completeness, then atomically publish a commit marker. Bound staging memory and bandwidth with backpressure; never expose a partial save. Recovery should reconstruct logical tensors on a different world size, not depend on old rank identities.
-
-The central trade is not “memory versus communication” in the abstract. It is persistent replication versus timed materialization across a particular collective group. A useful plan lists steady-state bytes, largest gathered unit, collective type and message size, and whether communication can overlap useful computation.
-
-## Compose Tensor, Pipeline, Context, and Expert Parallelism {#sec-ch06-parallelism}
-
-State sharding alone does not divide the computation of a layer. When one rank cannot execute a layer quickly or fit its transient tensors, add model-parallel axes. Each axis partitions a different mathematical object and therefore introduces a different collective.
-
-**Tensor parallelism** (TP) partitions matrices inside a layer. Column-parallel linears split output features; row-parallel linears consume split inputs and sum partial outputs. Alternating layouts can avoid gathers, but reductions sit on nearly every layer's critical path. TP belongs on fast scale-up links, and excessive TP leaves kernels too small to saturate devices.
-
-**Pipeline parallelism** (PP) partitions depth into $s$ sequential stages. Microbatches flow through the stages so forward and backward work overlaps. For balanced stages and a simplified one-forward/one-backward schedule, the fill-and-drain bubble fraction is
-
-$$
-f_{\text{bubble}}\approx\frac{s-1}{m+s-1},
-$$
-
-where $m$ is microbatches per optimizer step. Eight stages and 32 microbatches give $\,7/39\approx17.9\%$ idle bubble before imbalance and communication. More microbatches reduce it but add overhead and may alter global batch. Interleaved virtual stages avoid multiplying the batch but add transfers and scheduling complexity.
-
-**Context parallelism** (CP) partitions sequence positions. Ring Attention keeps a query block local, circulates key/value blocks, and incrementally combines exact attention statistics. Ulysses-style parallelism all-to-all transposes sequence shards into head shards, computes full-sequence attention for subsets of heads, then reverses the transpose. Ring exposes point-to-point overlap; Ulysses needs head divisibility and strong all-to-all. The system question is whether communication fits the topology and hides behind compute.
-
-**Expert parallelism** (EP) places different mixture-of-experts feed-forward networks on different ranks. Routing becomes a dispatch all-to-all before expert compute and a combine all-to-all after it. A simple dispatch-plus-combine payload estimate is
-
-$$
-V_{\text{EP}}\approx2Tdkbf,
-$$
-
-where $T$ is routed tokens in the group, $d$ is hidden width, $k$ is experts selected per token, $b$ is bytes per activation scalar, and $f$ is the fraction assigned off-rank. It omits metadata, padding, quantization scales, congestion, and load imbalance. A dropless router preserves every assignment but lets the most loaded expert set step time unless kernels and routing rebalance work. Static expert capacity bounds time and memory but may drop or reroute tokens, changing the model computation.
-
-An existing dense checkpoint can be **upcycled** into an MoE by copying feed-forward weights into experts, initializing routers, and continuing training. Duplicated experts initially lack specialization and routing can destabilize optimization, so compare with a from-scratch compute-matched control.
-
-These dimensions are not automatically independent. A convenient first sketch is
-
-$$
-p_{\text{world}}=p_{\text{DP}}p_{\text{TP}}p_{\text{PP}}p_{\text{CP}},
-$$
-
-but EP may reuse a process-group dimension rather than multiply world size. Draw rank sets: one rank can join TP for attention, EP for feed-forward dispatch, a PP edge, and a sharded-data group. Unmapped labels produce impossible counts and double-counted bandwidth.
-
-```{mermaid}
-%%| label: fig-ch06-mesh
-%%| fig-cap: "A logical training mesh: which parallel dimensions partition computation, and which may overlap rather than multiply device count?"
-%%| fig-alt: "Two data-parallel replicas each contain two pipeline stages; every stage contains a tensor-parallel pair. Context-parallel and expert-parallel groups are shown as dashed overlays on attention and feed-forward computation."
-flowchart TB
-  W["Training world"] --> D0["DP replica 0"]
-  W --> D1["DP replica 1"]
-  subgraph R0["Replica 0 pipeline"]
-    S00["PP stage 0: TP ranks 0–1"] -->|"activations"| S01["PP stage 1: TP ranks 2–3"]
-  end
-  subgraph R1["Replica 1 pipeline"]
-    S10["PP stage 0: TP ranks 4–5"] -->|"activations"| S11["PP stage 1: TP ranks 6–7"]
-  end
-  D0 --> S00
-  D1 --> S10
-  S00 <-->|"DP / shard-group synchronization"| S10
-  S01 <-->|"DP / shard-group synchronization"| S11
-  CP["CP overlay: sequence shards in attention"] -.-> S00
-  CP -.-> S10
-  EP["EP overlay: token dispatch to experts"] -.-> S01
-  EP -.-> S11
+    Returns:
+        Achieved FLOPs per second.
+    """
+    a, b = torch.randn(n, n), torch.randn(n, n)
+    for _ in range(2):
+        a @ b
+    start = time.perf_counter()
+    for _ in range(repeats):
+        a @ b
+    return 2 * n**3 * repeats / (time.perf_counter() - start)
 ```
 
-The textual invariant in @fig-ch06-mesh is that DP, TP, PP, and CP identify orthogonal partitions only when their rank sets are actually orthogonal; EP is an overlay until the process-group map proves it is an additional physical dimension. The diagram is a logical map, not a claim that eight devices suit a real model.
+Run it and keep the number — it is the ceiling everything below gets judged against:
 
-## Trade Precision and Recomputation for Capacity {#sec-ch06-precision}
-
-Precision is a policy over tensors and operations. BF16 keeps an FP32-like exponent range with fewer significand bits, usually avoiding the dynamic-range failures that make FP16 loss scaling necessary. Reductions, normalization, optimizer state, attention logits, and softmax accumulation may still need FP32; gradient communication may use another dtype. Record each choice.
-
-FP8 adds scaling. E4M3 favors precision; E5M2 favors range. Specify tensor eligibility, scale granularity and updates, accumulator dtype, clipping, rounding, and high-precision islands. “FP8 training” never means every operation is FP8. Inspect overflow, underflow, saturation, scales, gradients, attention-logit tails, and agreement with a higher-precision reference.
-
-**Activation checkpointing** attacks a different term. Autograd normally stores intermediate tensors during forward so backward can reuse them. Checkpointing saves selected boundary tensors and recomputes the enclosed forward region during backward. It exchanges extra FLOPs for lower peak activation memory. Transformer-block granularity is a robust starting point: checkpoint every block, measure peak allocated bytes and tokens per second, then selectively retain expensive-to-recompute regions if memory allows.
-
-Recomputation must be semantically identical. Dropout requires consistent RNG state; stateful modules, mutable caches, or side effects can change gradients. Compare one step from identical parameters and inputs, check finite gradients, and bound differences under the chosen precision.
-
-```{mermaid}
-%%| label: fig-ch06-step-sequence
-%%| fig-cap: "A sharded, checkpointed block: when do full parameters and activations exist on each rank?"
-%%| fig-alt: "Two ranks all-gather a block's parameter shards, compute forward, reshard the parameters, save only a block boundary, then re-gather and recompute during backward before reduce-scattering gradients."
-sequenceDiagram
-  participant R0 as Rank 0
-  participant R1 as Rank 1
-  participant A as Autograd
-  R0->>R1: all-gather block parameter shards
-  R1->>R0: all-gather block parameter shards
-  Note over R0,R1: full block parameters are transient
-  R0->>R0: forward on local microbatch
-  R1->>R1: forward on local microbatch
-  R0-->>A: save block boundary only
-  R1-->>A: save block boundary only
-  Note over R0,R1: reshard parameters after forward
-  A->>R0: backward requests block
-  A->>R1: backward requests block
-  R0->>R1: all-gather, recompute, differentiate
-  R1->>R0: all-gather, recompute, differentiate
-  R0->>R1: reduce-scatter gradient shards
-  R1->>R0: reduce-scatter gradient shards
+```{python}
+roofline = measured_matmul_flops()
+print(f"measured matmul roofline on this CPU: {roofline / 1e9:.0f} GFLOP/s")
 ```
 
-@fig-ch06-step-sequence explains why multiplying “sharded parameter bytes” by a safety factor is not enough. Full unit parameters reappear during compute, checkpointed activations disappear and later reappear through recomputation, and gradient shards emerge only after a collective. Prefetch can overlap these events and increase the simultaneous peak.
+Now the numerator: a real training loop on the @sec-ch02 `TinyGPT` from earlier, timed, with its per-token FLOPs taken from Chapter 2's own accounting function rather than assumed:
 
-![A two-panel locally measured figure. The left panel stacks predicted state bytes for DDP and three sharding stages. The right panel compares autograd-saved tensor bytes without and with block checkpointing.](../code/ch06/generated/memory-checkpoint.svg){#fig-ch06-memory-checkpoint fig-alt="Stacked bars show state memory falling as optimizer state, gradients, and parameters are sharded. A separate bar chart shows checkpointing greatly reducing locally measured autograd-saved bytes."}
+```{python}
+optimizer = torch.optim.AdamW(tiny.parameters(), lr=3e-4)
+batch = torch.randint(tiny_config.vocab_size, (8, tiny_config.block_size))
+step_targets = torch.roll(batch, -1, dims=1)
+for _ in range(3):  # warmup: allocator and thread pools settle
+    optimizer.zero_grad(set_to_none=True)
+    tiny(batch, step_targets)[1].backward()
+    optimizer.step()
+steps = 10
+start = time.perf_counter()
+for _ in range(steps):
+    optimizer.zero_grad(set_to_none=True)
+    tiny(batch, step_targets)[1].backward()
+    optimizer.step()
+elapsed = time.perf_counter() - start
+tokens_per_s = steps * batch.numel() / elapsed
+forward_flops = ch02.flops_per_token(tiny_config, tiny_config.block_size)["total"]
+train_flops_per_token = 3 * forward_flops  # forward + double-cost backward
+mfu = tokens_per_s * train_flops_per_token / roofline
+print(f"tokens/s {tokens_per_s:8,.0f}   achieved {tokens_per_s * train_flops_per_token / 1e9:6.1f} GFLOP/s")
+print(f"toy MFU against the measured roofline: {mfu:.1%}")
+```
 
-In the seeded Chapter 2 model, checkpointing reduced tensors saved by autograd from 3,130,372 to 610,052 bytes, an 80.5 percent reduction. The two-rank CPU phase took longer with checkpointing in the recorded run, as recomputation predicts, but the tiny timing is environment-specific and noisy. The durable conclusion from @fig-ch06-memory-checkpoint is the byte trade, not its absolute speed.
+The absolute numbers are this laptop's and will differ on yours; the *shape* of the result is the lesson. Even a clean, single-device toy loop — no communication, no bubble, no stragglers — converts only a modest fraction of its own measured matmul rate into model FLOPs, because small kernels, Python overhead, optimizer updates, and everything that is not a matmul dilute the mix. Frontier systems fight for every point of this ratio at cluster scale: 40% is a normal victory for large dense runs, and MegaScale's 55.2% for a 175B model on 12,288 GPUs was a publishable result [@jiang2024megascale]. When your measured MFU is 22% and last week it was 41%, @eq-ch06-mfu is the differential diagnosis: $q$ fell (stragglers, data stalls), or you changed $F_{\text{token}}$ accounting (recomputation sneaked into the numerator), or the fleet grew without the throughput following (bubble, collectives). The formula does not fix anything; it tells you which section of this chapter to reread.
 
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `probe_model.py` plus `train_dist.py` | 235 lines across two mechanism-focused files | block checkpointing preserves a valid backward pass while reducing saved tensors |
+## Optimizers and schedules that survive scale {#sec-ch06-optimizers}
 
-Use low precision to reduce storage, bandwidth, and arithmetic cost; use checkpointing to reduce saved activations. They compose, but their error and recomputation effects must be measured separately.
+Twelve of the sixteen bytes in @eq-ch06-state belong to the optimizer, and every all-reduce carries tensors the optimizer will consume — so optimizer design is systems design, and three ideas from the current frontier matter enough to know by mechanism. This section is deliberately prose-first: the ideas are simple, their production recipes are volatile, and the one artifact worth executing is the schedule shape in @fig-ch06-schedules.
 
-## Optimizers and Schedules Are Scaling Interfaces {#sec-ch06-optimization}
+**Muon** treats a weight *matrix* as a matrix, not a bag of scalars. Adam rescales each coordinate independently; Muon takes the momentum matrix and approximately *orthogonalizes* it (a few Newton–Schulz iterations that push all singular values toward one) before applying it as the update [@jordan2024muon]. The intuition: a gradient matrix concentrated in one dominant direction updates a few directions hard and starves the rest; the orthogonalized update advances *all* directions of the momentum's row/column space at a uniform rate, which in practice lets hidden matrices take larger stable steps. The systems dividend is in our ledger: Muon's state is one momentum matrix where Adam keeps two moment estimates, so the 8-byte "Adam moments" line in `state_ledger` becomes 4 for every matrix it covers, before any quantization (embeddings and vectors stay on Adam). Speedrun-style testbeds — small fixed-data GPT training races — are where such claims get their first honest paired-baseline test, and where Muon first beat tuned AdamW; frontier adoption followed with recipe-level changes (update scaling, clipping) that remain optimizer-specific.
 
-AdamW is a strong reference: it maintains exponential first and second moments, divides the first by the square root of the second, and applies decoupled weight decay. A new optimizer must beat a tuned control at equal tokens, active FLOPs, batch, precision, data order, and architecture—not merely equal steps.
+**muP** — maximal update parameterization — answers a different scaling question: why does the best learning rate *change* when you widen the model, forcing a fresh sweep at every scale? Standard parameterizations let per-layer update magnitudes drift with width; muP rescales initialization variances, learning rates, and the output logits by explicit powers of width so that feature-learning dynamics stay width-invariant [@yang2022tensor]. The payoff is *hyperparameter transfer*: tune the learning rate on a cheap proxy model, then reuse it at target width — turning the @sec-ch05 proxy ladder from a hopeful extrapolation into a designed one. Transfer holds within an architecture family and optimizer regime, not across arbitrary changes; teams verify it on one intermediate width before trusting it at the target.
 
-Muon takes a different view of two-dimensional hidden weight matrices. It forms a momentum matrix and approximately orthogonalizes the update, commonly through a few Newton–Schulz iterations. In schematic form,
+**WSD** — warmup-stable-decay — restructures the learning-rate schedule around an operational fact: cosine decay bakes the total token budget into every step's rate, so a run cannot honestly stop early or late — the checkpoint at 60% of a cosine schedule is *not* the model a 60%-budget cosine would have produced. WSD instead holds a long flat plateau after warmup and attaches a short sharp decay at the end [@hu2024minicpm]. The plateau checkpoint is budget-agnostic: branch a decay off it at any point and you get a well-trained model for that budget, keep the trunk running and you preserve the option of more. For frontier teams whose token budgets move with data availability and mid-run evals, that option is worth real money. The schedule is ten lines:
 
-$$
-B_t=\mu B_{t-1}+G_t,\qquad O_t\approx\operatorname{NS}_k\!\left(\frac{B_t}{\lVert B_t\rVert_F}\right),
-$$
+```{python}
+# @save
+def wsd_multiplier(
+    step: int, total_steps: int, warmup_fraction: float = 0.05, decay_fraction: float = 0.15
+) -> float:
+    """Return the warmup-stable-decay learning-rate multiplier for a step.
 
-where $G_t$ is the current gradient matrix, $\mu$ is momentum, $\lVert\cdot\rVert_F$ is the Frobenius norm, and $\operatorname{NS}_k$ denotes $k$ approximate orthogonalization iterations. Embeddings, biases, normalization vectors, and sometimes input/output projections remain on AdamW. Update scaling, weight decay, distributed implementation, and precision are part of the recipe; “replace Adam with Muon” is underspecified. Shampoo also preconditions matrix gradients from second-order statistics, while SOAP combines Shampoo-like preconditioning with Adam-style updates; both introduce state and distributed-preconditioner costs that need their own ledger.
+    Linear warmup to 1.0, a long flat plateau, then a linear decay to
+    zero over the final ``decay_fraction`` of the run. Because the
+    plateau value is constant, any plateau checkpoint can branch into
+    its own decay leg — the property that makes WSD budget-agnostic
+    where cosine is budget-committed.
 
-The **maximal update parameterization**, or $\mu$P, uses width-dependent initialization, learning-rate, and output scalings so many proxy-model hyperparameters remain useful at larger width. Transfer assumes the same parameterization, architecture family, and optimizer regime; it does not cover arbitrary data, context, batch, or architecture changes. Verify it on a proxy ladder.
+    Args:
+        step: Current optimizer step, from 0.
+        total_steps: Total steps in this run (or this branch).
+        warmup_fraction: Share of steps spent warming up.
+        decay_fraction: Share of steps spent decaying.
 
-The learning-rate schedule is also a scaling interface. Cosine decay ties the entire curve to a known terminal token budget. **Warmup-stable-decay** (WSD) raises the rate, holds a long stable trunk, and attaches a final decay. The stable checkpoint can branch into several short decays for different budgets, which is valuable when the final token allocation may change. A branch is not free: each candidate consumes data and compute, and its comparison must preserve the data cursor and evaluation protocol.
+    Returns:
+        A multiplier in [0, 1] to apply to the peak learning rate.
+    """
+    warmup = max(1, round(total_steps * warmup_fraction))
+    decay = max(1, round(total_steps * decay_fraction))
+    if step < warmup:
+        return (step + 1) / warmup
+    if step < total_steps - decay:
+        return 1.0
+    return max(0.0, (total_steps - step - 1) / decay)
+```
 
-The probe cannot establish a winner. Both strategies see identical batches and weights under one WSD curve. AdamW falls from 4.1522 to 1.0701 nats per token; the Muon-like split ends at 1.0690. A short single-seed check can expose divergence, not validate a frontier claim.
+Sample it at five points of a thousand-step run — ramp, plateau, decay:
 
-![Training loss for AdamW and a Muon-like matrix optimizer on identical seeded TinyGPT batches, with the shared warmup-stable-decay multiplier on a second axis.](../code/ch06/generated/optimizer-curves.svg){#fig-ch06-optimizer fig-alt="Two nearly overlapping loss curves decrease from about 4.15 to about 1.07. A dotted schedule rises during warmup, stays flat, and decays near the end."}
+```{python}
+print([round(wsd_multiplier(step, 1000), 2) for step in (0, 24, 500, 900, 999)])
+```
 
-@fig-ch06-optimizer uses line style as well as color, so its conclusion survives grayscale: both implementations are finite and learn under the controlled fixture; their tiny final separation is not evidence of general superiority. A real optimizer evaluation needs paired seeds, learning-rate and weight-decay sweeps, equal-token quality, throughput, state bytes, communication, checkpoint compatibility, and stability at the target width.
+@fig-ch06-schedules draws the shape against cosine, with the branching behavior that motivates it:
 
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `optimizer_probe.py` | 137 lines | AdamW and the matrix-update strategy see identical batches and remain finite under one WSD schedule |
+```{python}
+#| label: fig-ch06-schedules
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does WSD decouple the schedule from the budget? Cosine (dotted) commits to the full horizon at step one — every point on the curve depends on the total. WSD (solid) holds a flat trunk from which a decay can branch at any checkpoint: the dashed branch decays from step 600 and yields a fully trained 640-step-budget model, while the trunk continues toward the full-budget decay."
+total = 1000
+steps = list(range(total))
+wsd = [wsd_multiplier(s, total) for s in steps]
+warm = 50
+cosine = [(s + 1) / warm if s < warm else 0.5 * (1 + math.cos(math.pi * (s - warm) / (total - warm)))
+          for s in steps]
+branch_at, branch_len = 600, 40
+branch = [(s, (branch_at + branch_len - s) / branch_len) for s in range(branch_at, branch_at + branch_len + 1)]
+fig, ax = plt.subplots(figsize=(6.2, 3.0))
+ax.plot(steps, wsd, color="0.2", label="WSD trunk + final decay")
+ax.plot(steps, cosine, ls=":", color="0.5", label="cosine (budget-committed)")
+ax.plot([s for s, _ in branch], [v for _, v in branch], ls="--", color="0.35",
+        label="branch decay at step 600")
+ax.set_xlabel("step")
+ax.set_ylabel("learning-rate multiplier")
+ax.set_ylim(0, 1.08)
+ax.legend(frameon=False, fontsize=8, loc="lower left")
+fig.tight_layout()
+plt.show()
+```
 
-The durable engineering question is whether an optimizer-schedule-parameterization package transfers useful progress per token and per wall-clock dollar. An optimizer name alone is not an experiment.
+One honesty note, and it generalizes: a single-seed loss curve at toy scale cannot rank optimizers. A defensible optimizer claim needs paired seeds, learning-rate sweeps for *both* candidates, equal tokens, and the memory, communication, and stability bills priced alongside the loss — which is why this section taught mechanisms and ledger effects, and left leaderboards to the testbeds built for them.
 
-## Compose the Mesh Around the Topology {#sec-ch06-topology}
+## Goodput, faults, and the checkpoint interval {#sec-ch06-goodput}
 
-A parallelism plan becomes credible only on physical links. A fast scale-up domain usually carries latency-sensitive TP, EP, or CP; scale-out often carries PP, DP, or HSDP replica traffic. Benchmark the actual collective, message size, concurrency, route, and failure domain.
+MFU is measured while steps execute. It says nothing about the hours when steps do not execute — and at frontier scale those hours are the story. The Llama 3 405B training report counts 466 job interruptions over 54 days on a 16,384-GPU cluster, 419 of them unexpected, and about 78% of those hardware-related [@grattafiori2024llama3]. **Goodput** is the metric that refuses to look away: useful training progress per wall-clock hour, roughly MFU times the fraction of wall time spent actually training. A cluster at 45% MFU and 85% availability delivers 38% goodput; heroic kernel work that lifts MFU three points matters less than a checkpoint-and-recovery pipeline that lifts availability ten.
 
-For a collective with $n$ participating ranks and payload $S$, the shorthand
-
-$$
-t_{\text{collective}}\approx a(n)\alpha+b(n)\frac{S}{\beta}
-$$
-
-separates startup latency $\alpha$ from effective bandwidth $\beta$; algorithm-dependent $a(n)$ and $b(n)$ encode rings, trees, hierarchical algorithms, or all-to-all schedules. Peak link bandwidth is not $\beta$. Congestion, protocol overhead, topology, other collectives, and small-message inefficiency reduce it. Benchmark at the shapes generated by the model, then record p50 and tail latency. Step time follows the slowest rank.
-
-Three reference compositions cover many starting points:
-
-| Workload | First composition to test | Main reason to reject it |
-|---|---|---|
-| Model state fits one device | DDP, gradient accumulation, BF16, block checkpointing | replicated Adam state or critical-batch inefficiency |
-| Large dense model in one strong cluster | HSDP plus intra-domain TP; add PP only for depth/peak constraints | TP collectives cross slow links or PP bubbles dominate |
-| Long-context MoE | previous stack plus CP for attention and EP for experts | CP/EP all-to-all contention, routing skew, or too-small kernels |
-
-Start with the fewest axes that satisfy memory. Choose TP from layer shape and the scale-up domain. Add PP when stages exceed memory or avoid cross-domain TP; CP for long-sequence work; EP from expert placement and overlap; then DP only while the global batch remains efficient.
-
-Hardware selection is system selection: device memory and bandwidth, fabrics, host paths, storage, checkpoint bandwidth, scheduling, telemetry, firmware, spares, rack power, and cooling all matter. A faster chip can lose time to target behind a weak fabric or slow recovery.
-
-Wide-area or decentralized training changes the algorithm because synchronous collectives cannot tolerate WAN latency and churn. Local-update methods let each island run many inner optimizer steps, then periodically combine parameter deltas through an outer optimizer. Communication falls, but replicas drift; staleness, non-identically distributed data, security, and quorum behavior become optimization variables. Treat these methods as local-SGD families with explicit convergence and failure assumptions, not drop-in replacements for a healthy low-latency cluster.
-
-The topology invariant is: place the most frequent and least hideable communication on the strongest links, and make every cross-domain byte justify itself. A process-group diagram and collective trace should agree.
-
-## Frontier Stability Is a Goodput Problem {#sec-ch06-goodput}
-
-Model FLOPs utilization (MFU) estimates what fraction of aggregate peak arithmetic performs the model's nominal forward-and-backward work:
-
-$$
-\operatorname{MFU}=\frac{q\,F_{\text{model/token}}}{G P_{\text{peak}}},
-$$
-
-where $q$ is observed training tokens per second, $F_{\text{model/token}}$ is the declared model FLOPs per token, $G$ is accelerator count, and $P_{\text{peak}}$ is peak FLOPs per accelerator in the relevant precision. A dense Transformer baseline often uses $F_{\text{model/token}}\approx6P$, with attention-length corrections. For MoE, use activated parameters or profiler-derived FLOPs. Publish the counting convention, precision, sparsity treatment, and whether recomputation is excluded.
-
-Hardware FLOPs utilization (HFU) counts implementation-executed arithmetic, including recomputation. Checkpointing can raise HFU while leaving model progress unchanged, so HFU is useful for kernel diagnosis but less comparable across implementations. MFU can also hide idle days: it is normally computed while steps execute.
-
-**Goodput** is useful work completed per wall-clock resource. One component is the effective-training-time rate (ETTR), productive nominal iteration time divided by elapsed wall time. When denominators align, $\operatorname{MFU}\times\operatorname{ETTR}$ is a rough productive fraction of peak capacity. Keep both terms: low MFU points toward kernels, communication, or bubbles; low ETTR points toward failures, checkpoint stalls, data starvation, validation pauses, or scheduler gaps.
-
-Expected time to recovery—also abbreviated ETTR by some teams—is detection, isolation, replacement, checkpoint load, and replay. Spell out the ambiguous acronym. Record interruption rate, tail recovery, lost tokens, automated-handling fraction, and first-step correctness.
-
-A complete checkpoint includes model, optimizer, schedule, scaler, token count, data cursor, per-rank RNG, topology, configuration, tokenizer/data/code digests, and the integrity manifest. A clean-worker, different-world-size restart drill is stronger evidence than a save log.
-
-Checkpoint frequency has an economic optimum. If a synchronous checkpoint costs $C_s$ seconds, job mean time between interrupting failures is $M$, restart cost is $R$, and checkpoints occur every $I$ seconds, a simple waste model is
-
-$$
-w(I)\approx\frac{C_s}{I}+\frac{I}{2M}+\frac{R}{M}.
-$$
-
-The first term is checkpoint overhead; the second is average work lost since the last checkpoint under uniformly timed failures; the third is restart overhead. Minimizing the first two gives Young's approximation $I^*\approx\sqrt{2C_sM}$. Correlated rack failures, preemption warnings, asynchronous staging, remote persistence lag, and checkpoint corruption violate the model. Use it to initialize policy, then fit failure and save distributions from operations data.
-
-**Silent data corruption** (SDC) produces plausible but wrong values. ECC cannot cover every arithmetic, transfer, firmware, or software fault. Layer defenses include burn-in, distribution checks, training monitors, collective probes, checksums, quarantine, replay, and clean restoration. Measure detector coverage and false positives; restarting a corrupt checkpoint only reproduces failure.
-
-Frontier stability is also optimization stability. Classify a spike before responding: **data** faults include corrupt or shifted batches; **numerical** faults include overflow, attention-logit growth, and bad scales; **routing** faults include expert collapse or overload; **system** faults include corrupted arithmetic, collectives, or state. Preserve batch identifiers, metrics, and state hashes for replay. A skip policy must be explicit, bounded, and logged; nonfinite or corrupted optimizer state requires rollback to a verified checkpoint, not blind continuation. Preventive controls can include gradient clipping, **QK-clip** or query/key rescaling to cap attention logits, and router **z-loss** to penalize extreme routing logits. Each changes optimization and needs an ablation. “Loss recovered” is not proof that moments and data order remained valid.
-
-The operating invariant is that a run is healthy only when it makes verifiable forward progress and can recover to the same logical training state. High MFU during surviving minutes does not compensate for low goodput across the month.
-
-## Training Economics Converts Utilization into Procurement {#sec-ch06-economics}
-
-The compute budget from Chapter 5 becomes an elapsed-time model. For a dense Transformer with $P$ parameters and $D$ training tokens,
-
-$$
-C_{\text{train}}\approx6PD.
-$$
-
-With $G$ accelerators, per-device peak rate $F$, and MFU $u$,
-
-$$
-T_{\text{seconds}}=\frac{C_{\text{train}}}{GFu},\qquad
-H_{\text{accelerator}}=\frac{C_{\text{train}}}{Fu\,3600}.
-$$
-
-The second equation is independent of $G$: ideal scaling changes wall time, not accelerator-hours. Real scaling changes $u$, batch, ETTR, and often price. For MoE and long context, replace $\,6P$ with activated or profiled FLOPs and include attention's sequence-dependent work.
-
-Cloud cost begins with $H_{\text{accelerator}}$ times an effective rate. Add storage, transfer, orchestration, support, failed and development runs, idle reservations, and preemption. Spot lowers nominal rates but increases interruption waste; reserved capacity can create utilization risk. Model distributions, not one rate cell.
-
-Power needs an equally explicit boundary. If the combined accelerator-and-node IT draw averages $W_{\text{IT}}$ per accelerator and the facility power-usage effectiveness is PUE,
+The tax has a structure. When a run fails, it loses (i) the work since the last checkpoint, (ii) the restart time, and it pays continuously (iii) the cost of writing checkpoints at all. Checkpoint too rarely and failures are catastrophic; too often and the writing *is* the catastrophe. For checkpoint cost $C_s$ seconds, mean time between failures $M$, restart cost $R$, and interval $I$, the wasted fraction is approximately
 
 $$
-P_{\text{facility}}\approx G W_{\text{IT}}\operatorname{PUE}.
-$$
+w(I) = \frac{C_s}{I} + \frac{I}{2M} + \frac{R}{M},
+$$ {#eq-ch06-waste}
 
-Energy is power integrated over wall time. Do not multiply a facility-inclusive watt assumption by PUE a second time. Average draw, peak rack provisioning, and grid capacity answer different questions: the energy bill uses the first; cluster feasibility and demand charges care about the others.
-
-Buying capacity replaces the hourly quote with annualized ownership. For discount rate $r$ and useful life $L$, the capital-recovery factor is
+overhead plus expected lost work (failures land midway through an interval on average) plus restarts. Minimizing over $I$ gives Young's approximation [@young1974first]:
 
 $$
-\operatorname{CRF}=\frac{r(1+r)^L}{(1+r)^L-1}.
+I^{*} = \sqrt{2\,C_s\,M}.
+$$ {#eq-ch06-young}
+
+Every input is something we can now compute. The checkpoint payload comes from our own ledger — weights, master weights, and moments; gradients need not persist. MTBF comes from the published failure data, scaled to cluster size: failures arrive per-device, so a cluster's MTBF is the per-device MTBF divided by device count.
+
+```{python}
+# @save
+def checkpoint_waste(interval_s: float, save_s: float, mtbf_s: float, restart_s: float = 300.0) -> float:
+    """Return the fraction of cluster time wasted by a checkpoint policy.
+
+    Implements the classic three-term model: save overhead ``C_s / I``,
+    expected lost work ``I / 2M`` (a failure lands midway through an
+    interval on average), and restart cost ``R / M``. Valid when
+    intervals are short against MTBF and failures arrive independently —
+    correlated rack failures and preemption warnings break it, in the
+    conservative direction.
+
+    Args:
+        interval_s: Seconds between checkpoint starts.
+        save_s: Seconds of training stalled per synchronous save.
+        mtbf_s: Mean seconds between job-interrupting failures.
+        restart_s: Seconds to detect, reschedule, and reload.
+
+    Returns:
+        The wasted fraction of wall-clock time.
+    """
+    return save_s / interval_s + interval_s / (2 * mtbf_s) + restart_s / mtbf_s
+
+
+def young_interval(save_s: float, mtbf_s: float) -> float:
+    """Return Young's optimal checkpoint interval ``sqrt(2 * C_s * M)``."""
+    return math.sqrt(2 * save_s * mtbf_s)
+```
+
+Feed it inputs computed from our own artifacts rather than assumed:
+
+```{python}
+ledger = state_ledger(P_7B, "mixed")
+payload = ledger["total"] - ledger["gradients"]
+save_seconds = payload / (3 * GIB)  # illustrative 3 GiB/s effective write path
+device_mtbf = 54 * 86_400 * 16_384 / 419  # per-device seconds, Llama 3 unexpected-failure rate
+print(f"checkpoint payload {payload / GIB:.0f} GiB -> save stall {save_seconds:.0f} s; "
+      f"per-device MTBF {device_mtbf / 86_400 / 365:.1f} device-years")
+```
+
+Eighty-eight gibibytes per save, thirty seconds of stall, and a per-device MTBF of about six device-years — a number that sounds comfortable until you multiply by a fleet. Now the policy, computed for a 1,024-device version of our 7B run and for a Llama-scale 16,384-device job:
+
+```{python}
+for devices in (1_024, 16_384):
+    mtbf = device_mtbf / devices
+    best = young_interval(save_seconds, mtbf)
+    waste = checkpoint_waste(best, save_seconds, mtbf)
+    print(f"{devices:6,} devices: cluster MTBF {mtbf / 3600:5.1f} h -> "
+          f"checkpoint every {best / 60:4.0f} min, minimum waste {waste:.1%}")
+```
+
+The same save cost yields opposite policies: the small cluster checkpoints hourly and wastes 2%, the large one must save every quarter hour and still burns 10% of everything it does — with @eq-ch06-waste, failure math becomes a line item you can budget rather than a surprise. @fig-ch06-checkpoint shows the useful shape of the curve: flat near the optimum (being 2x off costs little) and vicious at the too-rare end. This is also the economic argument for the engineering that changes the *constants*: asynchronous checkpointing stages state to host memory in seconds and drains to storage in the background, shrinking $C_s$ tenfold, and Llama 3's operations held effective training time above 90% on exactly such machinery [@grattafiori2024llama3].
+
+```{python}
+#| label: fig-ch06-checkpoint
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why is there an optimal checkpoint interval, and how much does missing it cost? Wasted time fraction versus interval for the 30-second save at two cluster scales, with Young's optimum marked. The curves are flat within a factor of two of the optimum and steep outside it — the expensive mistake is checkpointing far too rarely, and the large cluster pays five times the minimum waste of the small one."
+intervals = [60 * m for m in range(1, 241)]
+fig, ax = plt.subplots(figsize=(6.2, 3.2))
+for devices, style in ((1_024, "-"), (16_384, "--")):
+    mtbf = device_mtbf / devices
+    ax.plot([i / 60 for i in intervals],
+            [checkpoint_waste(i, save_seconds, mtbf) for i in intervals],
+            style, color="0.3", label=f"{devices:,} devices")
+    best = young_interval(save_seconds, mtbf)
+    ax.plot(best / 60, checkpoint_waste(best, save_seconds, mtbf), "o", color="0.1", ms=5)
+ax.set_xlabel("checkpoint interval (minutes)")
+ax.set_ylabel("wasted fraction of cluster time")
+ax.set_ylim(0, 0.30)
+ax.legend(frameon=False, fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+Two failure classes deserve names because checkpoints alone do not solve them. **Silent data corruption** — a device computing plausible wrong numbers without raising an error — evades every crash-triggered defense; fleets counter it with burn-in screens, periodic redundant-computation probes, and checksums on collectives, because restoring a checkpoint that was *written from* corrupted state just replays the corruption. And **loss spikes** — sudden optimization blow-ups from data anomalies, numerical range issues, or routing collapse in MoE models — require a diagnosis before a response: skip the batch if it is data, rescale if it is numerics, roll back to a verified checkpoint if the optimizer state itself went bad. A checkpoint is only a recovery point if what you saved was healthy, which is why frontier runs pair every save with cheap validation — finite-norm checks, a held-out loss probe — before marking it restorable.
+
+## From FLOPs to dollars to megawatts {#sec-ch06-economics}
+
+Everything so far priced a run in bytes and seconds. The last conversion prices it in money and electricity, and it is shorter than its reputation: from @sec-ch05, training compute is $C \approx {6}ND$ FLOPs for $N$ parameters and $D$ tokens; a fleet of $G$ devices with peak rate $F_{\text{peak}}$ at utilization $u$ delivers $G F_{\text{peak}} u$ FLOPs per second; divide and convert. Device-hours, notably, do not depend on $G$ at all —
+
 $$
+H = \frac{6ND}{F_{\text{peak}}\, u \cdot 3600},
+\qquad
+T_{\text{days}} = \frac{H}{24\,G},
+$$ {#eq-ch06-hours}
 
-Divide annualized capex plus energy, facility, network, spares, software, financing, and staff by **productive** accelerator-hours, with utilization and ETTR in the denominator. A cluster bought for one burst can cost more than cloud despite cheap chip-plus-electricity arithmetic.
+so buying more devices buys *calendar time*, never fewer device-hours; only $u$ — the MFU-times-goodput product this chapter has been building — changes what the compute costs. Money is device-hours times a price; power is fleet size times per-device draw times the facility overhead factor PUE (total facility power over IT power, ~1.1–1.4). As code:
 
-![Illustrative sensitivity of training cost and wall time to MFU while model size, token budget, accelerator peak, count, and hourly rate remain fixed.](../code/ch06/generated/cost-sensitivity.svg){#fig-ch06-cost fig-alt="Two line plots fall as MFU rises from 25 to 60 percent: illustrative training cost on the left and wall days on the right."}
+```{python}
+# @save
+def run_economics(
+    params: float, tokens: float, devices: int, *,
+    peak_tflops: float = 989.0, mfu: float = 0.40, price_per_hour: float = 2.50,
+    kw_per_device: float = 1.4, pue: float = 1.2,
+) -> dict[str, float]:
+    """Convert a training budget into hours, dollars, and megawatts.
 
-The base case behind @fig-ch06-cost is hypothetical: 30B parameters, 600B tokens, 8,192 accelerators, 1,000 TFLOP/s each, 40 percent MFU, a \$4 accelerator-hour, and 1.2 facility-inclusive kW each. It yields $\,1.08\times10^{23}$ FLOPs, 75,000 accelerator-hours, 9.16 hours, \$300,000, 9.8304 MW, and 90 MWh. These are fixtures, not a forecast. Moving MFU from 40 to 50 percent multiplies time and compute charge by $\,0.4/0.5=0.8$.
+    Applies the dense-Transformer estimate ``C = 6 N D``, divides by
+    delivered FLOPs (peak times MFU) for device-hours, then prices time
+    at an hourly rate and power at per-device draw times PUE. The
+    defaults are illustrative 2026 H100-class planning constants — the
+    dated landscape callout carries their provenance; the formulas are
+    the durable part.
 
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `cost_model.py` plus `cost-sensitivity.csv` | 54 lines plus eight auditable rows | compute remains fixed while time and accelerator-hours scale as $\,1/u$ |
+    Args:
+        params: Trainable parameters ``N``.
+        tokens: Training tokens ``D``.
+        devices: Fleet size ``G`` (sets calendar time and megawatts).
+        peak_tflops: Per-device peak TFLOP/s in training precision.
+        mfu: Delivered fraction of peak (fold goodput in here too).
+        price_per_hour: Effective all-in device-hour price in dollars.
+        kw_per_device: Average IT draw per device including host share.
+        pue: Facility power overhead factor (total / IT).
 
-A rent-versus-buy decision also values time to capacity, topology guarantees, capacity certainty, scaling efficiency, egress, compliance, support, and technology-stranding risk. Ask what happens at twice the nominal dollars per useful FLOP, half the expected utilization, a six-month delivery slip, or correlated failures. Procurement is a distribution over outcomes, not a comparison of one chip price with one cloud rate.
+    Returns:
+        FLOPs, device-hours, wall days, cost, megawatts, energy MWh,
+        and dollars per million tokens, keyed by name.
+    """
+    flops = 6 * params * tokens
+    device_hours = flops / (peak_tflops * 1e12 * mfu) / 3600
+    wall_days = device_hours / devices / 24
+    megawatts = devices * kw_per_device * pue / 1000
+    return {
+        "flops": flops, "device_hours": device_hours, "wall_days": wall_days,
+        "cost": device_hours * price_per_hour, "megawatts": megawatts,
+        "energy_mwh": megawatts * wall_days * 24,
+        "usd_per_m_tokens": device_hours * price_per_hour / tokens * 1e6,
+    }
+```
 
-## Landscape 2026 (dated) {#sec-ch06-landscape}
+We evaluate it for three named-scale runs — parameter and token budgets shaped like Llama 2 7B, Llama 3 70B, and Llama 3 405B, with fleet sizes in their reported ranges:
+
+```{python}
+runs = [
+    ("7B on 2T tokens", 6.74e9, 2.0e12, 1_024),
+    ("70B on 15T tokens", 70.6e9, 15.0e12, 16_384),
+    ("405B on 15.6T tokens", 405e9, 15.6e12, 16_384),
+]
+print("run                     FLOPs   device-hrs   days     cost     MW    energy")
+for name, n, d, g in runs:
+    eco = run_economics(n, d, g)
+    print(f"{name:21s} {eco['flops']:8.1e} {eco['device_hours'] / 1e6:7.2f}M "
+          f"{eco['wall_days']:6.1f} ${eco['cost'] / 1e6:6.1f}M {eco['megawatts']:6.1f} "
+          f"{eco['energy_mwh']:7,.0f} MWh")
+```
+
+Three sanity checks make these more than pretty rows. The 405B estimate of 26.6M device-hours sits within 15% of the 30.84M H100-hours Meta reported for that run [@grattafiori2024llama3] — our 40% MFU assumption is slightly generous and ${6}ND$ ignores attention FLOPs, both in the expected direction. The 27.5 MW line explains why frontier training is now an *energy* story: one pretraining run holds the power draw of a small town for two months, and the 100-megawatt-class campuses being built are this row multiplied by concurrent runs and headroom. And the middle column repeats @eq-ch06-hours's lesson: the 70B and 405B runs use the same fleet, so their dollar gap is purely device-hours — scale bought time, not efficiency.
+
+Renting at \$2.50 per device-hour is one side of a decision; the other is owning. Ownership converts a capital price into an hourly cost through the capital recovery factor — the annuity formula that spreads principal plus return over a useful life —
+
+$$
+\operatorname{CRF} = \frac{r\,(1+r)^{L}}{(1+r)^{L} - 1},
+$$ {#eq-ch06-crf}
+
+for discount rate $r$ and life $L$ years: annualized cost equals CRF times the capital outlay, and the effective hourly rate divides by the hours you actually *use*.
+
+```{python}
+# @save
+def capital_recovery_factor(rate: float, years: int) -> float:
+    """Return the annuity factor that annualizes a capital purchase.
+
+    Multiplying a purchase price by the CRF gives the constant annual
+    payment that repays principal plus the required return over the
+    asset's life — the standard way to put "buy a cluster" and "rent by
+    the hour" in the same units.
+
+    Args:
+        rate: Annual discount rate (0.12 means twelve percent).
+        years: Useful life in years.
+
+    Returns:
+        The annual payment per dollar of capital.
+    """
+    growth = (1 + rate) ** years
+    return rate * growth / (growth - 1)
+```
+
+At a 12% discount rate over a four-year life, with an illustrative all-in system price of \$45k per installed device and energy at eight cents per kWh:
+
+```{python}
+crf = capital_recovery_factor(0.12, 4)
+system_cost, energy_at_full = 45_000.0, 1.4 * 1.2 * 8_766 * 0.08
+annualized = crf * system_cost
+print(f"CRF(12%, 4y) = {crf:.4f} -> ${annualized:,.0f}/device-year plus ${energy_at_full:,.0f} energy")
+for utilization in (0.95, 0.70, 0.40):
+    hourly = (annualized + energy_at_full * utilization) / (8_766 * utilization)
+    print(f"  at {utilization:.0%} utilization: effective ${hourly:4.2f}/device-hour")
+```
+
+The whole rent-versus-buy argument is in those three lines: ownership at \$45k per installed device beats the \$2.50 rental *only above roughly 70% sustained utilization* — and utilization is a schedule-and-operations achievement, not a purchase. A cluster bought for one training burst then idling between runs costs more per useful hour than the cloud it was meant to undercut; conversely, a continuously-scheduled fleet (training, then @sec-ch10 serving, then experiments) clears the bar easily. The full decision adds terms the formula omits — time-to-capacity while a cluster is built, topology guarantees rented clouds may not give, resale and technology-stranding risk on a four-year-old SKU — but the CRF frame forces each to be priced as a utilization or rate adjustment instead of argued as vibes. @fig-ch06-cost closes the loop from FLOPs to facilities.
+
+```{python}
+#| label: fig-ch06-cost
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What do named-scale training runs cost in dollars and draw in power? Compute cost (left, log scale) and facility power (right) for the three runs under the illustrative constants — H100-class peak, 40% MFU, two-and-a-half-dollar hours, PUE 1.2. Cost spans a factor of 450 across the runs because it follows 6ND; power differs only 16x because it follows fleet size, which is why the megawatt line, not the dollar line, is the binding constraint on new campuses."
+names = [name for name, *_ in runs]
+econ = [run_economics(n, d, g) for _, n, d, g in runs]
+fig, (left, right) = plt.subplots(1, 2, figsize=(6.8, 3.0))
+cost_bars = left.bar(range(3), [e["cost"] / 1e6 for e in econ], color="0.45", width=0.55)
+left.bar_label(cost_bars, fmt="$%.1fM", padding=2, fontsize=8)
+left.set_yscale("log")
+left.set_ylabel("compute cost (million USD, log)")
+left.set_ylim(0.05, 200)
+mw_bars = right.bar(range(3), [e["megawatts"] for e in econ], color="0.65", width=0.55)
+right.bar_label(mw_bars, fmt="%.1f MW", padding=2, fontsize=8)
+right.set_ylabel("facility power (MW)")
+for ax in (left, right):
+    ax.set_xticks(range(3), ["7B\n2T", "70B\n15T", "405B\n15.6T"], fontsize=8)
+fig.tight_layout()
+plt.show()
+```
 
 ::: {.callout-note .landscape-2026}
-This section contains current APIs, products, training reports, and policy status. Deleting it leaves the byte, collective, precision, checkpoint, goodput, and economics mechanisms intact.
-
-### Current PyTorch distributed surface
-
-As of 2026-07-19, PyTorch FSDP2's `fully_shard` represents parameters as per-parameter dimension-0 `DTensor`s. Forward hooks all-gather and reshard; backward reduce-scatters. Current guidance shards blocks bottom-up and then the root, with the optimizer constructed afterward. Recheck `MixedPrecisionPolicy`, offload, resharding, mesh naming, and the activation-checkpoint recommendation to pass `use_reentrant=False`. The build follows this surface while teaching its layout invariants separately.
-
-**Verify live: 2026-07-19.** Recheck the official [`fully_shard`](https://docs.pytorch.org/docs/main/distributed.fsdp.fully_shard.html), [DTensor](https://docs.pytorch.org/docs/stable/distributed.tensor.html), [tensor-parallel](https://docs.pytorch.org/docs/stable/distributed.tensor.parallel.html), [pipeline-parallel](https://docs.pytorch.org/docs/stable/distributed.pipelining.html), [activation-checkpoint](https://docs.pytorch.org/docs/stable/checkpoint.html), and [Distributed Checkpoint](https://docs.pytorch.org/docs/stable/distributed.checkpoint.html) documentation before changing a training stack.
-
-### Low precision, optimizers, MoE communication, and decentralized training
-
-Current FP8 recipes combine E4M3/E5M2 tensors, scaling, and higher-precision islands; DeepSeek-V3 is one published example. OCP Microscaling defines MX block formats, while NVIDIA's 2025 NVFP4 work describes two-level scaling, higher-precision islands, transforms, two-dimensional quantization, and stochastic rounding. Hardware support is dated; the durable requirement is to declare scale granularity, accumulation, rounding, and telemetry.
-
-Muon now appears in larger recipes and a PyTorch API. Kimi K2's MuonClip rescales query/key projections when attention logits cross a threshold; eligible parameters and distributed details remain recipe-specific. Shampoo and SOAP are matrix-preconditioning comparisons. WSD appears in MiniCPM and later analyses. `modded-nanogpt` is a useful laboratory, but its records combine optimizer, architecture, data, kernels, and schedule.
-
-Current reference stacks include Megatron-Core, PyTorch TorchTitan, and JAX/MaxText; their defaults change. DeepEP specializes MoE dispatch. DiLoCo uses local inner steps plus outer optimization; INTELLECT-1 reported a 10B decentralized pretraining proof of concept; 2026 Decoupled DiLoCo explores asynchronous fragment exchange and quorum-style merging. Their convergence is experiment-specific; INTELLECT-2 concerns reinforcement learning.
-
-**Verify live: 2026-07-19.** Check the [OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf), [Transformer Engine FP8 guide](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html), [NVFP4 paper](https://arxiv.org/abs/2509.25149), [PyTorch Muon API](https://docs.pytorch.org/docs/stable/generated/torch.optim.Muon.html), [TorchTitan](https://github.com/pytorch/torchtitan), [MaxText](https://github.com/AI-Hypercomputer/maxtext), [DeepEP](https://github.com/deepseek-ai/DeepEP), [INTELLECT-1](https://arxiv.org/abs/2412.01152), and [Decoupled DiLoCo](https://arxiv.org/abs/2604.21428).
-
-### Frontier operations and hardware
-
-Llama 3's 405B snapshot records 466 interruptions over 54 days: 47 planned and 419 unexpected, about 78 percent hardware-related or suspected; effective training time exceeded 90 percent. MegaScale reports 55.2 percent MFU for 175B over 12,288 GPUs and production runs with more than 100 restarts, over 90 percent automatically handled, and over 90 percent effective training time. These are existence proofs, not universal rates.
-
-The hardware landscape now includes NVIDIA GB300 NVL72 systems and an announced Vera Rubin platform, Google's Ironwood TPU, and AMD MI350-series accelerators. Vendor peak numbers differ by dtype, sparsity, scale, and system boundary and are not directly comparable. Procurement work must use dated specifications plus workload-shaped collective and kernel measurements.
-
-**Verify live: 2026-07-19.** Recheck the [Llama 3 report](https://arxiv.org/abs/2407.21783), [MegaScale](https://arxiv.org/abs/2402.15627), [GB300 NVL72 reference architecture](https://docs.nvidia.com/enterprise-reference-architectures/nvl72-ai-factory/latest/components.html), [Vera Rubin announcement](https://nvidianews.nvidia.com/news/nvidia-vera-rubin-platform), [Google Ironwood overview](https://blog.google/innovation-and-ai/infrastructure-and-cloud/google-cloud/ironwood-google-tpu-things-to-know/), and [AMD MI350 overview](https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/solution-briefs/amd-instinct-mi350-series-5-reasons-why.pdf). Obtain live, workload-specific quotes for any financial decision.
-
-### The historical U.S. $\,10^{26}$-operation threshold
-
-Executive Order 14110 historically used a threshold above $\,10^{26}$ integer or floating-point operations for certain reporting about dual-use foundation models, with a separate biological-sequence threshold. It is **not an active general U.S. reporting requirement as of 2026-07-19**. Executive Order 14110 was revoked in January 2025 by Executive Order 14148. Executive Order 14409, issued June 2, 2026, emphasizes classified capability benchmarking and a voluntary developer framework; it does not reinstate the general $\,10^{26}$ reporting threshold. Treat the number as a dated policy case study, not a current compliance trigger. Verify current federal, state, export-control, outbound-investment, contractual, and sector rules with qualified counsel.
-
-**Verify live: 2026-07-19.** Read the archived [Executive Order 14110](https://www.govinfo.gov/content/pkg/CFR-2024-title3-vol1/pdf/CFR-2024-title3-vol1-eo14110.pdf), the [Congressional Research Service status summary](https://www.congress.gov/crs_external_products/R/HTML/R48555.web.html), the [revocation record](https://www.govinfo.gov/app/details/DCPD-202500115), and [Executive Order 14409](https://www.whitehouse.gov/presidential-actions/2026/06/promoting-advanced-artificial-intelligence-innovation-and-security/). Legal status can change faster than a textbook release.
+**Landscape 2026 (dated).** The constants behind this section's cells, verified 2026-07-20, are planning-grade illustrations, not quotes. Per-device peak: 989 TFLOP/s is H100-class dense BF16; current-generation parts (NVIDIA GB300/Blackwell-Ultra-class, with the Vera Rubin platform announced; Google Ironwood TPUs; AMD MI350-series) quote several-fold higher peaks under new sparsity and FP4/FP8 conventions that are not directly comparable — always match the dtype and density of your actual recipe. Prices: roughly \$2–3 per H100-hour at neoclouds (CoreWeave, Lambda, Nebius and peers, whose GPU-first data centers and willingness to sign short commitments undercut hyperscaler list prices of \$4–6), with frontier labs instead signing multi-year power-and-capacity deals measured in gigawatts and billions of dollars. Power: ~0.7–1.4 kW per device including host share, PUE 1.1–1.4. FP8 pretraining recipes in the DeepSeek-V3 lineage and OCP microscaling formats (MX, NVFP4) are current low-precision practice; Muon-class optimizers now appear in production-scale reports and a PyTorch API. The US 1e26-FLOP reporting threshold of Executive Order 14110 was revoked in January 2025 and has no active general successor as of this date — compute-threshold governance survives as policy proposals and state law, covered with the rest of the governance surface in @sec-ch25. **Verify live:** [Epoch AI's training-cost analyses](https://epoch.ai/publications/how-much-does-it-cost-to-train-frontier-ai-models), vendor spec sheets for your actual SKU and dtype, and two current cloud quotes before any decision that spends money.
 :::
 
-## Build {#sec-ch06-build}
+## Summary
 
-Run the integrated offline laboratory from the book root (`newbook/` in this workspace).
+We priced a training step from shapes alone: a 7B model carries 100 GiB of optimizer-visible state — identical under fp32 and mixed precision — plus activations spanning two orders of magnitude across saving policies, a range we confirmed by measuring what autograd stores. ZeRO shards the state; tensor and pipeline parallelism split the computation, and our simulator showed composition flipping from "just use data parallelism" at 7B to "model parallelism is forced" at 70B. We measured an honest toy MFU, computed the checkpoint interval failure rates dictate, and converted FLOPs to dollars and megawatts within 15% of a published frontier run. Chapter 7 turns to what those FLOPs buy next: post-training.
 
-```bash
-python code/ch06/run_build.py
-pytest -q tests/test_ch06_distributed_training.py
-```
+## Exercises
 
-[`run_build.py`](../code/ch06/run_build.py) is the only integrated runner. It launches [`train_dist.py`](../code/ch06/train_dist.py) under two CPU or multi-GPU processes, falling back to one process when only one GPU is visible. The probe builds a one-dimensional device mesh, shards transformer blocks bottom-up and then the root, and creates AdamW afterward. Each checkpoint condition restarts from identical weights, optimizer state, RNG, and rank-local batches; tests bound final loss and gradient-norm differences. Rank 0 separately measures saved tensors on an identical unsharded replica, which isolates checkpoint policy but is not FSDP peak memory. CPU uses Gloo and CUDA uses NCCL; an explicitly requested GPU world larger than visible capacity is rejected.
-
-The model contains 127,360 trainable parameters. Its largest FSDP unit is the 45,120-parameter root-owned group, not either 41,120-parameter block. The actual FP32 runtime ledger predicts 254,720 parameter bytes, 254,720 gradient bytes, and 509,440 moment bytes on rank 0; measurement matches parameters and gradients exactly and records 509,520 optimizer bytes, including 80 bytes of step scalars. The classic BF16-plus-master-copy baseline is reported separately. This component-level comparison does not include allocator fragmentation or claim a frontier peak.
-
-Throughput and local-roofline MFU fields vary across runs and hosts. Their denominator is a small local matrix-multiplication calibration, not a vendor peak, so it must not be compared with published GPU MFU. Stable evidence is the executed collective path, matched loss and gradient checks, finite state, component bytes, and saved-tensor reduction.
-
-The runner writes:
-
-| Output | What it makes auditable |
-|---|---|
-| `fsdp-probe.json` | actual world, device, precision policy, sharded bytes, saved tensors, loss, tokens/s, and MFU denominator |
-| `memory-ledger.csv` and `runtime-memory-ledger.csv` | classic BF16/master-copy and actual FP32 state ledgers, transient unit, and communication bytes |
-| `optimizer-curves.csv` | paired seeded loss and WSD multiplier for AdamW and the Muon-like split strategy |
-| `cost-sensitivity.csv` | every assumption and result for eight MFU values |
-| [`cost-model.xlsx`](../code/ch06/generated/cost-model.xlsx) | editable assumptions, formula model, MFU sensitivity, checks, sources, and native chart |
-| `metrics.json` | experiment contracts, summaries, runtime versions, and seeds |
-| three generated SVGs | the exact values used by the chapter's quantitative figures |
-
-The tests enforce six contracts: conventional Adam and ZeRO algebra; mesh and collective equations; compute-preserving MFU sensitivity; checkpoint savings; finite optimizer learning; and a real FSDP2/DTensor build with matched phases, component-level byte checks, and a formula-bearing XLSX. Timing fields are measurements; seeds, shapes, data, byte results, curves, cost rows, and style are fixed.
-
-To adapt the build, replace the toy configuration first and keep the evidence schema. Then run a memory-only scale test, a short numerical-equivalence test, a collective microbenchmark at the resulting message sizes, and an end-to-end throughput test. Change one axis at a time until memory forces composition. A successful smoke step is the start of capacity validation, not the end.
-
-## What Endures, What Changes {#sec-ch06-endures}
-
-**Endures:**
-
-- Parameter, gradient, optimizer, activation, transient, communication, and checkpoint bytes are separate ledgers with different lifetimes and owners.
-- DDP replicates state; ZeRO-style stages progressively shard optimizer state, gradients, and parameters; full parameters still become transiently available for computation.
-- TP partitions layer matrices, PP partitions depth, CP partitions sequence positions, EP partitions experts, and DP partitions examples or tokens. Their process groups must be drawn, not inferred from labels.
-- Pipeline bubbles, collective latency-bandwidth tradeoffs, expert skew, and the critical batch can erase nominal scaling.
-- Precision is an operation-and-scaling policy. Activation checkpointing trades recomputation for saved tensors. Both require numerical verification.
-- Optimizer, schedule, parameterization, data order, batch, precision, and hardware form one experimental package.
-- MFU describes model arithmetic while executing; goodput and recovery describe productive wall time. A complete, atomic, reshardable checkpoint is a correctness artifact.
-- Dense compute, useful throughput, facility power, ETTR, and productive utilization connect the training design to finance. Rent-versus-buy is a sensitivity analysis, not one quoted rate.
-
-**Changes:**
-
-- Framework names, sharding APIs, compiler behavior, collective implementations, checkpoint formats, and process-mesh helpers.
-- Preferred FP8, microscaling, FP4, accumulator, rounding, and scaling recipes—and which hardware executes them safely.
-- Optimizer recipes, Muon variants, preconditioners, update scaling, schedule branches, and speedrun records.
-- Accelerator SKUs, system topologies, peak-FLOP conventions, cloud availability, prices, power envelopes, and delivery times.
-- The best composition of TP, PP, CP, EP, HSDP, and local-update training for a particular model and fabric.
-- Published interruption statistics, SDC detectors, decentralized-training results, and the policy obligations attached to large runs.
-
-The senior habit is stable: convert every claim into a tensor layout, byte count, collective trace, numerical check, failure-recovery invariant, and economic denominator. A larger cluster amplifies an incorrect assumption faster than it fixes one.
-
-## Exercises {#sec-ch06-exercises}
-
-1. **Replace Adam state with an 8-bit optimizer.** For a 30B-parameter model, begin with the chapter's two-byte parameter, two-byte gradient, four-byte master copy, and eight-byte Adam moments. Replace the two moments with one byte each plus 0.5 bytes per parameter of scales and metadata. Compute DDP and ideal 64-way stage-3 persistent bytes per rank. Add a two-byte transient largest unit containing 600M parameters. State which accuracy, kernel, and checkpoint assumptions the arithmetic does not validate.
-
-2. **Map 512 H100s for a 235B MoE.** Design DP, TP, PP, CP, and EP groups for a 235B-total, 22B-active model with 128 experts, top-8 routing, and 128K training sequences. Give exact rank-set dimensions and say whether EP is independent or overlaps another dimension. Estimate dispatch-plus-combine bytes for one expert group from $\,2Tdkbf$. Defend which collectives stay inside a node, which cross nodes, and how dropless skew changes the plan.
-
-3. **Cut a pipeline bubble two ways.** Compute the simplified bubble for $s=8,m=32$. Halve it once by changing the number of microbatches while keeping stages fixed, and once through an interleaved schedule without changing the global batch. Quantify the first solution exactly; for the second, define a schedule assumption and its effective virtual-stage count. List memory, communication, and imbalance costs that the formula omits.
-
-4. **Reproduce a speedrun optimizer ablation.** Extend `optimizer_probe.py` with paired seeds and a small learning-rate/weight-decay grid for AdamW and the Muon-like split. Hold model, tokens, batches, WSD curve, and initialization fixed. Report median loss at equal tokens, **tokens to a prespecified target loss**, tokens per second, optimizer bytes, and divergence count with uncertainty. Then compare one current speedrun recipe and identify every change that prevents attributing its record to the optimizer alone.
-
-5. **Stress the cost model.** Add spot and reserved capacity to `cost_model.py`. Model interruption arrivals, checkpoint interval, save time, recovery time, and reserved-capacity idle fraction. Produce expected and p90 wall time and cost for at least three mixes. Use the checkpoint-waste equation as a baseline, then explain where correlated failures and preemption warnings violate it.
-
-6. **Defend rent versus buy to a CFO.** Your proposed run faces cloud dollars per useful FLOP that may be twice nominal because MFU and failure overhead are worse than forecast. Compare renting with buying a cluster using CRF, facility build time, PUE, staff, spares, network, utilization, ETTR, residual value, and technology-stranding risk. Present a break-even productive-hours range and three observations that would reverse your recommendation. Separate accounting assumptions from technical measurements and include the cost of a six-month capacity delay.
-
-## Notes and Sources {#sec-ch06-notes}
-
-For replicated and sharded state, see PyTorch's [DistributedDataParallel documentation](https://docs.pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html), Rajbhandari et al., [*ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*](https://arxiv.org/abs/1910.02054), and the current primary documentation linked in the dated landscape. The chapter's ring payload and latency-bandwidth equations are leading-order models; production decisions require collective traces.
-
-For model-parallel mechanisms, see Megatron-LM's [tensor-parallel work](https://arxiv.org/abs/1909.08053), GPipe for [pipeline parallelism](https://arxiv.org/abs/1811.06965), [Ring Attention](https://arxiv.org/abs/2310.01889), [DeepSpeed-Ulysses](https://arxiv.org/abs/2309.14509), and the current [Megatron-Core MoE guide](https://docs.nvidia.com/megatron-core/developer-guide/0.17.0/user-guide/features/moe.html). The implementation-oriented [Ultra-Scale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook) and JAX team's [*How to Scale Your Model*](https://jax-ml.github.io/scaling-book/) are useful comparative guides. These sources use different hardware and accounting conventions; borrow mechanisms, not interchangeable benchmark numbers.
-
-For low precision, the [DeepSeek-V3 report](https://arxiv.org/abs/2412.19437) supplies one large FP8 training recipe; the [Microscaling paper](https://arxiv.org/abs/2310.10537) and OCP specification define the MX lineage; and the dated landscape links current NVFP4 work. For optimizers and schedules, see the [Muon design note](https://kellerjordan.github.io/posts/muon/), [Muon scaling study](https://arxiv.org/abs/2502.16982), [Kimi K2](https://arxiv.org/abs/2507.20534) for MuonClip, [Tensor Programs V](https://arxiv.org/abs/2203.03466) for $\mu$P, [MiniCPM](https://arxiv.org/abs/2404.06395) for WSD, and a later [WSD analysis](https://arxiv.org/abs/2410.05192). None makes optimizer transfer automatic across a changed training system.
-
-For utilization and operations, PaLM distinguishes [model and hardware FLOPs utilization](https://arxiv.org/abs/2204.02311). The dated landscape links Llama 3 and MegaScale for report-specific interruption and goodput evidence. Young's original checkpoint-interval approximation is available [here](https://graal.ens-lyon.fr/~abenoit/CR02/papers/young.pdf). For current SDC evidence, see a [2025 large-scale study](https://arxiv.org/abs/2502.12340), [2026 GEMM fault-injection work](https://arxiv.org/abs/2604.00726), and [AEGIS at OSDI 2026](https://www.usenix.org/conference/osdi26/presentation/lei).
-
-For economics, Epoch AI's [frontier training-cost study](https://epoch.ai/publications/how-much-does-it-cost-to-train-frontier-ai-models) and [one-gigawatt data-center cost model](https://epoch.ai/data-insights/ai-datacenter-cost-breakdown) illustrate the categories and uncertainties. Live cloud pricing pages are inputs to a dated scenario, not primary laws. The chapter therefore generates its chart from replaceable assumptions and keeps provider prices out of the durable spine.
+1. **Re-price the optimizer.** Add an `"adam8bit"` recipe to `PRECISION_RECIPES` (one byte per moment plus 0.5 bytes of block-scale metadata, master weights unchanged) and a `"muon"` recipe (four-byte momentum, no second moment, master weights unchanged). Recompute the ZeRO-1 table of @sec-ch06-zero for both at 8 and 64 shards. At which sharding degree does the recipe choice stop mattering for feasibility on an 80 GiB device, and why does sharding erode the advantage?
+2. **Find the checkpointing crossover.** Using `activation_bytes_per_layer` and the ${\approx}\,1/3$ extra-compute cost of full recomputation, compute the sequence length at which the 7B configuration *must* checkpoint (activations alone exceed an 80 GiB device under the fused-attention policy) at microbatch 1. Then use `run_economics` to price the recomputation tax in dollars for the 7B-on-2T run. Is checkpointing ever worth it when the memory *does* fit?
+3. **Stress the plan simulator.**
+    a. Rerun `plan_table` for the 70B configuration with `zero_stage=3` and explain every feasibility verdict that changes.
+    b. Double the global batch to 256 and identify which pipeline-heavy plans become competitive purely through bubble amortization.
+    c. Add a `context_parallel` axis to `evaluate_plan` that divides `seq_len` across devices and multiplies device count; verify that at `seq_len=131_072` no plan without it fits the 70B model.
+4. **Break the pipeline's balance.** Extend `simulate_pipeline` so one chosen stage runs 1.3x slower than the rest (a straggler or an unbalanced layer split). Measure the idle fraction for $S=8$, $m=32$ and compare it to @eq-ch06-bubble's prediction. How much imbalance makes the straggler term dominate the fill-and-drain term?
+5. **Interrogate the MFU denominator.** Sweep `measured_matmul_flops` over $n \in \{256, 512, 1024, 2048\}$ and recompute the toy MFU against each roofline. The model's "utilization" changes while the training loop does not move — state precisely what claim an MFU number makes, and which denominator convention a skeptical reader should demand alongside any published figure.
+6. **Checkpoint under preemption.** Spot-market capacity often delivers a warning (say, 30 seconds) before reclaiming a node — enough to trigger one emergency save. Extend `checkpoint_waste` with a warned-preemption fraction $p$ whose failures lose no work but still pay $C_s + R$, and recompute the optimal interval for the 16,384-device case at $p \in \{0.5, 0.9\}$. At what $p$ does the periodic checkpoint schedule stop mattering?
+7. **Defend rent-versus-buy to a CFO.** Your team proposes buying 1,024 devices for the 7B-class run and its successors. Using `run_economics` and `capital_recovery_factor`, produce: the break-even sustained utilization against your current rental rate; the sensitivity of that break-even to a 2x energy-price change and to a three-year rather than four-year life; and the three operational observations from this chapter (not financial ones) that would most change the recommendation. State which inputs are measurements and which are assumptions.

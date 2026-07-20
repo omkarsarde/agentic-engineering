@@ -1,5 +1,0 @@
-strategy,parameters,gradients,master_weights,optimizer_moments,activations,transient_full_parameters,communication_per_step,persistent_bytes,peak_estimate_bytes
-DDP,509440,509440,0,1018880,610052,0,509440,2647812,2647812
-ZeRO-1,509440,509440,0,509440,610052,0,509440,2138372,2138372
-ZeRO-2,509440,254720,0,509440,610052,0,509440,1883652,1883652
-FSDP2 / ZeRO-3,254720,254720,0,509440,610052,180480,764160,1628932,1809412
