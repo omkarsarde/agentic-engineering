@@ -1,4 +1,4 @@
-# Agentic Engineering at Scale
+# Agentic Engineering
 
 This directory is a clean-room rewrite of the book. It does not modify or replace the legacy manuscript in `genai-gym/book`.
 

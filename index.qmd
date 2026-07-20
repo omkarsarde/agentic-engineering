@@ -5,7 +5,7 @@ page-layout: full
 number-sections: false
 ---
 
-# Agentic Engineering at Scale {.unnumbered}
+# Agentic Engineering {.unnumbered}
 
 Modern agents are not a prompt wrapped in a loop. They are probabilistic decision-makers embedded inside ordinary software systems: APIs, stores, queues, policies, sandboxes, evaluators, deployment pipelines, and human organizations. Engineering them well means understanding both the model and everything that constrains what the model can do.
 
