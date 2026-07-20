@@ -954,7 +954,7 @@ sequenceDiagram
     H->>S: re-read current version
     H->>H: recompute action & target digests
     alt substituted, stale, or expired
-        H-->>A: typed rejection; request new review
+        H-->>A: typed rejection, request new review
     else digests still match
         H->>S: execute exact approved refund
         S-->>H: receipt + new version

@@ -76,7 +76,7 @@ sequenceDiagram
     C->>Q: prompt + decoding policy
     Q->>M: prompt token IDs
     Note over Q,M: queueing + tokenization
-    M->>M: prefill all prompt positions; build KV
+    M->>M: prefill all prompt positions and build KV
     M->>M: decode first output token
     M-->>D: first token ID
     D-->>C: first safe text chunk
@@ -86,7 +86,7 @@ sequenceDiagram
         M-->>D: next token ID
         D-->>C: zero or more safe characters
     end
-    Note over C,M: gaps are ITL; their mean is TPOT
+    Note over C,M: gaps are ITL and their mean is TPOT
 ```
 
 Rather than assert the asymmetry, we time it. We prefill prompts of growing length and, from each resulting cache, time one decode step. Prefill work scales with the prompt; a single decode step does not.
