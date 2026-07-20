@@ -1112,6 +1112,7 @@ stateDiagram-v2
     Parsed --> Eligible: response-terminal event
     Collecting --> Incomplete: transport ends
     CallClosed --> Incomplete: response never terminal
+    Parsed --> Incomplete: transport ends before terminal
     Eligible --> [*]
     Incomplete --> [*]
 ```
