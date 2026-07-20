@@ -321,7 +321,7 @@ ul.task-list li input[type="checkbox"] {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="./chapters/01-operational-on-ramp.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent [F]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -635,7 +635,7 @@ ul.task-list li input[type="checkbox"] {
    
   <ul>
   <li><a href="#the-promise" id="toc-the-promise" class="nav-link active" data-scroll-target="#the-promise">The promise</a></li>
-  <li><a href="#the-learning-loop" id="toc-the-learning-loop" class="nav-link" data-scroll-target="#the-learning-loop">The learning loop</a></li>
+  <li><a href="#how-each-chapter-works" id="toc-how-each-chapter-works" class="nav-link" data-scroll-target="#how-each-chapter-works">How each chapter works</a></li>
   <li><a href="#how-code-is-presented" id="toc-how-code-is-presented" class="nav-link" data-scroll-target="#how-code-is-presented">How code is presented</a></li>
   <li><a href="#how-to-read-figures" id="toc-how-to-read-figures" class="nav-link" data-scroll-target="#how-to-read-figures">How to read figures</a></li>
   <li><a href="#a-note-on-2026" id="toc-a-note-on-2026" class="nav-link" data-scroll-target="#a-note-on-2026">A note on 2026</a></li>
@@ -667,42 +667,26 @@ ul.task-list li input[type="checkbox"] {
 
 <section id="the-promise" class="level2">
 <h2 class="anchored" data-anchor-id="the-promise">The promise</h2>
-<p>This is a textbook to learn from, not a catalog of frameworks. It combines explanation, mathematics, runnable code, measurements, diagrams, failure traces, and exercises in one continuous path. The intended entry point is someone who understands neural networks, backpropagation, and basic PyTorch but has not yet studied language models or agent platforms.</p>
-<p>The target is senior engineering judgment. That does not mean beginning with jargon or compressing the subject into reference tables. It means earning depth in layers: first intuition, then a precise mechanism, then an executable test, then the production boundary where the toy stops being sufficient.</p>
+<p>This is a textbook to learn from, not a catalog of frameworks. It combines explanation, mathematics, runnable code, real measurements, diagrams, and exercises in one continuous path. The intended reader understands neural networks, backpropagation, and basic Python, but has not yet studied language models or agent systems. Everything else we define in plain language at first use.</p>
+<p>The aim is senior engineering judgment: not jargon, not reference tables, but the ability to build a mechanism, measure it, and defend it. We earn that in layers: first intuition, then a precise mechanism, then working code whose output you can see, then the production boundary where the toy stops being enough.</p>
 </section>
-<section id="the-learning-loop" class="level2">
-<h2 class="anchored" data-anchor-id="the-learning-loop">The learning loop</h2>
-<p>Most chapters repeat the same low-friction rhythm:</p>
-<ol type="1">
-<li>Start with a concrete failure or measurement.</li>
-<li>State the invariant the system needs.</li>
-<li>Build the smallest mechanism that can enforce or test it.</li>
-<li>Break the mechanism deliberately.</li>
-<li>Measure the failure rather than describing it vaguely.</li>
-<li>Map the lesson to a production system.</li>
-<li>Name what the production product still does not own.</li>
-</ol>
-<p>Conceptual chapters use the corresponding sequence: motivation, intuition, load-bearing mathematics, code, verification, and a short synthesis.</p>
+<section id="how-each-chapter-works" class="level2">
+<h2 class="anchored" data-anchor-id="how-each-chapter-works">How each chapter works</h2>
+<p>Chapters follow one rhythm, borrowed from <em>Dive into Deep Learning</em>. We open on the concrete thing the chapter builds. We motivate each idea in plain prose before any equation or specification. We implement it in small executable cells, run them, and read the real output together, imperfect results shown honestly rather than cleaned up. A short summary and a set of investigative exercises close the chapter.</p>
+<p>Systems chapters, where there is no model to train, substitute a small simulation or measurement for the training curve: we build the mechanism, drive it with a synthetic workload, print the numbers, change one knob, and measure again.</p>
 </section>
 <section id="how-code-is-presented" class="level2">
 <h2 class="anchored" data-anchor-id="how-code-is-presented">How code is presented</h2>
-<p>One artifact grows through a chapter. After its first appearance, code blocks show only additions or changes and identify their location. A small checkpoint table records what changed and which invariant is now verified. The complete source lives under <code>code/</code>; a chapter prints the whole file only when doing so genuinely helps and the result remains short.</p>
-<p>The default exercises use deterministic fixtures and do not require a paid API. Optional adapters let readers repeat a build with an open model, a local inference server, or a hosted provider. Results involving hardware or model behavior are reported as measured ranges with configuration metadata, not as universal constants.</p>
+<p>Teaching code lives inline, in full, in cells that run top to bottom as you read. Nothing is hidden behind an external file or an elided fragment. Every runnable cell shows what it produced, a printed value, a generated completion, a measured latency, or a plot, so you can reproduce every number in the book on a laptop, offline, with pinned seeds. Definitions that later chapters reuse are marked so a small script can extract them for the test suite; the code you read is the code that runs.</p>
+<p>Real API calls, which are neither deterministic nor free, appear as explicitly labeled recorded runs: the exact request, and one captured response shown as data.</p>
 </section>
 <section id="how-to-read-figures" class="level2">
 <h2 class="anchored" data-anchor-id="how-to-read-figures">How to read figures</h2>
-<p>The book uses four visual grammars consistently:</p>
-<ul>
-<li>Mermaid for control flow, protocols, state, lifecycle, and trust boundaries.</li>
-<li>Graphviz for dense dependency, lineage, and ownership graphs.</li>
-<li>Executable plots for quantitative behavior and tradeoffs.</li>
-<li>Editable SVG for spatial concepts that need deliberate composition.</li>
-</ul>
-<p>Color is never the only carrier of meaning. Captions state the question, labels state the semantics of arrows or boundaries, and the following paragraph states the conclusion.</p>
+<p>Figures earn their place. Most are plots the chapter’s own code produced; a few are diagrams that compare approaches, locate a component, or trace a flow that prose carries poorly. Every figure has a numbered caption phrased as the question it answers, and the sentence after it states the conclusion to keep. Color is never the only carrier of meaning.</p>
 </section>
 <section id="a-note-on-2026" class="level2">
 <h2 class="anchored" data-anchor-id="a-note-on-2026">A note on 2026</h2>
-<p>The field changes faster than a printed book. This edition therefore separates durable mechanisms from dated observations. Appendix C records the cutoff, primary source, owner, and next verification date for volatile claims. When a mechanism changes—not merely a product name—the annual audit can propose a controlled revision to the spine.</p>
+<p>The field moves faster than a book. We therefore keep durable mechanisms in the chapters and volatile details, such as model names, versions, prices, benchmark standings, and legal dates, in dated callouts and in Appendix C, which records the source and the next date to re-check. Deleting a dated callout never breaks the surrounding explanation.</p>
 
 
 </section>
@@ -1128,8 +1112,8 @@ ul.task-list li input[type="checkbox"] {
       </a>          
   </div>
   <div class="nav-page nav-page-next">
-      <a href="./chapters/01-operational-on-ramp.html" class="pagination-link" aria-label="The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent [F]">
-        <span class="nav-page-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent [F]</span></span> <i class="bi bi-arrow-right-short"></i>
+      <a href="./chapters/01-operational-on-ramp.html" class="pagination-link" aria-label="The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent">
+        <span class="nav-page-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent</span></span> <i class="bi bi-arrow-right-short"></i>
       </a>
   </div>
 </nav>

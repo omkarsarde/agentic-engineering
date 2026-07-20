@@ -361,7 +361,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="./chapters/01-operational-on-ramp.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent [F]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -676,9 +676,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <ul>
   <li><a href="#agentic-engineering-at-scale" id="toc-agentic-engineering-at-scale" class="nav-link active" data-scroll-target="#agentic-engineering-at-scale">Agentic Engineering at Scale</a>
   <ul class="collapse">
-  <li><a href="#two-routes-one-spine" id="toc-two-routes-one-spine" class="nav-link" data-scroll-target="#two-routes-one-spine">Two routes, one spine</a></li>
-  <li><a href="#what-makes-the-book-executable" id="toc-what-makes-the-book-executable" class="nav-link" data-scroll-target="#what-makes-the-book-executable">What makes the book executable</a></li>
-  <li><a href="#what-stays-current" id="toc-what-stays-current" class="nav-link" data-scroll-target="#what-stays-current">What stays current</a></li>
+  <li><a href="#how-this-book-teaches" id="toc-how-this-book-teaches" class="nav-link" data-scroll-target="#how-this-book-teaches">How this book teaches</a></li>
   </ul></li>
   </ul>
 </nav>
@@ -726,13 +724,11 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <section id="agentic-engineering-at-scale" class="level1 unnumbered">
 <h1 class="unnumbered">Agentic Engineering at Scale</h1>
-<p>Modern agents are not a prompt wrapped in a loop. They are probabilistic decision-makers embedded inside ordinary software systems: APIs, stores, queues, policies, sandboxes, evaluators, deployment pipelines, and human organizations. Engineering them well requires understanding both the model and everything that constrains what the model can do.</p>
-<p>This book develops that understanding from the reader’s existing knowledge of neural networks. It derives the language-model substrate, follows one request through inference and serving, builds retrieval and agent mechanisms from scratch, and then subjects those mechanisms to evaluation, security, reliability, and operational pressure.</p>
-<p>The governing habit is simple:</p>
+<p>Modern agents are not a prompt wrapped in a loop. They are probabilistic decision-makers embedded inside ordinary software systems: APIs, stores, queues, policies, sandboxes, evaluators, deployment pipelines, and human organizations. Engineering them well means understanding both the model and everything that constrains what the model can do.</p>
+<p>This book builds that understanding from one starting point: you know neural networks, backpropagation, and basic Python, and we assume nothing else. We derive the language-model substrate, follow one request through inference and serving, build retrieval and agent mechanisms from scratch, and then put those mechanisms under evaluation, security, reliability, and operational pressure. The habit we keep throughout is simple.</p>
 <blockquote class="blockquote">
 <p>Add autonomy only when measured value pays for its reliability, cost, security, and operator burden.</p>
 </blockquote>
-<p>Chapter-title tags are durability signals: <strong>[F]</strong> marks a durable foundation, <strong>[S]</strong> marks a fast-moving state-of-the-art area that needs periodic re-verification, and <strong>[F+S]</strong> combines both.</p>
 <div class="cell" data-layout-align="default">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode default code-with-copy"><code class="sourceCode default"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>flowchart LR</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>    M[Model substrate] --&gt; P[Programmed model calls]</span>
@@ -763,120 +759,10 @@ Figure&nbsp;1: The book grows one dependable system outward from the model.
 </div>
 </div>
 </div>
-<section id="two-routes-one-spine" class="level2">
-<h2 class="anchored" data-anchor-id="two-routes-one-spine">Two routes, one spine</h2>
-<p><strong>Route A — full foundations.</strong> Read Chapters 1–32 in order. Use Appendix A just in time when a chapter points to a mathematical, planning, control, or distributed-systems bridge.</p>
-<p><strong>Route B — applied agent engineering.</strong> Read Chapter 1, then Chapters 12–32 in order. The skipped model material is never assumed silently: the relevant chapters open with bounded backfill boxes or a self-contained primer.</p>
-<div class="cell" data-layout-align="default">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode dot code-with-copy"><code class="sourceCode dot"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="kw">digraph</span> <span class="va">routes</span> <span class="ot">{</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">graph</span><span class="co"> </span><span class="ot">[</span><span class="at">rankdir</span><span class="ot">=</span><span class="va">LR</span><span class="co">, </span><span class="at">bgcolor</span><span class="ot">=</span><span class="st">"transparent"</span><span class="co">, </span><span class="at">nodesep</span><span class="ot">=</span><span class="dv">0.35</span><span class="co">, </span><span class="at">ranksep</span><span class="ot">=</span><span class="dv">0.55</span><span class="ot">]</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="kw">node</span><span class="co"> </span><span class="ot">[</span><span class="at">shape</span><span class="ot">=</span><span class="va">box</span><span class="co">, </span><span class="at">style</span><span class="ot">=</span><span class="st">"rounded,filled"</span><span class="co">, </span><span class="at">fillcolor</span><span class="ot">=</span><span class="st">"#eef4f8"</span><span class="co">, </span><span class="at">color</span><span class="ot">=</span><span class="st">"#40637a"</span><span class="ot">]</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">c1</span><span class="co"> </span><span class="ot">[</span><span class="at">label</span><span class="ot">=</span><span class="st">"Chapter 1\nOperational on-ramp"</span><span class="ot">]</span></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">f</span><span class="co"> </span><span class="ot">[</span><span class="at">label</span><span class="ot">=</span><span class="st">"Chapters 2–11\nModel foundations"</span><span class="ot">]</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">a</span><span class="co"> </span><span class="ot">[</span><span class="at">label</span><span class="ot">=</span><span class="st">"Chapters 12–21\nProgramming + agents"</span><span class="ot">]</span></span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">p</span><span class="co"> </span><span class="ot">[</span><span class="at">label</span><span class="ot">=</span><span class="st">"Chapters 22–28\nEvidence + production"</span><span class="ot">]</span></span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">x</span><span class="co"> </span><span class="ot">[</span><span class="at">label</span><span class="ot">=</span><span class="st">"Chapters 29–32\nFrontier + capstone"</span><span class="ot">]</span></span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">c1</span><span class="co"> </span><span class="ot">-&gt;</span><span class="co"> </span><span class="va">f</span><span class="co"> </span><span class="ot">[</span><span class="at">label</span><span class="ot">=</span><span class="st">" Route A"</span><span class="ot">]</span></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">f</span><span class="co"> </span><span class="ot">-&gt;</span><span class="co"> </span><span class="va">a</span></span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">c1</span><span class="co"> </span><span class="ot">-&gt;</span><span class="co"> </span><span class="va">a</span><span class="co"> </span><span class="ot">[</span><span class="at">label</span><span class="ot">=</span><span class="st">" Route B"</span><span class="ot">]</span></span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="co">  </span><span class="va">a</span><span class="co"> </span><span class="ot">-&gt;</span><span class="co"> </span><span class="va">p</span><span class="co"> </span><span class="ot">-&gt;</span><span class="co"> </span><span class="va">x</span></span>
-<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="ot">}</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-<div class="cell-output-display">
-<div id="fig-reading-routes" class="quarto-float quarto-figure quarto-figure-center anchored">
-<figure class="quarto-float quarto-float-fig figure">
-<div aria-describedby="fig-reading-routes-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<div>
-<svg width="672" height="480" viewbox="0.00 0.00 888.98 97.60" xmlns="http://www.w3.org/2000/svg" xlink="http://www.w3.org/1999/xlink" style="; max-width: none; max-height: none">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 93.6)">
-<title>routes</title>
-<!-- c1 -->
-<g id="node1" class="node">
-<title>c1</title>
-<path fill="#eef4f8" stroke="#40637a" d="M121.02,-47.4C121.02,-47.4 11.99,-47.4 11.99,-47.4 5.99,-47.4 -0.01,-41.4 -0.01,-35.4 -0.01,-35.4 -0.01,-18.2 -0.01,-18.2 -0.01,-12.2 5.99,-6.2 11.99,-6.2 11.99,-6.2 121.02,-6.2 121.02,-6.2 127.02,-6.2 133.02,-12.2 133.02,-18.2 133.02,-18.2 133.02,-35.4 133.02,-35.4 133.02,-41.4 127.02,-47.4 121.02,-47.4"></path>
-<text text-anchor="middle" x="66.51" y="-31" font-family="Times,serif" font-size="14.00">Chapter 1</text>
-<text text-anchor="middle" x="66.51" y="-14.2" font-family="Times,serif" font-size="14.00">Operational on-ramp</text>
-</g>
-<!-- f -->
-<g id="node2" class="node">
-<title>f</title>
-<path fill="#eef4f8" stroke="#40637a" d="M333.8,-89.4C333.8,-89.4 235.48,-89.4 235.48,-89.4 229.48,-89.4 223.48,-83.4 223.48,-77.4 223.48,-77.4 223.48,-60.2 223.48,-60.2 223.48,-54.2 229.48,-48.2 235.48,-48.2 235.48,-48.2 333.8,-48.2 333.8,-48.2 339.8,-48.2 345.8,-54.2 345.8,-60.2 345.8,-60.2 345.8,-77.4 345.8,-77.4 345.8,-83.4 339.8,-89.4 333.8,-89.4"></path>
-<text text-anchor="middle" x="284.64" y="-73" font-family="Times,serif" font-size="14.00">Chapters 2–11</text>
-<text text-anchor="middle" x="284.64" y="-56.2" font-family="Times,serif" font-size="14.00">Model foundations</text>
-</g>
-<!-- c1&#45;&gt;f -->
-<g id="edge1" class="edge">
-<title>c1-&gt;f</title>
-<path fill="none" stroke="black" d="M133.23,-39.57C158.56,-44.49 187.57,-50.13 213.32,-55.13"></path>
-<polygon fill="black" stroke="black" points="212.9,-58.62 223.38,-57.09 214.23,-51.75 212.9,-58.62"></polygon>
-<text text-anchor="middle" x="178.29" y="-56" font-family="Times,serif" font-size="14.00"> Route A</text>
-</g>
-<!-- a -->
-<g id="node3" class="node">
-<title>a</title>
-<path fill="#eef4f8" stroke="#40637a" d="M518.2,-41.4C518.2,-41.4 398.89,-41.4 398.89,-41.4 392.89,-41.4 386.89,-35.4 386.89,-29.4 386.89,-29.4 386.89,-12.2 386.89,-12.2 386.89,-6.2 392.89,-0.2 398.89,-0.2 398.89,-0.2 518.2,-0.2 518.2,-0.2 524.2,-0.2 530.2,-6.2 530.2,-12.2 530.2,-12.2 530.2,-29.4 530.2,-29.4 530.2,-35.4 524.2,-41.4 518.2,-41.4"></path>
-<text text-anchor="middle" x="458.54" y="-25" font-family="Times,serif" font-size="14.00">Chapters 12–21</text>
-<text text-anchor="middle" x="458.54" y="-8.2" font-family="Times,serif" font-size="14.00">Programming + agents</text>
-</g>
-<!-- c1&#45;&gt;a -->
-<g id="edge3" class="edge">
-<title>c1-&gt;a</title>
-<path fill="none" stroke="black" d="M133.16,-22.79C161.02,-21.28 193.87,-19.74 223.56,-19 277.84,-17.64 291.43,-18.56 345.72,-19 355.69,-19.08 366.17,-19.2 376.54,-19.34"></path>
-<polygon fill="black" stroke="black" points="376.81,-22.85 386.86,-19.49 376.91,-15.85 376.81,-22.85"></polygon>
-<text text-anchor="middle" x="284.64" y="-24" font-family="Times,serif" font-size="14.00"> Route B</text>
-</g>
-<!-- f&#45;&gt;a -->
-<g id="edge2" class="edge">
-<title>f-&gt;a</title>
-<path fill="none" stroke="black" d="M345.76,-52.01C355.92,-49.18 366.61,-46.19 377.18,-43.24"></path>
-<polygon fill="black" stroke="black" points="378.15,-46.6 386.84,-40.54 376.26,-39.86 378.15,-46.6"></polygon>
-</g>
-<!-- p -->
-<g id="node4" class="node">
-<title>p</title>
-<path fill="#eef4f8" stroke="#40637a" d="M702.82,-41.4C702.82,-41.4 583.55,-41.4 583.55,-41.4 577.55,-41.4 571.55,-35.4 571.55,-29.4 571.55,-29.4 571.55,-12.2 571.55,-12.2 571.55,-6.2 577.55,-0.2 583.55,-0.2 583.55,-0.2 702.82,-0.2 702.82,-0.2 708.82,-0.2 714.82,-6.2 714.82,-12.2 714.82,-12.2 714.82,-29.4 714.82,-29.4 714.82,-35.4 708.82,-41.4 702.82,-41.4"></path>
-<text text-anchor="middle" x="643.19" y="-25" font-family="Times,serif" font-size="14.00">Chapters 22–28</text>
-<text text-anchor="middle" x="643.19" y="-8.2" font-family="Times,serif" font-size="14.00">Evidence + production</text>
-</g>
-<!-- a&#45;&gt;p -->
-<g id="edge4" class="edge">
-<title>a-&gt;p</title>
-<path fill="none" stroke="black" d="M530.42,-20.8C540.5,-20.8 550.93,-20.8 561.18,-20.8"></path>
-<polygon fill="black" stroke="black" points="561.35,-24.3 571.35,-20.8 561.35,-17.3 561.35,-24.3"></polygon>
-</g>
-<!-- x -->
-<g id="node5" class="node">
-<title>x</title>
-<path fill="#eef4f8" stroke="#40637a" d="M868.97,-41.4C868.97,-41.4 768.02,-41.4 768.02,-41.4 762.02,-41.4 756.02,-35.4 756.02,-29.4 756.02,-29.4 756.02,-12.2 756.02,-12.2 756.02,-6.2 762.02,-0.2 768.02,-0.2 768.02,-0.2 868.97,-0.2 868.97,-0.2 874.97,-0.2 880.97,-6.2 880.97,-12.2 880.97,-12.2 880.97,-29.4 880.97,-29.4 880.97,-35.4 874.97,-41.4 868.97,-41.4"></path>
-<text text-anchor="middle" x="818.5" y="-25" font-family="Times,serif" font-size="14.00">Chapters 29–32</text>
-<text text-anchor="middle" x="818.5" y="-8.2" font-family="Times,serif" font-size="14.00">Frontier + capstone</text>
-</g>
-<!-- p&#45;&gt;x -->
-<g id="edge5" class="edge">
-<title>p-&gt;x</title>
-<path fill="none" stroke="black" d="M714.93,-20.8C725.11,-20.8 735.59,-20.8 745.79,-20.8"></path>
-<polygon fill="black" stroke="black" points="745.87,-24.3 755.87,-20.8 745.87,-17.3 745.87,-24.3"></polygon>
-</g>
-</g>
-</svg>
-</div>
-</div>
-<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-reading-routes-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;2: Both routes converge at Chapter 12 and remain contiguous thereafter.
-</figcaption>
-</figure>
-</div>
-</div>
-</div>
-<p>Every page ends with Quarto’s previous/next navigation. You never need to decide where to go next unless you deliberately choose a backfill or exercise.</p>
-</section>
-<section id="what-makes-the-book-executable" class="level2">
-<h2 class="anchored" data-anchor-id="what-makes-the-book-executable">What makes the book executable</h2>
-<p>Each chapter contains one integrated build. A reference artifact grows through small deltas, and each delta establishes a named invariant. We do not print three complete versions of the same agent loop. We build one loop, break it deliberately, and add only the code needed to close the observed gap.</p>
-<p>Numeric claims are generated by executable Python. Architecture, sequence, state, lifecycle, and trust-boundary diagrams are stored as Mermaid. Dense dependency and lineage graphs use Graphviz. Bespoke spatial explanations use editable vector source and SVG. Every visual answers one question and is followed by the conclusion the reader should retain.</p>
-</section>
-<section id="what-stays-current" class="level2">
-<h2 class="anchored" data-anchor-id="what-stays-current">What stays current</h2>
-<p>The main chapters teach mechanisms that should remain useful even as products change. Model names, API versions, hardware SKUs, prices, benchmark status, protocol revisions, and legal effective dates live in explicitly dated <strong>Landscape 2026</strong> boxes and Appendix C. Deleting those boxes must not break the conceptual spine.</p>
+<section id="how-this-book-teaches" class="level2">
+<h2 class="anchored" data-anchor-id="how-this-book-teaches">How this book teaches</h2>
+<p>We teach the way <em>Dive into Deep Learning</em> teaches: you watch working code produce real output, narrated by a knowledgeable “we”. Every mechanism is developed inline in executable cells whose printed values, generated text, and plots appear right beneath them, so you can reproduce every number yourself. Figures are there to build intuition, not to decorate. Every build is deterministic and runs offline by default.</p>
+<p>There is one linear path, Chapters 1 through 32; a reader already fluent in transformers and serving can start at Chapter 12. Appendix A is a just-in-time bridge for the occasional mathematical or systems background a chapter leans on. Appendix B is the system-design workbook: worked, diagram-first design studies to practice against. Appendix C holds the volatile facts, so the chapters can stay about mechanisms.</p>
 <p>Begin with <a href="./chapters/01-operational-on-ramp.html">Chapter 1</a>.</p>
 
 

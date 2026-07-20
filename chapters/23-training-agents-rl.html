@@ -363,7 +363,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/01-operational-on-ramp.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent [F]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">1</span>&nbsp; <span class="chapter-title">The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -1235,8 +1235,8 @@ Figure&nbsp;23.4: The fixture closes the recovery-state gap while declared envir
 </section>
 <section id="sec-ch23-build" class="level2" data-number="23.12">
 <h2 data-number="23.12" class="anchored" data-anchor-id="sec-ch23-build"><span class="header-section-number">23.12</span> Build</h2>
-<p>The integrated artifact consists of <a href="../code/ch23/agent_gym.py">agent_gym.py</a> and its focused <a href="../code/ch23/tests/test_agent_gym.py">tests</a>. It uses only the Python standard library; Matplotlib is needed only for the book figure. From the <code>newbook/</code> directory, run:</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> unittest discover <span class="at">-s</span> code/ch23/tests <span class="at">-v</span></span>
+<p>The integrated artifact consists of <a href="../code/ch23/agent_gym.py">agent_gym.py</a> and its focused <a href="../tests/test_ch23_agent_gym.py">tests</a>. It uses only the Python standard library; Matplotlib is needed only for the book figure. From the <code>newbook/</code> directory, run:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> pytest <span class="at">-q</span> tests/test_ch23_agent_gym.py</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> code/ch23/agent_gym.py</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p>The default experiment is deterministic at seed 7. Read the JSON report in this order:</p>
 <ol type="1">

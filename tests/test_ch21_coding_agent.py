@@ -5,8 +5,8 @@ import tempfile
 import unittest
 
 
-CHAPTER_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CHAPTER_DIR))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch21"))
 
 from coding_agent import Edit, EditRejected, apply_edit, load_tasks, repository_map, run_suite
 

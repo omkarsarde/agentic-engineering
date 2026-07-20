@@ -5,8 +5,8 @@ import sys
 import unittest
 
 
-CHAPTER_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CHAPTER_DIR))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "code" / "ch23"))
 
 from agent_gym import (
     RefundGym,
