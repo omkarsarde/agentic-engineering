@@ -1,456 +1,1513 @@
 ---
-description: "Put identity, spend, recoverable effects, versioned state, and statistically defensible delivery around an agent."
+description: "Wrap an agent in a production platform, built and measured inline: a gateway that routes and cascades over stub backends, a cost model with cache and loop economics, reliability wrappers, a durable-execution engine with deterministic replay and saga compensation, a release manifest, a property test, and an eval-gated canary."
 ---
 
-# The Production Platform: Gateways, Cost, Durable Execution, and Delivery [F+S] {#sec-ch26}
+# The Production Platform: Gateways, Cost, Durable Execution, and Delivery {#sec-ch26}
 
-## What you need going in
+At 16:40 on a Friday, three product teams discover that their agents share one provider account. One team's fallback loop retries a rate-limited request against two models; another prepends a large corpus on every turn; a third runs an evaluation sweep. The account burns twenty-three thousand cost units before anyone can attribute the traffic to a tenant, a release, or a task, and the only way to stop the runaway loop is to disable the single provider key — which takes down every healthy application with it. Nothing here is a missing dashboard. The organization has no enforcement point between what an application intends and the scarce model capacity it consumes.
 
-> **Assumed:** production Python, HTTP APIs, SQL transactions, authentication versus authorization, retries, timeouts, containers, and basic continuous delivery.
->
-> **From earlier chapters:** [Chapter 17](17-tool-harness-engineering.qmd#sec-ch17) made tool effects explicit, [Chapter 19](19-protocols-frameworks.qmd#sec-ch19) introduced graph checkpointers, [Chapter 22](22-evaluation.qmd#sec-ch22) built the offline release argument, and [Chapter 24](24-agent-security.qmd#sec-ch24) put authorization at the final effect boundary. This chapter builds the platform around those mechanisms.
->
-> **Not required:** experience with an AI gateway, FinOps, workflow engine, property-based testing, or Kubernetes. Observability, SLOs, incident response, live review queues, and privacy operations belong to Chapter 27.
+This chapter builds that enforcement point and measures it, one piece at a time, entirely in memory. The parts are (i) a **gateway** that authenticates a caller, admits a journey against a budget, and routes or cascades over stub backends whose cost, quality, and latency we compare with real numbers; (ii) a **cost model** that prices a whole journey, computes when a cache pays back, applies a batch discount, and reproduces a loop-cost blow-up before capping it; (iii) **reliability wrappers** — a retry budget that exhausts, a propagated deadline, an idempotency key that stops a double charge, and a hedge whose tail-latency win we measure; (iv) a **durable-execution engine** with deterministic replay, a crash resumed mid-task, and a saga that compensates; (v) a **release manifest** we diff by content hash; and (vi) a release argument — one property-based test and an eval-gated canary whose gate we watch flip. A *journey* is the whole user outcome, including model calls, retrieval, tools, retries, and review; one API request is only a hop within it. The raw agent loop this platform wraps is the one from @sec-ch16; the offline evaluation it gates is the one from @sec-ch22; the final authorization at the effect boundary remains Chapter 24's. Everything runs offline and deterministically, so every number on these pages is produced when the book is built. The stub backends are visible scripts, not models — the point is to exercise the *control* machinery, which is identical whether the thing behind it is a stub or a frontier model.
 
-> **Route B backfill**
->
-> - **Chapter 10, goodput and cost sections (~6 pp).** Read the serving-cost and goodput treatment in [Serving at Scale](10-serving-at-scale.qmd#sec-ch10) before the cost section here. Skipping it leaves the formulas usable but hides how continuous batching, cache reuse, prefill/decode imbalance, and admission control create the capacity envelope.
+## The platform in four planes {#sec-ch26-planes}
 
-## Contents
+The Friday incident is a boundary failure, so the first design move is to name the boundaries. A platform is easier to reason about — and to keep from becoming one tangled cluster — when we separate four **planes** by the kind of authority each holds. The *request plane* acts synchronously on one journey: it authenticates, admits, routes, propagates a deadline, and invokes effects. The *data plane* stores state that outlives a request: prompts, corpora, checkpoints, effect records, and cache entries. The *control plane* publishes immutable configuration ahead of traffic: catalogs, policies, budgets, and release bundles. The *evidence plane* records what happened: traces, usage, eval results, and audit exports. The distinction is about responsibility, not necessarily four deployments.
 
-- [The platform is four planes, not one cluster](#sec-ch26-planes)
-- [What you will build](#sec-ch26-artifact)
-- [One gateway owns identity, admission, and routing](#sec-ch26-gateway)
-- [Price the journey and provision its constrained resource](#sec-ch26-cost)
-- [Retries consume a deadline and an effect budget](#sec-ch26-reliability)
-- [Close the crash window with an effect ledger](#sec-ch26-ledger)
-- [Choose checkpointing or durable execution by effect lifetime](#sec-ch26-durable)
-- [Version and recover the complete artifact surface](#sec-ch26-versioning)
-- [Test deterministic code as aggressively as model behavior](#sec-ch26-testing)
-- [Deliver through gates, shadow traffic, and powered canaries](#sec-ch26-delivery)
-- [Build](#sec-ch26-build)
-- [What endures, what changes](#sec-ch26-endures)
-- [Exercises](#sec-ch26-exercises)
-- [Notes and sources](#sec-ch26-sources)
-
-## The platform is four planes, not one cluster {#sec-ch26-planes}
-
-At 16:40 on Friday, three product teams discover that their agents share one provider account. One team's fallback loop retries a rate-limited request against two models, another prepends a large corpus on every turn, and a third runs an evaluation sweep. The account spends twenty-three thousand dollars before anyone can attribute the traffic to a tenant, release, or task. Disabling the only provider key stops the runaway loop—and every healthy application with it.
-
-The defect is not a missing dashboard. The organization has no enforcement point between application intent and scarce model capacity. A **production platform** gives every journey a trusted identity, explicit budget, routable capability, recoverable effect contract, complete version, and controlled release path. A *journey* is the whole user outcome, including model calls, retrieval, tools, retries, and review; one API request is only a hop within it.
-
-Separate the platform into four planes. The distinction is about responsibility, not necessarily four deployments:
-
-| Plane | Owns | Must not become |
-|---|---|---|
-| request | authentication, admission, deadlines, routing, streaming, effect invocation | a place where every product rule accumulates |
-| data | prompts, corpora, checkpoints, effect records, cache entries, receipts | an unversioned collection of “temporary” state |
-| control | catalogs, policies, budgets, release bundles, traffic allocation | an eventually consistent path for per-request authorization |
-| evidence | traces, usage, eval results, lineage, audit exports | hot-path authority whose outage blocks safe service by accident |
-
-The request plane acts synchronously. The control plane publishes immutable configuration that request workers consume. The data plane stores both primary and derived state. The evidence plane records what occurred. Evidence can trigger a later control-plane change, but a trace collector should not decide whether a refund is authorized. That remains the final enforcement point from Chapter 24.
-
-@fig-ch26-planes locates authority and evidence. A control-plane bundle is published ahead of traffic; the request path carries a verified bundle hash so a later trace can be interpreted against the exact rules it used.
+The one rule that keeps the planes honest is the direction of authority. The control plane publishes *downward* into the request path; the evidence plane records what the request path did but must never become an authority the hot path waits on. A trace collector should not decide whether a refund is authorized, and its outage should not block safe service. @fig-ch26-planes locates authority and evidence so that a later trace can be interpreted against the exact rules a request used.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch26-planes
-%%| fig-cap: "Where do request authority, durable state, release control, and operational evidence live?"
-%%| fig-alt: "Clients enter a request gateway that calls an agent and effect service. A control plane publishes an immutable bundle to the gateway and agent. A data plane stores corpora, checkpoints, effect ledgers, and receipts. Each component emits evidence to a separate observability plane."
+%%| fig-cap: "Where do request authority, durable state, release control, and operational evidence live — and which way does authority flow? The control plane publishes downward; evidence records but does not gate the hot path."
 flowchart LR
-    CLIENT["Client with virtual key"] --> GATE["Request plane<br/>identity · budget · route · deadline"]
+    CLIENT["Client with virtual key"] --> GATE["Request plane<br/>identity - budget - route - deadline"]
     GATE --> AGENT(["Agent runtime"])
     AGENT --> EFFECT["Effect gateway"]
 
-    CONTROL["Control plane<br/>catalog · policy · release bundle"] -->|"atomic version pointer"| GATE
+    CONTROL["Control plane<br/>catalog - policy - release bundle"] -->|"atomic version pointer"| GATE
     CONTROL -->|"pinned model and tools"| AGENT
-    DATA[("Data plane<br/>corpus · cache · checkpoint<br/>effect ledger · receipt")]
+    DATA[("Data plane<br/>corpus - cache - checkpoint<br/>effect ledger - receipt")]
     AGENT <--> DATA
     EFFECT <--> DATA
 
-    GATE -. "usage + decision" .-> EVIDENCE[("Evidence plane<br/>traces · evals · lineage · audit")]
+    GATE -. "usage + decision" .-> EVIDENCE[("Evidence plane<br/>traces - evals - lineage - audit")]
     AGENT -. "trajectory" .-> EVIDENCE
     EFFECT -. "authoritative receipt" .-> EVIDENCE
 ```
 
-Deployment topology follows constraints rather than fashion. A managed model API minimizes model-serving work and accelerates model substitution, but it creates provider availability, data-handling, quota, and network dependencies. Self-hosting gives control over weights, batching, isolation, and accelerators while adding serving expertise and capacity risk. On-premises or sovereign deployments can satisfy locality and procurement constraints at the cost of slower elasticity. Edge or hybrid systems reduce network latency and preserve an offline path, but memory, power, model size, and version convergence become first-class limits.
+Where the planes physically run is a second decision, and it follows constraints rather than fashion. A **managed model API** minimizes serving work and makes model substitution fast, at the cost of provider availability, data-handling, and quota dependencies. **Self-hosting** buys control over weights, batching, and isolation while adding serving expertise and capacity risk. **On-premises or sovereign** deployments satisfy locality and procurement constraints but lose elasticity. **Edge or hybrid** systems cut network latency and keep an offline path, but memory, power, and version convergence become first-class limits. The decision is per workload and data class, and the useful way to see it is as a position on two axes — how much control and residency a workload demands, against how much elasticity and fast substitution it needs. @fig-ch26-topology places the five topologies and annotates a single organization running three different workloads.
 
-Make the decision per workload and data class. The same organization may use a managed API for public drafting, a regional managed endpoint for tenant-private support, and a self-hosted small model for high-volume classification. Record residency, latency, availability, staffing, customization, isolation, update cadence, and exit cost. Chapter 27 converts residency and retention decisions into operated controls; Chapter 28 uses the staffing and substitution evidence for build-versus-buy.
+```{python}
+#| label: fig-ch26-topology
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Which deployment topology fits which workload? The same organization may sit in three places at once: public drafting on a managed API, tenant-private support on a regional endpoint, and high-volume classification on a self-hosted small model."
+import matplotlib.pyplot as plt
+
+topologies = {
+    "Managed API": (0.15, 0.95),
+    "Regional managed": (0.42, 0.78),
+    "Self-hosted": (0.66, 0.50),
+    "On-prem / sovereign": (0.90, 0.24),
+    "Edge / hybrid": (0.78, 0.14),
+}
+workloads = {
+    "public drafting": ("Managed API", (8, 10)),
+    "tenant-private support": ("Regional managed", (10, -6)),
+    "high-volume classification": ("Self-hosted", (8, -16)),
+}
+
+fig, ax = plt.subplots(figsize=(6.6, 4.0))
+for name, (x, y) in topologies.items():
+    ax.scatter(x, y, s=90, color="#315b8a", zorder=3)
+    ax.annotate(name, (x, y), textcoords="offset points", xytext=(8, 6), fontsize=9)
+for label, (topo, offset) in workloads.items():
+    x, y = topologies[topo]
+    ax.annotate(label, (x, y), textcoords="offset points", xytext=offset,
+                fontsize=8, color="#b13f3f",
+                arrowprops=dict(arrowstyle="->", color="#b13f3f", lw=0.8))
+ax.set_xlabel("control and residency need  ->")
+ax.set_ylabel("elasticity and substitution speed  ->")
+ax.set_xlim(0, 1.05)
+ax.set_ylim(0, 1.1)
+ax.spines[["top", "right"]].set_visible(False)
+ax.grid(alpha=0.2)
+fig.tight_layout()
+plt.show()
+```
+
+Record residency, latency, availability, staffing, customization, isolation, update cadence, and exit cost for each choice; Chapter 27 turns residency and retention into operated controls, and Chapter 28 uses the staffing and substitution evidence for build-versus-buy.
 
 ::: {.callout-note .landscape-2026}
 ### Landscape 2026 (dated)
 
-**Verify live: 2026-07-19. Appendix C owner: gateways, workflow engines, and deployment products.** Current AI-gateway options include dedicated projects and AI extensions in general API gateways; current durable-execution choices include [Temporal](https://docs.temporal.io/), [Restate](https://docs.restate.dev/foundations/key-concepts), [DBOS](https://docs.dbos.dev/), and cloud workflow services. Managed accelerator endpoints, serverless GPU products, sovereign offerings, and supported regions change frequently. Select by the mechanism and verified service contract—identity propagation, policy enforcement, replay semantics, storage control, quotas, and failure behavior—not by the category label.
+**Verify live: 2026-07-20.** Current AI-gateway options span dedicated projects and AI extensions to general API gateways; current durable-execution choices include [Temporal](https://docs.temporal.io/), [Restate](https://docs.restate.dev/foundations/key-concepts), and [DBOS](https://docs.dbos.dev/). Managed accelerator endpoints, serverless GPU products, and sovereign regions change frequently. Select by the verified mechanism — identity propagation, policy enforcement, replay semantics, storage control, quotas, and failure behavior — not by the category label. Appendix C owns the current registry.
 :::
 
-## What you will build {#sec-ch26-artifact}
+## One gateway: identity, admission, routing, and cascades {#sec-ch26-gateway}
 
-::: {.callout-tip}
-### The chapter artifact
+We are ready to build the request plane and measure it. A gateway does six things on the way in — authenticate, admit, route, propagate a deadline, meter, and emit evidence — and the first correctness rule is about trust. A client header saying `tenant=bank-a` is *data*, not identity. The gateway issues a **virtual key** and maps it server-side to a tenant, its scopes, and its budget; it never forwards its own broad provider credential to an application. We start with the identity a request carries and the price schedule that settles it.
 
-You will build [`mini_platform.py`](../code/ch26/mini_platform.py), one deterministic reference platform with an executable facade. [`gateway_control.py`](../code/ch26/gateway_control.py) owns identity, admission, routing, and retry policy; [`effect_runtime.py`](../code/ch26/effect_runtime.py) owns backpressure and crash-safe effects; and [`release_gate.py`](../code/ch26/release_gate.py) owns the canary decision. Together they settle metered usage, preserve stable effect identity, hash a complete release bundle, and gate promotion.
+```{python}
+# @save
+from __future__ import annotations
 
-The secondary [`cost_curves.py`](../code/ch26/cost_curves.py) derives the two quantitative questions that prose tends to obscure: when a prefix-cache write premium pays back, and how many independent canary cases are needed to have a stated chance of seeing a regression. The build deliberately uses injected clocks and a deterministic provider so every security and recovery claim has a focused test.
-:::
+import hashlib
+import json
+import math
+import random
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable
 
-## One gateway owns identity, admission, and routing {#sec-ch26-gateway}
 
-An **LLM gateway** is the policy-controlled entry point to model inference. An **AI gateway** may additionally route embeddings, rerankers, media models, and safety classifiers. An **MCP gateway** mediates protocol servers and tools. The payloads differ, but the platform pattern is the same: authenticate the caller, derive trustworthy context, check policy and budgets, resolve a logical capability to a deployment, propagate a deadline, meter actual use, and emit evidence.
+@dataclass(frozen=True)
+class RequestContext:
+    """The trusted identity a journey carries, derived only from a virtual key.
 
-A client header saying `tenant=bank-a` is data, not identity. Issue a **virtual key** or accept a verified workload token and map it server-side to tenant, project, allowed capabilities, environment, and budget. Never forward the platform's broad provider key to an application. The gateway holds provider credentials and records the downstream account or deployment actually used.
+    A gateway builds this from a server-side key lookup, never from a
+    model-controlled or client-declared field. Everything downstream —
+    budgets, routing scopes, effect authorization — reads identity from here,
+    which is why the tenant and scopes are fixed at admission and immutable.
+    """
 
-Admission occurs before expensive work. Reserve an estimate for the whole journey, not only the first model call. A request that can take eight agent steps, invoke a paid search tool, and fan out to four workers has a different maximum exposure than a single extraction call. Settle against authoritative provider usage and effect receipts, then release unused reservation. Under concurrency, reservations need an atomic counter or transactional ledger; checking a balance and incrementing it in separate operations overspends.
+    request_id: str
+    tenant: str
+    scopes: frozenset[str]
+    deadline_s: float
 
-The reference artifact makes the trust direction visible:
 
-```python
-# gateway_control.py — identity and admission boundary
-def authenticate(self, virtual_key, request_id, deadline_s):
-    if virtual_key not in self.keys:
-        raise PermissionError("unknown virtual key")
-    tenant, scopes = self.keys[virtual_key]
-    return RequestContext(request_id, tenant, scopes, deadline_s)
+@dataclass(frozen=True)
+class Usage:
+    """Metered tokens and per-call charges for one model call in a journey.
 
-def admit(self, context, estimated_cost):
-    limit = self.limits[context.tenant]
-    if self.spend[context.tenant] + estimated_cost > limit:
-        raise BudgetError("tenant journey budget exhausted")
+    The cost of a journey is more than input and output tokens: it includes
+    per-call tool charges and, for reviewed journeys, a share of human review.
+    Carrying all four terms here is what lets ``breakdown`` show where a
+    journey's money actually goes instead of hiding it behind a token count.
+    """
+
+    input_tokens: int
+    output_tokens: int
+    input_per_million: float
+    output_per_million: float
+    tool_units: float = 0.0
+    review_units: float = 0.0
+
+    @property
+    def cost(self) -> float:
+        """Return the total cost of this call in currency units."""
+        tokens = (
+            self.input_tokens * self.input_per_million
+            + self.output_tokens * self.output_per_million
+        ) / 1_000_000
+        return tokens + self.tool_units + self.review_units
+
+    def breakdown(self) -> dict[str, float]:
+        """Return per-component cost so a journey's spend can be attributed."""
+        return {
+            "input": self.input_tokens * self.input_per_million / 1_000_000,
+            "output": self.output_tokens * self.output_per_million / 1_000_000,
+            "tool": self.tool_units,
+            "review": self.review_units,
+        }
 ```
 
-Production admission must atomically reserve outstanding cost; the small artifact has no concurrency and therefore says only that identity comes from the virtual key and a journey above its tenant limit is rejected before routing.
+Admission happens before any expensive work, and it must reserve an estimate for the *whole* journey, not just the first call — a request that can take eight agent steps and fan out to four workers has a very different maximum exposure than a single extraction. The gateway holds a per-tenant budget and rejects a journey whose estimate would exceed it.
 
-**Routing**, **cascading**, **fallback**, and **hedging** are different operations:
+```{python}
+# @save
+class BudgetError(RuntimeError):
+    """Raised when a whole journey has no remaining spend authority."""
 
-| Operation | Decision time | Purpose | Test oracle |
-|---|---|---|---|
-| route | before a call | select a deployment satisfying capability, policy, locality, and health | selected deployment is eligible |
-| cascade | after a valid low-cost result is graded insufficient | escalate capability deliberately | escalation rule and grader justify next tier |
-| fallback | after an operational failure | preserve availability with an equivalent contract | only declared retryable failures change provider |
-| hedge | before the first attempt completes | cut tail latency with a redundant attempt | first valid result wins; loser is canceled and charged |
 
-Resolve a product alias such as `support-answer` through capability filters first—schema support, context, modality, region, data class, release, and policy—then optimize cost or latency among eligible deployments. A cheap model that cannot satisfy the contract is not a candidate.
+@dataclass
+class Deployment:
+    """A model deployment the gateway may route to, with its cost per call."""
 
-Do not provider-shop around a policy refusal. If provider A refuses a harmful request, sending the same request to B until one complies converts resilience into a security bypass. The artifact permits fallback for overload, a connection reset, or rate limiting while time remains; authentication, invalid-request, and policy errors are terminal. Likewise, degraded mode is an application-declared smaller contract, such as “read-only answer without account action,” not the gateway quietly removing safety checks.
+    name: str
+    capabilities: frozenset[str]
+    cost_per_call: float
+    healthy: bool = True
 
-A circuit breaker stops sending normal traffic to a failing deployment after a threshold, waits, then admits bounded probes. Its state is health evidence, not model-quality preference. Record fallback rate separately from escalation rate: rising fallback suggests provider or network health; rising escalation suggests task or routing quality.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `gateway_control.py` complete | 112 lines total; 12 shown | An untrusted tenant field cannot select identity, an over-budget journey cannot start, and policy refusal cannot trigger provider shopping. |
-:::
+class Gateway:
+    """Authenticate, admit, route, and settle one agent journey.
 
-## Price the journey and provision its constrained resource {#sec-ch26-cost}
+    The gateway is the single enforcement point the Friday incident lacked:
+    identity comes from a virtual key, a journey above its tenant budget is
+    rejected before any call, routing considers only deployments that satisfy
+    the requested capability and are healthy, and settlement charges realized
+    usage back to the tenant. It deliberately holds provider credentials so an
+    application never does.
+    """
 
-Per-token list price is an input to cost, not the answer. The useful unit is **cost per successful business outcome**. Attribute input, cached input, output, reasoning tokens, embeddings, reranking, tool charges, accelerator time, storage, network egress, and human review to one journey identity. Also retain failed and abandoned journeys: hiding them makes a retry-heavy system look efficient.
+    def __init__(
+        self,
+        keys: dict[str, tuple[str, frozenset[str]]],
+        limits: dict[str, float],
+        deployments: list[Deployment],
+    ) -> None:
+        self.keys = keys
+        self.limits = limits
+        self.deployments = deployments
+        self.spend = {tenant: 0.0 for tenant in limits}
 
-For a journey with calls $j=1,\ldots,m$, let $x_j$ and $y_j$ be metered input and output tokens, $p^{(x)}_j$ and $p^{(y)}_j$ their unit prices, $u_j$ other tool charges, and $h$ review cost. A first cost ledger is
+    def authenticate(
+        self, virtual_key: str, request_id: str, deadline_s: float
+    ) -> RequestContext:
+        """Map a virtual key to a trusted identity, or refuse an unknown key.
+
+        Args:
+            virtual_key: The opaque key presented by the caller.
+            request_id: An id used to correlate evidence for this request.
+            deadline_s: The absolute time budget the journey starts with.
+
+        Returns:
+            The ``RequestContext`` whose tenant and scopes come from the
+            server-side key table, never from a client-supplied field.
+
+        Raises:
+            PermissionError: If the key is not in the table.
+        """
+        if virtual_key not in self.keys:
+            raise PermissionError("unknown virtual key")
+        tenant, scopes = self.keys[virtual_key]
+        return RequestContext(request_id, tenant, scopes, deadline_s)
+
+    def admit(self, context: RequestContext, estimated_cost: float) -> None:
+        """Reject a journey whose estimate would exceed the tenant budget.
+
+        Args:
+            context: The authenticated identity for this journey.
+            estimated_cost: The whole-journey estimate to reserve.
+
+        Raises:
+            BudgetError: If reserving the estimate would exceed the limit.
+        """
+        limit = self.limits[context.tenant]
+        if self.spend[context.tenant] + estimated_cost > limit:
+            raise BudgetError("tenant journey budget exhausted")
+
+    def route(self, context: RequestContext, capability: str) -> Deployment:
+        """Select the least-cost healthy deployment satisfying a capability.
+
+        Args:
+            context: The authenticated identity (its scopes gate capabilities).
+            capability: The logical capability the journey needs, e.g. "chat".
+
+        Returns:
+            The cheapest eligible ``Deployment``.
+
+        Raises:
+            LookupError: If no healthy deployment offers the capability.
+        """
+        candidates = [
+            d for d in self.deployments if capability in d.capabilities and d.healthy
+        ]
+        if not candidates:
+            raise LookupError("no healthy deployment satisfies the capability")
+        return min(candidates, key=lambda d: d.cost_per_call)
+
+    def settle(self, context: RequestContext, usage: Usage) -> float:
+        """Charge realized usage to the tenant and return the new total spend."""
+        self.spend[context.tenant] += usage.cost
+        return self.spend[context.tenant]
+```
+
+Watch one journey pass through: a virtual key becomes an identity, an estimate is admitted, a capability resolves to the cheaper of two deployments, and metered usage settles against the tenant.
+
+```{python}
+gateway = Gateway(
+    keys={"vk-acme": ("acme", frozenset({"chat"}))},
+    limits={"acme": 0.05},
+    deployments=[
+        Deployment("small", frozenset({"chat"}), cost_per_call=1.0),
+        Deployment("large", frozenset({"chat", "vision"}), cost_per_call=5.0),
+    ],
+)
+context = gateway.authenticate("vk-acme", "req-7", deadline_s=30.0)
+usage = Usage(20_000, 2_000, input_per_million=0.5, output_per_million=1.5)
+gateway.admit(context, usage.cost)
+route = gateway.route(context, "chat")
+print(f"tenant={context.tenant}  routed={route.name}  "
+      f"journey_cost={usage.cost:.4f}  tenant_spend={gateway.settle(context, usage):.4f}")
+```
+
+The identity came from the key, not the payload; the over-budget guard sits before routing; and `route` picked `small` because it was the cheapest deployment that could satisfy `chat`. That last choice — pick the cheapest eligible deployment — is only the simplest of four different operations, and confusing them is a common production bug. **Routing** chooses a deployment *before* a call. A **cascade** tries a cheap deployment first and escalates *after* a grader judges the result insufficient. A **fallback** switches provider *after* an operational failure, to preserve availability. A **hedge** issues a redundant attempt *before* the first completes, to cut tail latency. They differ in when they fire and what they optimize; here we measure the first two, because their cost-quality tradeoff is the one a cost review always asks about.
+
+To measure anything we need something to serve. A real model is nondeterministic and needs a GPU, so we use a stub backend whose accuracy is a visible rule: a backend answers a task correctly when its `strength` meets the task's `difficulty`. That is not a model — it is a scriptable stand-in that lets the *control* logic (route versus cascade) be exercised and priced offline.
+
+```{python}
+# @save
+@dataclass(frozen=True)
+class Backend:
+    """A stub model deployment with a fixed cost, quality, and latency profile.
+
+    The backend answers a task correctly when its ``strength`` meets the
+    task's difficulty. This deterministic rule stands in for a real model's
+    accuracy curve so routing and cascading can be compared and priced without
+    a network or an accelerator; only the numbers change with a real model.
+    """
+
+    name: str
+    strength: float
+    cost_per_call: float
+    latency_ms: float
+
+    def answer(self, difficulty: float) -> bool:
+        """Return whether this backend answers a task of the given difficulty."""
+        return self.strength >= difficulty
+```
+
+Three strategies run over the same workload. `run_single` sends every task to one backend. `run_router` asks a cheap classifier to predict difficulty — imperfectly, with noise — and routes hard-looking tasks to the strong backend. `run_cascade` always tries the cheap backend, then escalates to the strong one whenever a grader judges the cheap answer insufficient; the grader is an oracle here, save for a small false-accept rate that keeps it honest.
+
+```{python}
+# @save
+@dataclass(frozen=True)
+class WorkloadResult:
+    """Aggregate cost, quality, and latency for one routing strategy."""
+
+    strategy: str
+    accuracy: float
+    total_cost: float
+    mean_latency_ms: float
+    escalations: int
+
+
+def run_single(backend: Backend, difficulties: list[float]) -> WorkloadResult:
+    """Serve every task with one backend and aggregate the outcome.
+
+    Args:
+        backend: The single deployment used for the whole workload.
+        difficulties: One difficulty per task in the workload.
+
+    Returns:
+        The strategy's accuracy, total cost, mean latency, and (zero)
+        escalations.
+    """
+    correct = sum(backend.answer(d) for d in difficulties)
+    n = len(difficulties)
+    return WorkloadResult(
+        f"single:{backend.name}", correct / n,
+        backend.cost_per_call * n, backend.latency_ms, 0,
+    )
+
+
+def run_router(
+    small: Backend, large: Backend, difficulties: list[float],
+    noise: float, seed: int,
+) -> WorkloadResult:
+    """Route each task by a noisy difficulty estimate, then serve it once.
+
+    A cheap classifier estimates difficulty as the true value plus Gaussian
+    noise; tasks estimated above the small backend's strength go to the large
+    backend. Misestimates are the router's characteristic failure: an easy
+    task sent to the large model wastes money, a hard task kept on the small
+    model loses quality.
+
+    Args:
+        small: The cheap, weaker backend.
+        large: The expensive, stronger backend.
+        difficulties: One difficulty per task.
+        noise: Standard deviation of the classifier's estimation error.
+        seed: Seed for the deterministic noise stream.
+
+    Returns:
+        The routed workload's aggregate result.
+    """
+    rng = random.Random(seed)
+    correct = cost = latency = escalations = 0
+    for d in difficulties:
+        estimate = d + rng.gauss(0.0, noise)
+        chosen = large if estimate > small.strength else small
+        escalations += chosen is large
+        correct += chosen.answer(d)
+        cost += chosen.cost_per_call
+        latency += chosen.latency_ms
+    n = len(difficulties)
+    return WorkloadResult("router", correct / n, cost, latency / n, escalations)
+
+
+def run_cascade(
+    small: Backend, large: Backend, difficulties: list[float],
+    false_accept: float, seed: int,
+) -> WorkloadResult:
+    """Try the cheap backend first, escalate when a grader rejects its answer.
+
+    Every task pays the small backend. A grader (an oracle, except that it
+    wrongly accepts a wrong answer with probability ``false_accept``) decides
+    whether to escalate; escalated tasks also pay the large backend and its
+    latency. The cascade's promise is large-backend quality at a fraction of
+    its cost, bought with higher latency on the escalated tail.
+
+    Args:
+        small: The cheap backend tried first.
+        large: The expensive backend used on escalation.
+        difficulties: One difficulty per task.
+        false_accept: Probability the grader accepts a wrong cheap answer.
+        seed: Seed for the deterministic grader stream.
+
+    Returns:
+        The cascade's aggregate result.
+    """
+    rng = random.Random(seed)
+    correct = cost = latency = escalations = 0
+    for d in difficulties:
+        cost += small.cost_per_call
+        small_ok = small.answer(d)
+        accept = small_ok or rng.random() < false_accept
+        if accept:
+            correct += small_ok
+            latency += small.latency_ms
+        else:
+            escalations += 1
+            correct += large.answer(d)
+            cost += large.cost_per_call
+            latency += small.latency_ms + large.latency_ms
+    n = len(difficulties)
+    return WorkloadResult("cascade", correct / n, cost, latency / n, escalations)
+```
+
+Now the measurement. Four hundred tasks with difficulty spread across the range, a weak cheap backend and a strong expensive one, and we print all five strategies side by side.
+
+```{python}
+small = Backend("small", strength=0.55, cost_per_call=1.0, latency_ms=200.0)
+large = Backend("large", strength=0.97, cost_per_call=6.0, latency_ms=900.0)
+tasks = [i / 400 for i in range(400)]
+
+results = [
+    run_single(small, tasks),
+    run_single(large, tasks),
+    run_router(small, large, tasks, noise=0.15, seed=1),
+    run_cascade(small, large, tasks, false_accept=0.05, seed=2),
+]
+print(f"{'strategy':16} {'accuracy':>9} {'cost':>8} {'mean_ms':>9} {'escalations':>12}")
+for r in results:
+    print(f"{r.strategy:16} {r.accuracy:9.3f} {r.total_cost:8.0f} "
+          f"{r.mean_latency_ms:9.0f} {r.escalations:12d}")
+```
+
+Read the table as a Pareto frontier. The cheap single backend is fast and cheap and wrong on the hard half; the strong single backend is accurate but pays full price and full latency on *every* task, including the easy ones it never needed. The router lands in between on all three axes. The cascade is the interesting one: it reaches nearly the strong backend's accuracy while paying the strong price only on the escalated fraction — cheaper than serving everything to the large model, at the cost of higher latency on that escalated tail, because those tasks pay both backends. @fig-ch26-routing plots the three axes so the tradeoff is visible at a glance.
+
+```{python}
+#| label: fig-ch26-routing
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does each routing strategy buy? Cost and accuracy (left) and mean latency (right) over one 400-task workload. The cascade sits near the large model's accuracy at a fraction of its cost; the router trades a little of both for lower latency."
+labels = [r.strategy.replace("single:", "") for r in results]
+colors = ["#b7791f", "#b13f3f", "#557a3c", "#315b8a"]
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 3.4))
+for r, label, color in zip(results, labels, colors):
+    ax1.scatter(r.total_cost, r.accuracy, s=90, color=color, zorder=3)
+    ax1.annotate(label, (r.total_cost, r.accuracy),
+                 textcoords="offset points", xytext=(6, 5), fontsize=8)
+ax1.set_xlabel("total cost (units)")
+ax1.set_ylabel("accuracy")
+ax1.set_title("cost vs quality")
+ax2.bar(labels, [r.mean_latency_ms for r in results], color=colors, width=0.6)
+ax2.set_ylabel("mean latency (ms)")
+ax2.set_title("latency")
+ax2.tick_params(axis="x", rotation=20)
+for ax in (ax1, ax2):
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(alpha=0.2)
+fig.tight_layout()
+plt.show()
+```
+
+Two operational rules fall out of the distinction. First, resolve a product alias such as `support-answer` through capability filters — schema support, context length, region, data class, release, policy — *before* optimizing cost or latency; a cheap model that cannot satisfy the contract is not a candidate, however cheap. Second, do not provider-shop around a policy refusal: if provider A refuses a harmful request, sending it to B until one complies converts resilience into a security bypass. Fallback is for overload and transient faults while time remains; authentication, invalid-request, and policy errors are terminal. Record fallback rate and escalation rate separately — rising fallback points at provider health, rising escalation at task or routing quality.
+
+## Price the journey {#sec-ch26-cost}
+
+Per-token list price is an input to cost, not the answer. The unit that matters is **cost per successful business outcome**, and to compute it we attribute every charge to one journey identity. For a journey with calls $j = 1, \ldots, m$, let $x_j$ and $y_j$ be metered input and output tokens at unit prices $p^{(x)}_j$ and $p^{(y)}_j$, let $u_j$ be other per-call tool charges, and let $h$ be the journey's share of human review. The journey cost is
 
 $$
-C_{\text{journey}}
-= \sum_{j=1}^{m}\left(x_jp^{(x)}_j+y_jp^{(y)}_j+u_j\right)+h.
-$$
+C_{\text{journey}} = \sum_{j=1}^{m}\left(x_j p^{(x)}_j + y_j p^{(y)}_j + u_j\right) + h.
+$$ {#eq-ch26-cost}
 
-All prices must use the units declared by the provider; the code artifact converts per-million-token rates. Reconcile the unsampled billing ledger against sampled traces. Traces explain why cost occurred, but sampling them must never erase spend. Compare totals by provider invoice window, tenant, deployment, release, and usage class. Investigate missing usage, delayed adjustments, cached-token classification, and retries that lost their parent journey.
+The `Usage` type from the last section already carries all four terms, so summing a journey is direct. The reason to keep the terms apart is that at realistic scales the token cost is often *not* where the money goes — a single human review or a paid tool call can dwarf a few thousand tokens. @fig-ch26-journey-cost breaks one journey down.
 
-Agent loops create hidden multipliers. A repeated system prompt pays input cost on every uncached turn. Parallel workers multiply shared context. A timeout followed by fallback may charge both providers. Long reasoning raises output and occupies decode capacity. A low-quality cheap model can cost more if it triggers retries, tool errors, or escalation. Set step, token, time, tool, concurrency, and currency budgets at the harness; enforce the currency reservation at the gateway.
+```{python}
+#| label: fig-ch26-journey-cost
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where does one journey's cost actually come from? For a short journey, a paid tool call and a share of human review dominate the token cost — which is why cost-per-outcome, not cost-per-token, is the unit to optimize."
+journey = Usage(20_000, 2_000, input_per_million=0.5, output_per_million=1.5,
+                tool_units=0.004, review_units=0.010)
+parts = journey.breakdown()
 
-Caching has different correctness surfaces:
+fig, ax = plt.subplots(figsize=(6.4, 3.2))
+left = 0.0
+palette = {"input": "#315b8a", "output": "#557a3c", "tool": "#b7791f", "review": "#b13f3f"}
+for name, value in parts.items():
+    ax.barh("journey", value, left=left, color=palette[name], label=f"{name} ({value:.3f})")
+    left += value
+ax.set_xlabel(f"cost units   (total {journey.cost:.3f})")
+ax.legend(ncol=4, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.25))
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
 
-- a **provider prefix cache** reuses model-internal computation for byte- or token-identical prefixes;
-- an **exact response cache** reuses an application result for the same correctness-scoped key;
-- a **semantic cache** reuses a result for a merely similar query and therefore changes product semantics.
-
-Every cache key must include the scopes that can change correctness: tenant and permissions, model and adapter, prompt/template and tokenizer, tool schemas, corpus/index revision, policy, locale, time or freshness bucket, sampling contract, and output schema. Never share private prefixes or semantic responses across tenants without an explicit isolation proof. Chapter 10 owns KV and serving-cache isolation; Chapter 24 owns the threat model.
-
-Suppose an uncached prefix costs $c$, writing it costs $wc$, each cache read costs $dc$, and it receives $r$ reuses after the write. Uncached cost is $(r+1)c$; cached cost is $(w+rd)c$. Caching pays back when
+Caching is the first lever, and it has a clean break-even. Suppose an uncached prefix costs $c$, writing it to the cache costs $wc$, each cached read costs $dc$, and the prefix is reused $r$ times after the write. Uncached, the total is $(r+1)c$; cached, it is $(w + rd)c$. Caching pays back when
 
 $$
 r \ge \frac{w-1}{1-d}.
-$$
+$$ {#eq-ch26-cache}
 
-The synthetic plot uses $w=1.25$ and $d=0.10$, so one integer reuse is enough. Real values include expiry, invalidation, missed matches, capacity pressure, and the opportunity cost of cache memory. A semantic-cache threshold has no comparable price-only optimum: lowering it increases hit rate and also false reuse. Tune it against task correctness and privacy slices, not only savings.
+```{python}
+# @save
+def cache_breakeven(write_multiplier: float, read_multiplier: float) -> float:
+    """Return the minimum reuses for a prefix cache to pay for its write.
 
-Capacity is governed by the tightest resource. Track input tokens per second, output tokens per second, concurrent sequences, KV memory, requests, tool concurrency, and provider quota. **Goodput** is the rate of completions that satisfy the task and service contract; throughput includes waste. If raw completion throughput is $Q$ and the qualifying fraction is $s$, then goodput is $G=Qs$. A faster deployment with more invalid outputs can have lower goodput.
+    Solves @eq-ch26-cache: a cache whose write costs ``write_multiplier`` times
+    an uncached call and whose reads cost ``read_multiplier`` times an uncached
+    call breaks even after ``(w - 1) / (1 - d)`` reuses.
 
-Retry probability amplifies load. If an attempt independently needs another attempt with probability \(q<1\), the expected attempt count is \(1/(1-q)\). At \(q=0.2\), offered load grows by 25 percent before hedging or agent loops. This geometric model is a warning, not a capacity forecast: correlated outages make retries synchronize and become worse. Add jitter, enforce global retry budgets, and shed load at the outermost boundary that still knows tenant, priority, and journey value.
+    Args:
+        write_multiplier: Cost of writing the cache, relative to one call.
+        read_multiplier: Cost of a cached read, relative to one call.
 
-Rate limits should use the constrained dimension. A token bucket per `(tenant, input-token)` prevents one enormous prompt from hiding behind request count; separate buckets can govern output, embeddings, tools, and spend. Give priority traffic reserved capacity, cap concurrency, and apply backpressure before queues outlive their deadlines. Provider quota is a ceiling, not a capacity plan; provisioned throughput is useful only when measured goodput and utilization justify its commitment.
+    Returns:
+        The break-even reuse count (a real number; round up for whole reuses).
+    """
+    return (write_multiplier - 1) / (1 - read_multiplier)
 
-## Retries consume a deadline and an effect budget {#sec-ch26-reliability}
 
-A timeout says the caller stopped waiting. It does not say the server stopped working, the model call was unbilled, or the external effect did not occur. Treat every timeout after request transmission as **ambiguous** until an authoritative query or idempotent retry resolves it.
+def cached_cost(reuses: int, write_multiplier: float, read_multiplier: float) -> float:
+    """Return the cost of one cache write plus ``reuses`` discounted reads."""
+    return write_multiplier + reuses * read_multiplier
 
-Classify failures before retrying:
 
-| Class | Examples | Default handling |
-|---|---|---|
-| retryable | connection reset before response, declared overload, rate limit with useful retry window | retry within the same journey budget, deadline, and stable operation identity |
-| terminal | invalid schema, failed authentication, policy refusal, unsupported capability | stop; repair caller or surface the decision |
-| ambiguous effect | connection lost after sending a write, deadline after provider acceptance | reconcile by stable idempotency key or effect status; never invent a new identity |
+def batch_saving(synchronous_cost: float, discount: float) -> float:
+    """Return the cost of a deferrable workload run through a batch API.
 
-A **retry budget** limits total extra work, while a **deadline** bounds elapsed usefulness. Propagate an absolute deadline or a decreasing remaining duration. If a service receives 800 milliseconds remaining, it must not start a fixed two-second timeout and pretend the original objective still matters. Reserve time for validation, effect recording, and the response path. Cancellation is cooperative: downstream work may continue, so cost and effects still need reconciliation.
+    Providers commonly price asynchronous, latency-tolerant work — nightly
+    evaluations, bulk classification, backfills — at a discount to the
+    synchronous rate. Moving that work to a batch queue is often the single
+    largest cost lever for an agent platform's offline jobs.
 
-Use exponential backoff with jitter for distributed transient failures, but do not let every layer retry independently. Three retries in a client, two in a gateway, and three in an SDK can produce eighteen attempts. Select one owner for each boundary, expose attempt metadata, and enforce a journey-wide maximum. Retry only operations whose semantics are safe under replay.
+    Args:
+        synchronous_cost: What the workload would cost at the live rate.
+        discount: Fractional discount the batch tier offers, in [0, 1].
 
-**Hedging** issues a redundant attempt after a latency threshold rather than waiting for failure. Dean and Barroso's tail-at-scale analysis explains why a small fraction of slow components can dominate a fan-out request. Hedging can cut tail latency when attempts have weakly correlated delays, but it spends extra tokens, consumes capacity during the most loaded period, complicates streaming, and can duplicate effects. Use it for side-effect-free reads or model calls with stable correlation IDs; cancel losers when possible and charge both attempts to the journey.
+    Returns:
+        The batch-tier cost of the same workload.
+    """
+    return synchronous_cost * (1 - discount)
+```
 
-Idempotency means repeating the same operation identity and payload has the same externally visible effect as performing it once. It does not mean all retries are safe. A key must represent the business operation, not the network attempt. `uuid4()` inside a retry loop is a new identity every time. `refund:{order_id}:{approved_intent_version}` is better because every recovery path can recompute it and a changed amount or approval becomes a different—or rejected—intent.
+With a write premium of `1.25` and a read at a tenth of an uncached call, the break-even is under one reuse — a prefix reused even once already pays for itself.
 
-The platform should carry request identity, journey identity, step identity, effect identity, attempt number, parent trace, tenant, release bundle, and deadline. These are not interchangeable. Attempts may multiply; the effect identity must remain stable.
+```{python}
+w, d = 1.25, 0.10
+print(f"break-even reuses = {cache_breakeven(w, d):.3f}  ->  one reuse suffices")
+print(f"uncached 2 calls = 2.000   cached (write + 1 read) = {cached_cost(1, w, d):.3f}")
+sweep_cost = 4.0
+print(f"nightly eval sweep: sync {sweep_cost:.2f}  ->  batch (50% off) "
+      f"{batch_saving(sweep_cost, 0.5):.2f}")
+```
+
+The batch line is the other easy lever: work that tolerates latency — evaluation sweeps, bulk classification, backfills — belongs on a discounted asynchronous tier, halving its cost in this schedule. A **semantic cache** has no such price-only optimum, because lowering its similarity threshold raises the hit rate *and* the false-reuse rate; tune it against correctness and privacy slices, not savings alone.
+
+Now the pathology from the Friday incident. Agent loops multiply cost in two compounding ways. First, retries: if an attempt independently needs another attempt with probability $q < 1$, the expected attempt count is $(1-q)^{-1}$, so at $q = 0.2$ offered load already grows by a quarter — and independent retry layers *multiply*, so a client retrying three times, a gateway twice, and an SDK three times can turn one intent into eighteen attempts.
+
+```{python}
+# @save
+def retry_multiplier(q: float) -> float:
+    """Return the expected attempts when each independently retries with prob q.
+
+    Args:
+        q: Per-attempt probability that another attempt is needed, in [0, 1).
+
+    Returns:
+        The geometric-series expectation ``1 / (1 - q)``.
+    """
+    return 1.0 / (1.0 - q)
+
+
+def goodput(throughput: float, qualifying_fraction: float) -> float:
+    """Return goodput: the rate of completions that satisfy the task contract."""
+    return throughput * qualifying_fraction
+```
+
+The second multiplier is the transcript itself: because every turn resends the whole conversation, a loop that keeps retrying pays a *growing* per-turn cost. We reproduce the blow-up by simulating many journeys that retry a soft failure until they succeed, each turn costing more than the last, and then we cap it.
+
+```{python}
+# @save
+def simulate_agent_loop(
+    rng: random.Random, p_success: float, per_turn_tokens: int, max_turns: int
+) -> tuple[int, int]:
+    """Simulate one retry-until-success journey with a growing transcript.
+
+    Each turn resends the whole transcript, so turn ``t`` costs
+    ``per_turn_tokens * t``; the journey ends on the first Bernoulli success or
+    when ``max_turns`` caps it. The uncapped tail of this distribution is the
+    denial-of-wallet pathology a platform must bound.
+
+    Args:
+        rng: Seeded random source, so the simulation is reproducible.
+        p_success: Per-turn probability the journey completes.
+        per_turn_tokens: Base token cost of the first turn.
+        max_turns: Hard cap on turns; the lever that bounds the tail.
+
+    Returns:
+        A tuple of (total tokens spent, turns taken).
+    """
+    total = 0
+    for turn in range(1, max_turns + 1):
+        total += per_turn_tokens * turn
+        if rng.random() < p_success:
+            return total, turn
+    return total, max_turns
+```
+
+```{python}
+def spend_distribution(max_turns: int) -> list[int]:
+    rng = random.Random(7)
+    return sorted(simulate_agent_loop(rng, 0.5, 500, max_turns)[0]
+                  for _ in range(5000))
+
+for cap, label in [(50, "effectively uncapped"), (4, "capped at 4 turns")]:
+    spend = spend_distribution(cap)
+    p99 = spend[int(0.99 * len(spend))]
+    print(f"{label:20}  mean={sum(spend)/len(spend):7.0f}  "
+          f"p99={p99:6d}  max={spend[-1]:6d} tokens")
+```
+
+The uncapped run has a fat tail: most journeys finish in one or two turns, but a few run long enough to spend an order of magnitude more, and it is those few that drain a shared account on a Friday afternoon. Capping turns leaves the common case untouched and simply amputates the tail. The lesson generalizes: set step, token, time, and concurrency budgets at the harness, and enforce the currency reservation at the gateway. @fig-ch26-cost-curves puts the two cost curves — cache break-even and retry amplification — side by side.
+
+```{python}
+#| label: fig-ch26-cost-curves
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "The two cost curves every platform reasons about. Left: prefix-cache savings turn positive after a single reuse. Right: independent retries amplify offered load as 1/(1-q), passing 1.25x at q=0.2 and diverging as q approaches 1."
+reuses = list(range(0, 11))
+savings = [(r + 1) - cached_cost(r, 1.25, 0.10) for r in reuses]
+qs = [i / 100 for i in range(0, 91)]
+mult = [retry_multiplier(q) for q in qs]
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 3.4))
+ax1.axhline(0, color="#666666", lw=1)
+ax1.plot(reuses, savings, color="#315b8a", lw=2, marker="o", ms=4)
+ax1.set(xlabel="cache reuses", ylabel="savings (call-cost units)",
+        title="prefix-cache break-even")
+ax2.plot(qs, mult, color="#b13f3f", lw=2)
+ax2.scatter([0.2], [retry_multiplier(0.2)], color="#b13f3f", zorder=3)
+ax2.annotate("q=0.2 -> 1.25x", (0.2, 1.25), textcoords="offset points",
+             xytext=(6, 8), fontsize=8)
+ax2.set(xlabel="per-attempt retry probability q", ylabel="offered-load multiplier",
+        title="retry amplification")
+for ax in (ax1, ax2):
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(alpha=0.2)
+fig.tight_layout()
+plt.show()
+```
+
+Capacity is governed by the tightest resource, and the honest capacity metric is **goodput** — the rate of completions that satisfy the task *and* service contract, $G = Qs$ for raw throughput $Q$ and qualifying fraction $s$ — because a faster deployment that emits more invalid outputs can serve fewer good ones. To bound offered load on the tightest dimension we use a **token bucket** keyed on that dimension, so one enormous prompt cannot hide behind a low request count.
+
+```{python}
+# @save
+class TokenBucket:
+    """Rate-limit a resource with an injected clock, so tests need no real time.
+
+    Tokens refill continuously at ``refill_per_s`` up to ``capacity``; a
+    request is admitted only if enough tokens are present, and consuming them
+    applies backpressure on the constrained dimension (input tokens, say,
+    rather than request count). The clock is injected so drain-and-refill
+    behavior is exercised deterministically.
+    """
+
+    def __init__(self, capacity: float, refill_per_s: float,
+                 now: Callable[[], float]) -> None:
+        self.capacity = capacity
+        self.refill_per_s = refill_per_s
+        self.now = now
+        self.tokens = capacity
+        self.updated_at = now()
+
+    def allow(self, requested: float) -> bool:
+        """Admit a request of ``requested`` tokens, refilling for elapsed time.
+
+        Args:
+            requested: Tokens the request would consume.
+
+        Returns:
+            True and consumes the tokens when enough are available; False and
+            consumes nothing otherwise.
+        """
+        current = self.now()
+        elapsed = max(0.0, current - self.updated_at)
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_s)
+        self.updated_at = current
+        if requested > self.tokens:
+            return False
+        self.tokens -= requested
+        return True
+```
+
+```{python}
+clock = [0.0]
+bucket = TokenBucket(capacity=100, refill_per_s=10, now=lambda: clock[0])
+print("spend 80:", bucket.allow(80), " then 30:", bucket.allow(30), "(drained)")
+clock[0] = 1.0
+print("after 1s refill, 30:", bucket.allow(30), " goodput(Q=120, s=0.9):",
+      goodput(120, 0.9))
+```
+
+## Reliability: deadlines, retry budgets, and hedging {#sec-ch26-reliability}
+
+A timeout says the caller stopped waiting. It does not say the server stopped working, the model call went unbilled, or the external effect did not occur. So the first reliability rule is to classify a failure before reacting to it: a *retryable* fault (a connection reset before any response, a declared overload) may be retried within the same journey; a *terminal* one (invalid schema, failed authentication, policy refusal) must stop; and an *ambiguous* one — a connection lost *after* a write was sent — must be reconciled by a stable identity, never retried with a fresh one.
+
+```{python}
+# @save
+TERMINAL = frozenset({"policy_refusal", "invalid_request", "auth"})
+RETRYABLE = frozenset({"overloaded", "connection_reset", "rate_limited"})
+
+
+def classify_failure(kind: str) -> str:
+    """Classify a failure as retryable, terminal, or ambiguous.
+
+    Args:
+        kind: A short failure label from the provider or transport.
+
+    Returns:
+        "terminal", "retryable", or "ambiguous"; the last covers writes whose
+        outcome is unknown and must be reconciled, not blindly retried.
+    """
+    if kind in TERMINAL:
+        return "terminal"
+    if kind in RETRYABLE:
+        return "retryable"
+    return "ambiguous"
+
+
+def propagate_deadline(remaining_s: float, reserved_s: float) -> float:
+    """Return the timeout a downstream call may use, reserving tail time.
+
+    A service that receives 800 ms remaining must not start a fixed two-second
+    timeout: it must pass down what is left minus time reserved for validation,
+    effect recording, and the response path.
+
+    Args:
+        remaining_s: Time left on the journey's absolute deadline.
+        reserved_s: Time to hold back for the caller's own tail work.
+
+    Returns:
+        The non-negative budget a downstream call may spend.
+    """
+    return max(0.0, remaining_s - reserved_s)
+```
+
+A **retry budget** bounds total extra work while a **deadline** bounds elapsed usefulness; the two together stop a retry loop from either running forever or running past the point where its answer still matters. We give the budget an injected clock and watch it consume attempts until one of the two limits bites.
+
+```{python}
+# @save
+@dataclass
+class RetryBudget:
+    """Bound retries by an attempt count and an absolute deadline together.
+
+    A retryable failure consumes one attempt and is allowed only while both
+    attempts and deadline remain; a terminal failure stops immediately.
+    Separating the two limits is what makes the budget honest: a fast failure
+    loop runs out of attempts, a slow one runs out of time.
+    """
+
+    attempts_left: int
+    deadline_s: float
+    now: Callable[[], float]
+
+    def consume(self, kind: str) -> float:
+        """Consume one retry for a retryable failure, or refuse to.
+
+        Args:
+            kind: The failure label being handled.
+
+        Returns:
+            The time remaining after consuming the attempt.
+
+        Raises:
+            RuntimeError: On a terminal failure (do not retry).
+            TimeoutError: When attempts or the deadline are exhausted.
+        """
+        remaining = self.deadline_s - self.now()
+        if classify_failure(kind) == "terminal":
+            raise RuntimeError("terminal failure; do not retry")
+        if self.attempts_left <= 0 or remaining <= 0:
+            raise TimeoutError("retry budget exhausted")
+        self.attempts_left -= 1
+        return remaining
+```
+
+```{python}
+elapsed = [0.0]
+budget = RetryBudget(attempts_left=5, deadline_s=1.0, now=lambda: elapsed[0])
+print("downstream budget from 0.8s, reserving 0.2s:",
+      propagate_deadline(0.8, 0.2))
+for step in range(6):
+    elapsed[0] = step * 0.25
+    try:
+        remaining = budget.consume("overloaded")
+        print(f"t={elapsed[0]:.2f}s  retry allowed  attempts_left="
+              f"{budget.attempts_left}  remaining={remaining:.2f}s")
+    except TimeoutError as exc:
+        print(f"t={elapsed[0]:.2f}s  stop: {exc}")
+        break
+```
+
+The budget stops the loop when the clock crosses the deadline, well before the attempt count would have — exactly the case a naive "retry three times" would get wrong. The last pattern, **hedging**, spends *more* to buy tail latency: after a threshold, issue a second attempt and take whichever returns first [@dean2013tail]. It helps when a small fraction of components are slow for uncorrelated reasons, but it costs extra capacity during the busiest period, so the question is always whether the tail win is worth the spend. We measure it on a latency distribution with a heavy tail.
+
+```{python}
+# @save
+def hedge_latency(first_ms: float, second_ms: float, threshold_ms: float
+                  ) -> tuple[float, bool]:
+    """Return the effective latency and whether a hedge fired.
+
+    If the first attempt finishes by ``threshold_ms``, its latency stands and
+    no hedge fires. Otherwise a second attempt starts at the threshold and the
+    request finishes when either returns, so the effective latency is the
+    smaller of the first attempt and threshold-plus-second.
+
+    Args:
+        first_ms: Latency of the primary attempt.
+        second_ms: Latency the hedged attempt would take on its own.
+        threshold_ms: Delay before the hedge is issued.
+
+    Returns:
+        A tuple of (effective latency in ms, whether the hedge fired).
+    """
+    if first_ms <= threshold_ms:
+        return first_ms, False
+    return min(first_ms, threshold_ms + second_ms), True
+```
+
+```{python}
+def draw_latency(rng: random.Random) -> float:
+    # 95% fast, 5% a slow tail — the shape hedging targets.
+    if rng.random() < 0.05:
+        return rng.gauss(1500, 300)
+    return rng.gauss(200, 30)
+
+rng = random.Random(0)
+base, hedged, fired = [], [], 0
+for _ in range(20_000):
+    first, second = draw_latency(rng), draw_latency(rng)
+    base.append(first)
+    eff, did = hedge_latency(first, second, threshold_ms=400)
+    hedged.append(eff)
+    fired += did
+
+def pct(xs, p):
+    return sorted(xs)[int(p * len(xs))]
+
+print(f"baseline   p50={pct(base,0.5):5.0f}ms  p99={pct(base,0.99):5.0f}ms")
+print(f"hedged     p50={pct(hedged,0.5):5.0f}ms  p99={pct(hedged,0.99):5.0f}ms")
+print(f"hedge fired on {fired/len(base):.1%} of requests (the extra cost)")
+```
+
+The hedge barely touches the median — most requests finish before the threshold — but it collapses the ninety-ninth percentile, because a slow first attempt is very likely paired with a fast second. The bill for that is the few percent of requests that ran twice. @fig-ch26-hedging shows the tail before and after.
+
+```{python}
+#| label: fig-ch26-hedging
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does hedging buy, and what does it cost? Median latency is unchanged, but the p99 tail collapses once a hedge fires at 400 ms; the price is the small fraction of requests that run twice."
+fig, ax = plt.subplots(figsize=(6.4, 3.3))
+groups = ["p50", "p99"]
+base_v = [pct(base, 0.5), pct(base, 0.99)]
+hedge_v = [pct(hedged, 0.5), pct(hedged, 0.99)]
+x = range(len(groups))
+ax.bar([i - 0.2 for i in x], base_v, width=0.4, label="baseline", color="#b13f3f")
+ax.bar([i + 0.2 for i in x], hedge_v, width=0.4, label="hedged", color="#315b8a")
+ax.set_xticks(list(x))
+ax.set_xticklabels(groups)
+ax.set_ylabel("latency (ms)")
+ax.legend()
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
+
+Hedging works for side-effect-free reads. For a write, running twice is exactly the danger the next section is about.
 
 ## Close the crash window with an effect ledger {#sec-ch26-ledger}
 
-Now the second incident. A worker calls a refund provider. The provider commits the refund and returns a receipt. Before the worker checkpoints the response, its process dies. Replay restarts from the last checkpoint and calls the provider again. If it uses a new idempotency key, the customer receives two refunds.
-
-The unsafe interval is the **crash window** between an external commit and the durable record that tells replay not to repeat it. No ordinary checkpoint can atomically commit with an unrelated external provider across a network. “Exactly once” is therefore a scoped claim. Within one database transaction, a row and checkpoint can commit atomically. Across independent systems, use stable identity, idempotent providers, reconciliation, transactional messaging, or compensating actions.
-
-@fig-ch26-crash makes the ambiguity visible. The ledger reserves a stable application-owned identity before the request. After the crash, recovery reuses that identity; the provider returns the original receipt instead of applying the refund again.
+Now the second incident. A worker calls a refund provider; the provider commits the refund and returns a receipt; before the worker records that receipt, its process dies. Replay restarts from the last checkpoint and calls the provider again. If it uses a fresh idempotency key, the customer is refunded twice. The unsafe interval — between the external commit and the durable record that tells replay not to repeat it — is the **crash window**, and no ordinary checkpoint can atomically commit a local row together with an unrelated provider across a network. @fig-ch26-crash shows exactly where the duplicate is born and which stable fact resolves it.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch26-crash
-%%| fig-cap: "Where is a duplicate effect born, and which stable fact lets recovery resolve it?"
-%%| fig-alt: "A worker reserves an effect key in a ledger, calls a provider with that key, and the provider commits. The worker crashes before recording the receipt. On replay it reads the same key and asks the provider again, which returns the existing receipt without a second effect."
+%%| fig-cap: "Where is a duplicate effect born, and which stable fact lets recovery resolve it? A reservation persists a stable key before the call, so recovery re-asks the provider with that key instead of issuing a new one."
 sequenceDiagram
     participant W as Worker
     participant L as Effect ledger
     participant P as Provider
-    participant C as Workflow checkpoint
-
-    W->>L: reserve(stable effect key, payload digest)
+    W->>L: reserve(stable key, payload digest)
     L-->>W: RESERVED
-    W->>P: apply(effect key, exact payload)
+    W->>P: apply(key, exact payload)
     P-->>W: committed(receipt-1)
-    Note over W,C: process dies before receipt checkpoint
-    W->>C: replay from prior workflow step
-    W->>L: recover(stable effect key)
+    Note over W: process dies before recording the receipt
+    W->>L: recover(same stable key)
     W->>P: apply(same key, same payload)
-    P-->>W: existing receipt-1
-    W->>L: record(receipt-1)
-    W->>C: checkpoint recorded result
+    P-->>W: existing receipt-1 (no second effect)
+    W->>L: record(receipt-1) -> RECORDED
 ```
 
-An **effect ledger** records application intent separately from workflow progress. The reference artifact uses five states. They are not ceremony; each answers a recovery question.
+An **effect ledger** records the application's intent separately from workflow progress, and it moves an effect through a small set of states, each of which answers one recovery question. `RESERVED` says the key and payload digest are durable; `EXECUTED` says a receipt is known in this process; `RECORDED` says that receipt is durable so replay may return it; `FAILED` says a terminal result needs review. @fig-ch26-ledger-states draws the machine.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch26-ledger-states
-%%| fig-cap: "What must recovery determine for each durable effect state?"
-%%| fig-alt: "An intended effect becomes reserved, executed, then recorded. A reservation can fail. Recovery returns a recorded receipt, reconciles reserved work with the provider, and investigates failed or impossible transitions."
+%%| fig-cap: "What must recovery determine for each durable effect state? Recovery re-asks the provider by the stable key rather than assuming that 'not recorded' means 'not done'."
 stateDiagram-v2
     [*] --> INTENDED: create exact intent
     INTENDED --> RESERVED: persist key + payload digest
     RESERVED --> EXECUTED: provider returns receipt
     EXECUTED --> RECORDED: persist authoritative receipt
     RESERVED --> FAILED: terminal provider decision
-    FAILED --> RESERVED: reviewed retry with same intent
     RECORDED --> [*]
-
-    note right of RESERVED
-      Recovery asks provider by stable key.
-      Never assumes “not checkpointed” means “not done.”
-    end note
 ```
 
-`INTENDED` says the application has a valid effect plan. `RESERVED` says its immutable key and payload digest are durable. `EXECUTED` says a provider receipt is known in the current process. `RECORDED` says that receipt is durable and replay may return it. `FAILED` records a terminal result or a state requiring review. A production design may add leases, reconciliation timestamps, manual states, and fencing tokens; add states only when they change recovery behavior.
+The ledger's core is small. A `reserve` binds a stable key to a payload digest and refuses to let the same key be reused for a *different* payload — so a changed amount under an old key is rejected, not silently applied.
 
-The core implementation is small:
+```{python}
+# @save
+class EffectState(str, Enum):
+    """The durable states of one external effect, in recovery order."""
 
-```python
-# effect_runtime.py — execute_once(), effect boundary
-record = ledger.reserve(key, payload)
-if record.state == EffectState.RECORDED:
-    return record.receipt
+    INTENDED = "INTENDED"
+    RESERVED = "RESERVED"
+    EXECUTED = "EXECUTED"
+    RECORDED = "RECORDED"
+    FAILED = "FAILED"
 
-receipt = provider.apply(key, payload)
-if crash_after_provider:
-    raise InjectedCrash("died before recording receipt")
-record.state = EffectState.EXECUTED
-record.receipt = receipt
-record.state = EffectState.RECORDED
-return receipt
+
+@dataclass
+class EffectRecord:
+    """One effect's durable identity, digest, state, and authoritative receipt."""
+
+    key: str
+    payload_digest: str
+    state: EffectState
+    receipt: str | None = None
+
+
+class EffectLedger:
+    """Keep a stable, payload-bound effect identity across crash and replay.
+
+    The ledger is the application-owned record that a checkpoint cannot be: it
+    binds a business idempotency key to a payload digest before the provider is
+    called, so recovery re-asks by that key and a substituted payload is
+    refused. It stores intent, not workflow progress.
+    """
+
+    def __init__(self) -> None:
+        self.records: dict[str, EffectRecord] = {}
+
+    @staticmethod
+    def digest(payload: dict[str, Any]) -> str:
+        """Return a canonical SHA-256 digest of an effect payload."""
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    def reserve(self, key: str, payload: dict[str, Any]) -> EffectRecord:
+        """Reserve a stable key for an exact payload, or reject a substitution.
+
+        Args:
+            key: The business idempotency key (stable across retries).
+            payload: The exact effect payload; its digest is bound to the key.
+
+        Returns:
+            The record for this key, moved to RESERVED on first reservation.
+
+        Raises:
+            ValueError: If the key already exists for a different payload.
+        """
+        digest = self.digest(payload)
+        record = self.records.get(key)
+        if record and record.payload_digest != digest:
+            raise ValueError("idempotency key reused for a different payload")
+        if record is None:
+            record = EffectRecord(key, digest, EffectState.INTENDED)
+            self.records[key] = record
+        if record.state == EffectState.INTENDED:
+            record.state = EffectState.RESERVED
+        return record
 ```
 
-The test injects three deaths in the gap. Every recovery calls the provider again with `refund:A-17:v1`; the provider returns `receipt-1` and its authoritative effect count remains one. The ledger also rejects reuse of that key with a different payload digest. This proves only a composition: durable stable identity plus a provider that honors that identity. If the provider lacks idempotency, recovery needs a query by business key, an application-owned proxy that supplies it, or an explicit compensation and review policy.
+The provider is idempotent on the stable key — it returns the same receipt for a repeated key and commits at most one effect — and `execute_once` drives the whole sequence, including the `FAILED` branch a terminal provider error takes. The injected crash models process death precisely in the dangerous window: after the provider commits, before the receipt is recorded.
 
-A **transactional outbox** solves a related local boundary. The application writes business state and an outgoing intent in one database transaction. A relay delivers outbox rows at least once; the consumer deduplicates by message identity. The outbox prevents “database committed but message was never scheduled,” not duplicate delivery by itself.
+```{python}
+# @save
+class InjectedCrash(RuntimeError):
+    """Simulate worker death after the provider committed, before recording."""
 
-Compensation is not time travel. A saga's “undo shipment” may issue a return label; it cannot make the customer unsee a disclosure or retract an already-sent wire. Compensation is a new forward effect with its own stable identity, authorization, failure handling, and audit. Classify effects as reversible, compensatable, or irreversible before deciding how autonomous recovery may be.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `effect_runtime.py` complete | 124 lines total; 10 shown | Three injected deaths after provider acceptance create one authoritative external effect, and a substituted payload cannot reuse its identity. |
+class IdempotentProvider:
+    """A provider that commits at most one effect per stable key.
+
+    It returns the same receipt for a repeated key, which is the property that
+    makes recovery safe: a worker that crashes and retries with the same key
+    sees the original receipt instead of a second effect. ``effect_count`` is
+    the ground truth the tests assert on.
+    """
+
+    def __init__(self) -> None:
+        self.receipts: dict[str, str] = {}
+        self.effect_count = 0
+
+    def apply(self, key: str, payload: dict[str, Any]) -> str:
+        """Commit the effect once for a new key, else return its receipt."""
+        if key not in self.receipts:
+            self.effect_count += 1
+            self.receipts[key] = f"receipt-{self.effect_count}"
+        return self.receipts[key]
+
+
+def execute_once(
+    ledger: EffectLedger,
+    provider: IdempotentProvider,
+    key: str,
+    payload: dict[str, Any],
+    crash_after_provider: bool = False,
+) -> str:
+    """Execute an effect once, or recover it safely after a crash.
+
+    Recovery is a composition, not magic: a durable reservation (the ledger)
+    plus a provider that honors a stable key. If the record is already
+    RECORDED, the receipt is returned without touching the provider. Otherwise
+    the provider is called with the stable key; a crash in the window between
+    the call and recording leaves the record RESERVED, so the next attempt
+    re-asks the provider by the same key and still sees one effect.
+
+    Args:
+        ledger: The durable effect ledger.
+        provider: The idempotent external provider.
+        key: The stable business idempotency key.
+        payload: The exact effect payload.
+        crash_after_provider: If True, raise in the dangerous window to model
+            a worker dying before it recorded the receipt.
+
+    Returns:
+        The authoritative receipt for this effect.
+
+    Raises:
+        InjectedCrash: When ``crash_after_provider`` is set, before recording.
+    """
+    record = ledger.reserve(key, payload)
+    if record.state == EffectState.RECORDED:
+        return record.receipt  # type: ignore[return-value]
+    try:
+        receipt = provider.apply(key, payload)
+        if crash_after_provider:
+            raise InjectedCrash("died before recording provider receipt")
+        record.state = EffectState.EXECUTED
+        record.receipt = receipt
+        record.state = EffectState.RECORDED
+        return receipt
+    except InjectedCrash:
+        raise
+    except Exception:
+        record.state = EffectState.FAILED
+        raise
+```
+
+Now the demonstration the old chapter only asserted in a test: crash three times in the window, then recover, and print the whole trace. The provider must commit exactly one effect no matter how many deaths occurred.
+
+```{python}
+ledger, provider = EffectLedger(), IdempotentProvider()
+payload = {"order_id": "A-17", "amount_cents": 4999}
+key = "refund:A-17:v1"
+
+for attempt in range(1, 4):
+    try:
+        execute_once(ledger, provider, key, payload, crash_after_provider=True)
+    except InjectedCrash:
+        state = ledger.records[key].state.value
+        print(f"attempt {attempt}: crashed in window   ledger={state}   "
+              f"provider_effects={provider.effect_count}")
+receipt = execute_once(ledger, provider, key, payload)
+print(f"recovery:  receipt={receipt}   ledger={ledger.records[key].state.value}   "
+      f"provider_effects={provider.effect_count}")
+```
+
+Three deaths, one effect. Each crash left the record `RESERVED` — durable proof that an attempt was in flight — and recovery re-asked the provider with `refund:A-17:v1`, which returned the original `receipt-1` rather than moving money again. Try to reuse that key with a changed amount and the ledger refuses:
+
+```{python}
+try:
+    execute_once(ledger, provider, key, {"order_id": "A-17", "amount_cents": 9999})
+except ValueError as exc:
+    print("substituted payload rejected:", exc)
+print("provider effects still:", provider.effect_count)
+```
+
+That is the whole content of "exactly once" for an external effect: a stable, payload-bound identity plus a provider that honors it. A **transactional outbox** solves the adjacent local problem — write business state and an outgoing intent in one database transaction, then relay the intent at least once — but it prevents a *lost* message, not a duplicate; the consumer still deduplicates by message identity [@fowler2005outbox].
+
+::: {.callout-note title="In the interview"}
+**Q. Your workflow crashes after a payment provider charges a card but before your code records the receipt. On resume it charges again. Why, and what is the fix?**
+The charge and the local record live in different systems, so they cannot commit atomically — that gap is the crash window, and "the engine guarantees exactly once" does not cover an external provider. The fix is a stable, payload-bound idempotency key reserved *before* the call (`refund:{order}:{intent_version}`), plus a provider that returns the original receipt for a repeated key; recovery re-asks by that key instead of minting a new one. The trap is claiming a workflow engine makes external effects exactly-once on its own, or keying the operation on the network attempt (`uuid4()` per retry) rather than the business operation.
 :::
 
-## Choose checkpointing or durable execution by effect lifetime {#sec-ch26-durable}
+## Durable execution: replay and compensation {#sec-ch26-durable}
 
-A framework **checkpointer** stores agent state so a graph or loop can resume. A **durable-execution engine** records enough workflow history to reconstruct decisions, schedules retries, timers, and signals, and moves work to another worker after failure. Both are useful; nesting them around the same state without an ownership decision creates two notions of progress.
+A framework **checkpointer** stores agent state so a loop can resume; a **durable-execution engine** records enough workflow *history* to reconstruct decisions, schedule retries and timers, and move work to another worker after a failure. The engine's central trick is **deterministic replay**: on recovery it re-runs the workflow code but returns each past step's *recorded* result instead of re-executing it. This matters most for a model call, because re-executing one changes its output, its cost, and possibly the next branch the workflow takes. We build a tiny engine that makes the point concrete.
 
-Use a checkpointer when one application owns the run, waits are short, effects already pass through a safe ledger, and a team can operate recovery itself. Use a workflow engine when tasks span deploys, workers, days, external callbacks, or many services; when timers and signals must survive downtime; or when operators need first-class visibility and intervention. A chat thread may need a graph checkpoint. A claims process that waits two weeks for documents and approval usually needs a durable workflow.
+```{python}
+# @save
+@dataclass
+class WorkflowEngine:
+    """A minimal durable-execution engine: journal activities, replay them.
+
+    A workflow calls :meth:`activity` for every non-deterministic or effectful
+    step. The first time an activity id is seen its function runs and the
+    result is journaled; on any later pass the journaled result is returned
+    without running the function again. That is exactly what lets a crashed
+    workflow resume — replay reconstructs past decisions from the journal
+    rather than re-executing paid, non-deterministic calls.
+    """
+
+    journal: dict[str, Any] = field(default_factory=dict)
+    executed: list[str] = field(default_factory=list)
+
+    def activity(self, activity_id: str, fn: Callable[[], Any]) -> Any:
+        """Run ``fn`` once and journal it, or replay the journaled result.
+
+        Args:
+            activity_id: Stable id naming this step in the workflow history.
+            fn: The step body; executed only the first time this id is seen.
+
+        Returns:
+            The recorded result for ``activity_id`` — fresh on first
+            execution, replayed verbatim thereafter.
+        """
+        if activity_id in self.journal:
+            return self.journal[activity_id]
+        result = fn()
+        self.journal[activity_id] = result
+        self.executed.append(activity_id)
+        return result
+```
+
+First, why the model call must not re-run. A workflow summarizes a document with a call whose token count differs every time — as a real model's would. We record it once, then show what a naive re-execution would return versus what replay returns.
+
+```{python}
+calls = {"n": 0}
+def flaky_summarize() -> int:
+    calls["n"] += 1
+    return 100 + 7 * calls["n"]  # a real model call: different tokens each time
+
+engine = WorkflowEngine()
+first_run = engine.activity("summarize", flaky_summarize)
+naive_rerun = flaky_summarize()                       # what re-executing would give
+replayed = engine.activity("summarize", flaky_summarize)  # what replay gives
+print(f"first run recorded {first_run} tokens")
+print(f"naive re-execution would return {naive_rerun} tokens (diverged!)")
+print(f"replay returns {replayed} tokens; real executions so far: {engine.executed}")
+```
+
+The naive re-execution diverges — different tokens, different cost, a possibly different downstream branch — while replay returns the recorded value and the function is not called again. @fig-ch26-replay draws the three paths.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch26-replay
+%%| fig-cap: "Why must a model call be recorded, not re-run, on replay? The first run journals T1; replay returns the recorded T1; only a naive re-execution produces a new T2 that changes cost, latency, and the next branch."
+flowchart LR
+    subgraph first["First run"]
+        A1["call model"] --> R1["journal tokens = T1"]
+    end
+    subgraph replay["Replay after crash"]
+        J["read journal"] --> RT["return recorded T1"]
+    end
+    subgraph naive["Naive re-execution (wrong)"]
+        A2["call model again"] --> R2["new tokens T2 != T1"]
+        R2 --> D["different cost, latency, next branch"]
+    end
+```
+
+Now a crash *inside* a workflow. A booking charges a card — an effect — then sends a receipt. We inject a death during the receipt send, after the charge is journaled, and then resume with the same engine. The charge must replay from the journal without a second call.
+
+```{python}
+sends = {"n": 0}
+def send_receipt() -> str:
+    sends["n"] += 1
+    if sends["n"] == 1:
+        raise InjectedCrash("died sending the receipt")
+    return "receipt-sent"
+
+def booking_workflow(engine: WorkflowEngine, provider: IdempotentProvider) -> str:
+    engine.activity("charge", lambda: provider.apply("charge:order-9", {"cents": 5000}))
+    engine.activity("send_receipt", send_receipt)
+    return "done"
+
+provider = IdempotentProvider()
+engine = WorkflowEngine()
+try:
+    booking_workflow(engine, provider)
+except InjectedCrash as exc:
+    print(f"crashed: {exc}   journal so far: {engine.executed}")
+booking_workflow(engine, provider)  # resume with the same durable journal
+print(f"resumed: journal {engine.executed}   provider_effects={provider.effect_count}")
+```
+
+On resume the charge replayed from the journal — it is not in `executed` a second time — so the card was charged exactly once even though the workflow ran twice. An activity can still run more than once if a worker dies after the external effect but before the engine records completion, which is why the effect ledger of the previous section stays necessary unless the engine and the data store share a documented atomic boundary. Whether to reach for a checkpointer or a full engine is a lifetime decision:
 
 | Decision | Framework checkpointer | Durable-execution engine |
 |---|---|---|
-| unit of resume | model/graph state or named node | workflow history plus activities/steps |
-| long timers and external signals | application implements and operates them | native durable primitive in many engines |
-| deployment migration | deserialize state into compatible graph code | replay/version workflow history under engine rules |
-| external effect contract | application-owned | still application-owned unless engine and data store share a documented atomic boundary |
+| unit of resume | graph or loop state | workflow history plus activities |
+| long timers, external signals | application implements them | native durable primitive |
+| deployment migration | deserialize into compatible code | replay history under version rules |
+| external effect contract | application-owned | still application-owned unless a shared atomic boundary is documented |
 | best fit | conversational or bounded agent state | multi-service, long-running business process |
 
-Deterministic replay means the workflow code makes the same decisions from recorded history. It does **not** mean calling the model again and hoping for the same tokens. Put nondeterministic or paid operations—model inference, network calls, current time, randomness—inside activities or steps whose result is recorded. On replay, return the recorded result. Re-executing an LLM call changes output, cost, latency, and possibly the next control path.
+Against a real engine, the model call is wrapped as a recorded activity — shown here, not executed, because it needs the engine's runtime:
 
-An activity may run more than once if a worker dies after the external effect but before the engine records completion. The effect ledger remains necessary unless the engine gives a narrower atomic guarantee with the affected store. Official [DBOS transaction documentation](https://docs.dbos.dev/python/tutorials/transaction-tutorial), for example, distinguishes database transactions whose result is committed with durability metadata from general steps that can be retried. [Restate's concepts](https://docs.restate.dev/foundations/key-concepts) similarly describe journaled operations and replay. Read exact scope and failure assumptions; do not translate a marketing phrase into a universal guarantee.
+```{python}
+#| eval: false
+from durable_engine import workflow, activity  # a Temporal-class engine
 
-Long human waits become durable timers and signals. The workflow emits an approval request containing exact action identity, suspends without holding a process, and resumes only when a validated signal arrives or the timer expires. Chapter 17 defined approval mechanics, Chapter 24 defined authorization binding, and Chapter 27 operates the queue and reviewer experience. Here the platform guarantee is that restart, deployment, or a week of inactivity does not lose or duplicate the suspended intent.
+@activity
+def summarize(doc: str) -> dict:
+    return call_model(doc)          # non-deterministic + paid: recorded once
 
-Version long-running workflows deliberately. Old histories may replay through new code after a deploy. Use the engine's version markers or worker-version routing, maintain compatibility until old histories drain or migrate, and test yesterday's checkpoints against today's code. Never change an activity name, argument schema, serialization, or branch order and assume stored history will adapt.
-
-The application-owned residue is constant across substrates: business idempotency keys, object authorization, provider reconciliation, compensation semantics, schema migration, release version, secret handling, and authoritative outcome verification. A workflow engine removes a large amount of scheduler and recovery plumbing. It does not decide what “safe to repeat” means for your business.
-
-## Version and recover the complete artifact surface {#sec-ch26-versioning}
-
-“Model version” does not identify an agent release. Output can change when any of the following changes:
-
-- base model, adapter, merge, quantization, tokenizer, or chat template;
-- system prompt, behavior specification, tool schema, skill, or policy;
-- retrieval source snapshot, chunker, embedder, vector index, reranker, or freshness rule;
-- gateway route, decoding settings, cache scope, reasoning budget, or provider adapter;
-- grader, judge rubric, evaluation task set, sandbox image, MCP server, or effect handler.
-
-A **release bundle** maps every material surface to an immutable identifier or content digest. Canonically serialize the map and hash it. Publish the new bundle fully, verify referenced artifacts exist, then atomically move a small environment pointer from the previous hash to the new one. Requests capture the resolved hash at admission and retain it through the whole journey. Rollback publishes a new control-plane event pointing at a proven prior bundle; it never edits historical bundle `v42` in place.
-
-Fail behavior depends on direction of risk. If the control plane is briefly unavailable, a request worker may **fail static** on its last verified bundle when staleness is safe and bounded. If authorization policy or a revoked tool cannot be verified, fail closed. If a new worker receives a bundle hash it cannot resolve, do not silently assemble a partial release from “latest” components.
-
-Cache keys include the bundle hash plus request-specific correctness scopes. Checkpoints store it so resume uses compatible tools and policies. Effect records store it so an incident can reconstruct the code and authorization that produced a receipt. Eval reports and canary decisions identify it so evidence cannot be reassigned to a later release.
-
-Data recovery needs per-store objectives. **Recovery point objective** (RPO) is the maximum tolerable data loss measured in time; **recovery time objective** (RTO) is the target time to restore service. A rebuildable vector index may tolerate an older backup if source documents, chunker, embedder, and deletion log are preserved. An effect ledger may require near-zero RPO because losing a receipt can duplicate money movement. A prompt cache can often be discarded. State that cannot be rebuilt needs tested backup and restore—not merely a backup job with a green timestamp.
-
-Maintain lineage from source document to chunk, embedding, index revision, retrieved context, model call, proposed action, policy decision, and effect receipt. That chain supports deletion propagation from Chapter 18, security forensics from Chapter 24, and incident work in Chapter 27. A vector index is derived state, but “derived” means it needs a reproducible rebuild recipe and source retention decision; it does not mean it may disappear without operational consequence.
-
-Legal hold, retention, and deletion can conflict. A hold preserves in-scope evidence from normal deletion; retention limits how long other data persists; deletion propagates through derived artifacts according to policy and law. Qualified owners decide that policy. The platform supplies classifications, lineage, immutable decisions, scoped jobs, and proof that requested stores were processed.
-
-## Test deterministic code as aggressively as model behavior {#sec-ch26-testing}
-
-An evaluation asks whether a probabilistic system performs tasks. A test asks whether deterministic code obeys an invariant. A release needs both. A 92 percent task pass rate says nothing about whether concurrent budget checks overspend, a retry changes the effect key, a stream drops multibyte text, or yesterday's checkpoint can load.
-
-Use several test families because each sees a different defect:
-
-- **example tests** pin incidents and important nominal paths;
-- **property-based tests** generate many inputs and verify invariants, such as spend never exceeding an atomically reserved cap;
-- **metamorphic tests** change execution while preserving the expected relation—for example, assembled streaming output equals non-streamed output, and adding a retry never increases external effect count;
-- **fuzz tests** attack parsers, protocol frames, schemas, and boundary values;
-- **mutation tests** deliberately alter code and check that the suite detects the change;
-- **concurrency and crash tests** inject interleavings and death at every persistence boundary;
-- **migration tests** load old checkpoints, bundles, ledger rows, and cache metadata under new code.
-
-The Chapter 26 suite has eight focused tests. It derives tenant identity from a virtual key, rejects an over-budget journey, prevents policy-refusal fallback, injects three crashes, rejects a changed payload under an old effect identity, drains and refills a token bucket under an injected clock, proves bundle order does not affect its digest while a corpus change does, and checks cache/canary math.
-
-Mocks are useful for rare errors and deterministic unit tests, but a mock provider often grants the exact idempotency behavior you forgot to verify. Record/replay preserves a historical response but cannot prove current policy, rate limiting, or side effects. Contract tests should run against a provider sandbox; crash and transaction guarantees need an integration environment with the actual database and workflow engine. Official DBOS testing guidance, for instance, distinguishes mock-level workflow sequence tests from integration tests of recovery behavior.
-
-Quarantine a flaky test only with an owner, diagnosis, impact statement, and expiry. A silently retried test suite trains the team to ignore evidence. If nondeterminism is intentional, control the seed or assert a statistical property with the method from Chapter 22; do not label every intermittent failure “the model.”
-
-Test the tests. A mutation that removes tenant scope, creates a fresh effect key on retry, skips an audit write, or reuses a stale bundle should fail. If it passes, the release argument has an uncovered boundary regardless of its number of green examples.
-
-## Deliver through gates, shadow traffic, and powered canaries {#sec-ch26-delivery}
-
-Progressive delivery limits the number of users and effects exposed while evidence accumulates:
-
-1. **offline gate:** unit, property, migration, security, and task evaluations run against the exact bundle;
-2. **shadow:** the candidate receives a copy of eligible traffic but cannot create production effects; compare outputs, cost, latency, and grader results asynchronously;
-3. **canary:** a small declared traffic slice uses the candidate with real effects and strong abort rules;
-4. **ramp:** increase allocation in stages while preserving a stable comparison group and rollback path;
-5. **converge:** retire the previous version only after old journeys, checkpoints, caches, and workflows drain or migrate.
-
-Shadowing is not free. It may duplicate model and tool cost, disclose production inputs to another provider, mutate caches, and overload dependencies. Strip write capabilities, use approved data handling, tag all usage, and exclude cases whose consent or residency does not permit duplication. Never call a real effect merely because its response will be ignored.
-
-A canary needs enough independent tasks to detect a plausible regression. If a candidate independently fails an additional fraction $p$ of cases and the gate detects the release after seeing at least one such failure, then the probability of detection in $n$ cases is
-
-$$
-P(\text{detect})=1-(1-p)^n.
-$$
-
-For target probability $\gamma$, choose
-
-$$
-n \ge \frac{\log(1-\gamma)}{\log(1-p)}.
-$$
-
-At $p=0.05$, 25 cases detect at least one extra failure with probability about 0.723—not “about half,” and certainly not proof of safety. Reaching 0.80 requires 32 independent cases under this simplified model. Correlation, low base rates, delayed outcomes, and imperfect graders reduce what the calculation means. For comparative quality, use the paired uncertainty and power methods from Chapter 22.
-
-@fig-ch26-economics-delivery combines the two quantitative decisions generated from code. The left panel shows the synthetic cache break-even under declared multipliers. The right shows how slowly evidence accumulates for a five-percent failure mode.
-
-![Two panels show prefix-cache savings increasing after one reuse and the probability of observing at least one five-percent regression rising with independent canary tasks, crossing 80 percent at 32.](../assets/figures/ch26-economics-delivery.svg){#fig-ch26-economics-delivery fig-cap="When does synthetic cache reuse pay back, and how many independent tasks expose a five-percent regression? Generated from `cost_curves.py`; assumptions are illustrative, not provider prices."}
-
-Use different gates for different harms. A single unauthorized transfer, cross-tenant disclosure, or broken must-not-break case can be zero tolerance. Quality and latency usually use non-inferiority margins, uncertainty bounds, and minimum slices. The reference gate holds if any critical failure occurs or if a Wilson lower bound misses a declared quality floor. That compact rule illustrates uncertainty; Chapter 22's paired release contract remains canonical for full evaluation.
-
-Rollback has two meanings. **Technical rollback** moves traffic to a prior bundle. **Business rollback** repairs effects already caused: reconcile transactions, contact users, retract messages where possible, or invoke compensation. Chapter 27 owns incident execution. The delivery pipeline must retain the identities, receipts, release hashes, and kill-switch path that make both possible.
-
-## Build {#sec-ch26-build}
-
-The integrated build runs without a model, network, database, or workflow service. This is deliberate: it isolates the platform invariants before adapters add distributed failure modes. From the `newbook/` directory, run:
-
-```bash
-python -m pytest tests/test_ch26_platform.py -q
-python code/ch26/mini_platform.py
-python code/ch26/cost_curves.py \
-  --plot assets/figures/ch26-economics-delivery.svg
+@workflow
+def review_workflow(doc: str) -> dict:
+    summary = summarize(doc)        # replay returns the recorded result
+    approval = wait_for_signal("human_approval", timeout="14 days")  # durable timer
+    return {"summary": summary, "approved": approval}
 ```
 
-The deterministic platform report is:
+The long human wait becomes a durable timer and signal: the workflow suspends without holding a process and resumes when a validated signal arrives or the timer expires. Chapter 17 defined approval mechanics and Chapter 24 the authorization binding; the platform guarantee here is only that a restart, a deploy, or a two-week wait neither loses nor duplicates the suspended intent.
 
-```json
-{
-  "tenant": "acme",
-  "route": "small",
-  "journey_cost": 0.013,
-  "injected_crashes": 3,
-  "provider_effects": 1,
-  "receipt": "receipt-1",
-  "ledger_state": "RECORDED",
-  "canary": {
-    "effect": "PROMOTE",
-    "observed_rate": 0.98,
-    "lower_bound": 0.9299868370580062,
-    "reasons": []
-  }
-}
+The last durable pattern is **compensation**, and it is not time travel. When a multi-step booking fails partway, a saga runs a compensating action for each committed step — but a compensation is a *new forward effect* with its own stable identity, not an undo. Our saga books a flight and a hotel, fails on the event, and compensates the two bookings in reverse.
+
+```{python}
+# @save
+class EffectRejected(RuntimeError):
+    """A provider declined an effect (e.g. an event is sold out)."""
+
+
+def book_trip(engine: WorkflowEngine, provider: IdempotentProvider,
+              event_available: bool) -> list[str]:
+    """Book flight, hotel, and event as a saga; compensate on failure.
+
+    Each booking is a durable activity. If the event booking is rejected, the
+    already-committed steps are compensated in reverse order, each compensation
+    being a new forward effect with its own stable key — because you cannot
+    un-charge a card, only issue a matching reversal.
+
+    Args:
+        engine: The durable engine journaling each step.
+        provider: The idempotent effect provider.
+        event_available: Whether the event booking succeeds.
+
+    Returns:
+        The provider receipts, in the order effects were committed (bookings
+        first, then any compensations).
+
+    Raises:
+        EffectRejected: After compensations run, to signal the saga failed.
+    """
+    compensations: list[tuple[str, str]] = []
+    engine.activity("flight", lambda: provider.apply("flight:T1", {"seat": "12A"}))
+    compensations.append(("cancel_flight", "flight:T1"))
+    engine.activity("hotel", lambda: provider.apply("hotel:T1", {"nights": 2}))
+    compensations.append(("cancel_hotel", "hotel:T1"))
+    try:
+        if not event_available:
+            raise EffectRejected("event sold out")
+        engine.activity("event", lambda: provider.apply("event:T1", {"seats": 2}))
+    except EffectRejected:
+        for name, target in reversed(compensations):
+            provider.apply(f"{name}:{target}", {"compensates": target})
+        raise
+    return list(provider.receipts.values())
 ```
 
-Follow the evidence in dependency order. First, `vk-acme` maps server-side to tenant `acme`; no payload tenant participates. The gateway selects the least-cost healthy deployment satisfying `chat`. It settles 20,000 input and 2,000 output tokens under an explicit synthetic schedule to 0.013 cost units.
+```{python}
+provider = IdempotentProvider()
+engine = WorkflowEngine()
+try:
+    book_trip(engine, provider, event_available=False)
+except EffectRejected as exc:
+    print("saga failed:", exc)
+for key, receipt in provider.receipts.items():
+    print(f"  {receipt:11}  {key}")
+print("total forward effects (2 bookings + 2 compensations):", provider.effect_count)
+```
 
-Second, the same refund intent is attempted across three injected process deaths. Each death occurs after the provider accepted the operation and before the local receipt was recorded—the dangerous window. Recovery retains `refund:A-17:v1`, the provider reports only one effect, and the final replay records `receipt-1`. Change the amount while keeping that key and the ledger rejects the substitution.
+The flight and hotel were booked, the event was rejected, and the two bookings were compensated with `cancel_hotel:hotel:T1` then `cancel_flight:flight:T1` — new effects with stable ids, applied in reverse. Had the event been an *irreversible* effect that had already committed, no compensation could undo it; that is why effects are classified as reversible, compensatable, or irreversible *before* an autonomous workflow is allowed to drive them [@garcia1987sagas].
 
-Third, the canary observes 98 successes in 100 cases. Its Wilson lower bound is about 0.930, above the fixture's 0.90 floor, so it promotes. Change the input to 24 of 25: the observed rate is still 0.96, but the lower bound is below 0.90 and the gate holds. Add one critical failure to a perfect 100 of 100 and the zero-tolerance rule also holds.
+## Version the full artifact surface {#sec-ch26-versioning}
 
-Finally, regenerate the figure. Under the illustrative write multiplier 1.25 and read multiplier 0.10, one cache reuse crosses break-even. Under the independent one-hit detection model, 32 cases provide at least an 80-percent chance of seeing a five-percent regression.
+"Model version" does not identify an agent release. The output can change when the tokenizer, the system prompt, a tool schema, the retrieval corpus snapshot, the embedder, the reranker, a decoding setting, or the judge rubric changes — a dozen surfaces, any of which silently alters behavior. A **release bundle** maps every material surface to an immutable identifier and is addressed by the content hash of that map, so two releases are the same release exactly when their bundles hash equal. Because the map is order-independent, the hash must be too.
 
-The artifact names its missing production assumptions. Budget admission is not transactional under concurrency. Deployments do not implement a circuit-breaker state machine. The provider supports stable-key idempotency. The effect ledger is in memory and has no leases, reconciliation worker, or external database transaction. The release bundle is hashed but not signed or atomically published. The canary has no paired baseline or delayed outcome. The token bucket is process-local. These are adapter requirements, not hidden guarantees.
+```{python}
+# @save
+def bundle_digest(surface: dict[str, str]) -> str:
+    """Return a canonical content hash of a complete release bundle.
 
-Map the mechanisms outward without changing their contracts. Put identity and atomic reservations in the gateway's durable store. Resolve a catalog alias to a pinned model deployment. Wrap model inference as a recorded workflow activity. Put the effect ledger beside the credential and authoritative integration. Store release bundles in immutable object or database records and swap one signed pointer. Feed the Chapter 22 evaluation report into the offline gate. Then repeat the three-crash drill against the actual database, workflow engine, and provider sandbox before canarying.
+    Every correctness-bearing surface — model, tokenizer, prompt, tools,
+    corpus, embedder, judge — maps to an immutable id here. Canonical JSON
+    makes the digest independent of key order, so the same surfaces always
+    hash equal and any single change flips the digest.
 
-## What endures, what changes {#sec-ch26-endures}
+    Args:
+        surface: A map from surface name to its immutable identifier.
 
-**What endures.** Give every journey trusted identity, a deadline, a complete release version, and a budget. Separate request, data, control, and evidence responsibilities. Route only among deployments that satisfy the contract. Treat retries as multiplied load and ambiguous writes as unresolved effects. Make effect identity stable before execution, preserve authoritative receipts, and state the exact scope of any exactly-once claim. Record nondeterministic results for replay. Version every correctness surface. Test crashes and migrations. Deliver from offline evidence through shadow, powered canary, and staged ramp with both technical and business rollback paths.
+    Returns:
+        The hex SHA-256 digest addressing this exact bundle.
+    """
+    encoded = json.dumps(surface, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
-**What changes.** Provider prices, cache discounts, accelerator offerings, gateway products, workflow-engine APIs, managed regions, quotas, model catalogs, and deployment frameworks will change. Appendix C records those dated facts. Removing the Landscape box leaves the platform mechanisms, equations, and failure tests intact.
 
-## Exercises {#sec-ch26-exercises}
+def manifest_diff(old: dict[str, str], new: dict[str, str]) -> set[str]:
+    """Return the surfaces whose identifier changed between two bundles."""
+    return {k for k in old.keys() | new.keys() if old.get(k) != new.get(k)}
+```
 
-1. Extend the gateway with atomic budget reservation and settlement for concurrent journeys. Write a barrier-based test in which two estimates individually fit but together exceed the tenant limit; prove that at most one is admitted.
-2. Add a circuit breaker with closed, open, and half-open states under an injected clock. Test that a policy refusal does not affect health, transient failures open the circuit, and only a bounded probe enters half-open.
-3. Derive cache break-even when entries expire before reuse with probability $e$ and a miss pays both lookup overhead and uncached cost. Plot the boundary over $e$, write premium, and read discount. State which probabilities must be measured per prefix cohort.
-4. Implement a reconciliation worker for ledger records left `RESERVED`. Model provider answers `committed`, `not_found`, and `unknown`; design a safe transition for each. Defend why `unknown` must not invent a new effect key.
-5. Design a saga for booking a flight, hotel, and nonrefundable event. Classify each effect as reversible, compensatable, or irreversible; give every forward and compensating action a stable identity; identify the states that require human ownership.
-6. Compare a graph checkpointer and a durable workflow engine for an agent waiting ten days on an approval. Include state ownership, timers, worker deploys, activity replay, schema migration, effect idempotency, operator controls, and the failure that each substrate leaves to the application.
-7. Write a complete release-bundle manifest for a permission-aware RAG agent. Mutate one tokenizer, corpus, policy, MCP server, and judge version independently; prove every mutation changes the digest and invalidates affected cache scopes.
-8. Power a canary for a critical failure expected at one in ten thousand journeys. Explain why waiting to observe one event may be unacceptable, then combine targeted offline adversarial cases, invariant gates, shadow evidence, and live exposure limits into a release argument.
+We hash a manifest, confirm that reordering its keys leaves the digest unchanged, then change exactly one surface and watch the digest flip while `manifest_diff` names precisely what moved.
 
-## Notes and sources {#sec-ch26-sources}
+```{python}
+v42 = {"model": "m-1", "tokenizer": "tok-3", "prompt": "sys-7",
+       "corpus": "docs-2026-07-01", "judge": "rubric-4"}
+reordered = dict(reversed(list(v42.items())))
+v43 = {**v42, "corpus": "docs-2026-07-15"}
 
-- Dean and Barroso, [“The Tail at Scale”](https://research.google/pubs/the-tail-at-scale/), explain how component latency tails dominate large fan-out services and motivate carefully budgeted hedging.
-- Gray, [“Why Do Computers Stop and What Can Be Done About It?”](https://www.hpl.hp.com/techreports/tandem/TR-85.7.pdf), is a foundational failure-and-recovery treatment behind process-pair and transaction thinking.
-- Garcia-Molina and Salem, [“Sagas”](https://dl.acm.org/doi/10.1145/38713.38742), introduce compensating transactions for long-lived activities.
-- Kleppmann, [*Designing Data-Intensive Applications*](https://dataintensive.net/), is a useful systems reference for replication, transactions, derived data, stream processing, and the limits of distributed guarantees.
-- Temporal's official [documentation](https://docs.temporal.io/) describes workflow history, replay, activities, timers, signals, and versioning in its current engine.
-- Restate's official [key concepts](https://docs.restate.dev/foundations/key-concepts) describe journaled durable operations, single-writer state, and suspended handlers.
-- DBOS's official [workflow](https://docs.dbos.dev/golang/tutorials/workflow-tutorial), [transaction](https://docs.dbos.dev/python/tutorials/transaction-tutorial), and [testing](https://docs.dbos.dev/java/tutorials/testing) documentation makes useful distinctions among workflow recovery, retried steps, atomic database transactions, and integration tests.
-- Fowler, [“Transactional Outbox”](https://microservices.io/patterns/data/transactional-outbox.html), summarizes the local transaction plus at-least-once relay pattern and its consumer-idempotency requirement.
-- Wilson, [“Probable Inference, the Law of Succession, and Statistical Inference”](https://doi.org/10.1086/320169), is the primary source for the binomial interval used by the compact canary gate; Chapter 22 provides the fuller comparative evaluation method.
+print("digest v42 :", bundle_digest(v42)[:16])
+print("reordered  :", bundle_digest(reordered)[:16], " (same bundle, same hash)")
+print("digest v43 :", bundle_digest(v43)[:16], " (one surface changed)")
+print("changed surfaces:", manifest_diff(v42, v43))
+```
+
+Order does not matter; a single corpus bump does. A request captures the resolved hash at admission and keeps it for the whole journey, so caches key on it, checkpoints store it so resume uses compatible tools, and effect records store it so an incident can reconstruct the exact code and authorization that produced a receipt. Rollback publishes a *new* control-plane pointer to a proven prior bundle; it never edits `v42` in place.
+
+Recovery of the data behind those surfaces needs per-store objectives. **Recovery point objective** (RPO) is the maximum tolerable data loss in time; **recovery time objective** (RTO) is the target time to restore service. A rebuildable vector index can tolerate an older backup as long as its source documents, chunker, embedder, and deletion log are retained; an effect ledger may need near-zero RPO because a lost receipt can duplicate money movement; a prompt cache can often be discarded. State that cannot be rebuilt needs a *tested* restore, not merely a backup job with a green timestamp — and end-to-end lineage from source document through chunk, embedding, retrieved context, model call, and effect receipt is what makes deletion propagation (Chapter 18), forensics (Chapter 24), and incident reconstruction (Chapter 27) possible [@kleppmann2017ddia].
+
+## Test the deterministic shell {#sec-ch26-testing}
+
+An evaluation asks whether a probabilistic system performs a task; a **test** asks whether deterministic code obeys an invariant. A release needs both, and a ninety-two-percent task pass rate says nothing about whether concurrent budget checks overspend, a retry changes an effect key, or yesterday's checkpoint still loads. The most valuable test family for the machinery in this chapter is the **property-based** test: rather than pinning one example, it generates many inputs and asserts an invariant across all of them. The invariant we most want is the one @sec-ch26-ledger claimed — that no number of crashes produces more than one effect — so we assert it over hundreds of random crash schedules.
+
+```{python}
+def effect_count_is_one(crashes: int, cents: int, seed: int) -> bool:
+    ledger, provider = EffectLedger(), IdempotentProvider()
+    key = f"refund:{seed}:v1"
+    payload = {"cents": cents}
+    for _ in range(crashes):
+        try:
+            execute_once(ledger, provider, key, payload, crash_after_provider=True)
+        except InjectedCrash:
+            pass
+    execute_once(ledger, provider, key, payload)
+    return provider.effect_count == 1
+
+rng = random.Random(2026)
+cases = [(rng.randint(0, 12), rng.randint(1, 100_000), i) for i in range(500)]
+held = all(effect_count_is_one(c, cents, s) for c, cents, s in cases)
+print(f"property held over {len(cases)} random crash schedules: {held}")
+```
+
+Five hundred random schedules, the invariant holds in every one. A dedicated tool such as Hypothesis automates this generation *and* shrinks a failure to its minimal case; the hand-rolled loop keeps the chapter dependency-free while teaching the same idea. Two neighboring families are worth naming. A **metamorphic** test changes execution while preserving a relation — for example, "adding a retry never increases the external effect count," which we can check by comparing a clean run to a crash-and-recover run and asserting the effect counts are equal. A **mutation** test deliberately breaks the code — say, making `reserve` accept any payload for an existing key — and confirms the suite *notices*; a test that stays green under that mutation was never really testing the substitution guard. Mocks help for rare errors but often grant the exact idempotency you forgot to verify, so crash and transaction guarantees need an integration environment with the real database and engine; quarantine a flaky test only with an owner, a diagnosis, and an expiry, never as a silent retry.
+
+## Deliver through gates, shadow, and canary {#sec-ch26-delivery}
+
+The last piece is getting a new bundle into production without exposing every user to its mistakes. Progressive delivery is a funnel that widens exposure only as evidence accumulates: an *offline gate* runs tests and evaluations against the exact bundle; a *shadow* stage sends the candidate a copy of traffic but lets it create no effects; a *canary* routes a small real-effect slice with strong abort rules; a *ramp* widens it in stages; and *converge* retires the old version only after its journeys drain. The reason the canary slice can be small is statistical: if a candidate independently fails an extra fraction $p$ of cases, the chance of catching at least one failure in $n$ independent cases is $P = 1 - (1-p)^n$, so a target detection probability $\gamma$ needs $n \ge \log(1-\gamma)/\log(1-p)$ cases.
+
+```{python}
+# @save
+def wilson_lower(successes: int, trials: int, z: float = 1.96) -> float:
+    """Return a Wilson lower confidence bound for a success rate.
+
+    The Wilson interval is well-behaved near 0 and 1 and at small samples,
+    where the naive normal interval misbehaves. A canary uses the lower bound —
+    not the point estimate — so a good-looking rate from few trials cannot
+    promote a release on luck.
+
+    Args:
+        successes: Number of successful canary cases.
+        trials: Total canary cases (must be positive).
+        z: Normal quantile for the confidence level (1.96 ~ 95%).
+
+    Returns:
+        The lower confidence bound on the true success rate.
+
+    Raises:
+        ValueError: If ``trials`` is not positive.
+    """
+    if trials <= 0:
+        raise ValueError("trials must be positive")
+    rate = successes / trials
+    denom = 1 + z * z / trials
+    center = rate + z * z / (2 * trials)
+    radius = z * math.sqrt(rate * (1 - rate) / trials + z * z / (4 * trials ** 2))
+    return max(0.0, (center - radius) / denom)
+
+
+def detection_probability(sample_size: int, regression_rate: float) -> float:
+    """Return the chance of seeing at least one independent regression."""
+    return 1 - (1 - regression_rate) ** sample_size
+
+
+def canary_sample_size(regression_rate: float, target_prob: float) -> int:
+    """Return the independent cases needed to detect a regression with target_prob.
+
+    Args:
+        regression_rate: The extra failure fraction to be able to catch.
+        target_prob: The detection probability to reach, in (0, 1).
+
+    Returns:
+        The smallest case count meeting the target under the one-hit model.
+    """
+    return math.ceil(math.log(1 - target_prob) / math.log(1 - regression_rate))
+```
+
+The gate itself combines two rules of different kinds. Quality uses the Wilson lower bound against a release floor — uncertainty-aware, so few trials cannot promote on luck — while safety is zero-tolerance: any critical failure holds the release outright.
+
+```{python}
+# @save
+@dataclass(frozen=True)
+class CanaryDecision:
+    """The outcome of a canary gate: promote or hold, with the reasons why."""
+
+    effect: str
+    observed_rate: float
+    lower_bound: float
+    reasons: tuple[str, ...]
+
+
+def canary_gate(successes: int, trials: int, minimum_rate: float,
+                critical_failures: int = 0) -> CanaryDecision:
+    """Decide promotion from an uncertainty bound plus a zero-tolerance rule.
+
+    The candidate promotes only if no critical invariant failed and the Wilson
+    lower bound clears the release floor; otherwise it holds. Combining a
+    statistical quality test with an absolute safety test is what lets one
+    unauthorized transfer block a release that otherwise looks excellent.
+
+    Args:
+        successes: Successful canary cases.
+        trials: Total canary cases.
+        minimum_rate: The quality floor the lower bound must clear.
+        critical_failures: Count of zero-tolerance failures observed.
+
+    Returns:
+        A ``CanaryDecision`` naming the effect and every holding reason.
+    """
+    lower = wilson_lower(successes, trials)
+    reasons: list[str] = []
+    if critical_failures:
+        reasons.append("critical invariant failed")
+    if lower < minimum_rate:
+        reasons.append("quality lower bound misses release floor")
+    return CanaryDecision("PROMOTE" if not reasons else "HOLD",
+                          successes / trials, lower, tuple(reasons))
+```
+
+Now watch the gate flip across three scenarios that a naive point-estimate gate would get wrong. A strong result on a hundred cases promotes; the *same* observed rate on twenty-five cases holds, because the lower bound has not cleared the floor; and a perfect run with one critical failure holds regardless of the rate.
+
+```{python}
+floor = 0.90
+scenarios = [
+    ("98 of 100", canary_gate(98, 100, floor)),
+    ("24 of 25", canary_gate(24, 25, floor)),
+    ("100 of 100, 1 critical", canary_gate(100, 100, floor, critical_failures=1)),
+]
+for name, decision in scenarios:
+    print(f"{name:26} rate={decision.observed_rate:.2f}  "
+          f"lower={decision.lower_bound:.3f}  -> {decision.effect}  "
+          f"{list(decision.reasons)}")
+print(f"\ncases to catch a 5% regression at 80% confidence: "
+      f"{canary_sample_size(0.05, 0.80)}")
+```
+
+The observed rate is nearly identical in the first two rows, yet only the larger sample promotes — the gate is buying its confidence with cases, not with a lucky ratio. @fig-ch26-delivery-funnel puts the exposure funnel beside the detection curve so the two ideas — shrink exposure, grow evidence — sit together.
+
+```{python}
+#| label: fig-ch26-delivery-funnel
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does exposure shrink while evidence grows? Left: each delivery stage exposes fewer users to unproven behavior. Right: detection probability for a 5% regression rises with independent cases, crossing 80% at 32."
+stages = ["offline", "shadow", "canary", "ramp", "converge"]
+exposure = [0.0, 0.0, 0.05, 0.35, 1.0]
+n = list(range(1, 81))
+detect = [detection_probability(k, 0.05) for k in n]
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.6, 3.4))
+ax1.barh(stages[::-1], exposure[::-1], color="#315b8a")
+ax1.set_xlabel("fraction of users exposed to real effects")
+ax1.set_title("delivery funnel")
+ax2.plot(n, detect, color="#2f855a", lw=2)
+ax2.axhline(0.8, ls="--", color="#666666", lw=1)
+ax2.scatter([32], [detection_probability(32, 0.05)], color="#2f855a", zorder=3)
+ax2.annotate("32 cases", (32, 0.8), textcoords="offset points", xytext=(6, -14),
+             fontsize=8)
+ax2.set(xlabel="independent canary cases", ylabel="detection probability",
+        title="detect one 5% regression", ylim=(0, 1))
+for ax in (ax1, ax2):
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(alpha=0.2)
+fig.tight_layout()
+plt.show()
+```
+
+Two closing rules. Shadowing is not free — it can duplicate model and tool cost, disclose inputs to another provider, and mutate caches — so a shadow candidate must have its write capabilities stripped and its traffic excluded where consent or residency forbids duplication. And rollback has two meanings that a delivery pipeline must both support: **technical rollback** moves traffic to a prior bundle, while **business rollback** repairs effects already caused — reconcile transactions, contact users, invoke compensation. Chapter 27 owns incident execution; the pipeline's job is to retain the identities, receipts, and release hashes that make both rollbacks possible. Chapter 22's paired release contract remains the canonical treatment for full comparative evaluation; the compact Wilson gate here illustrates the uncertainty discipline that gate applies.
+
+## Summary
+
+A production platform is the enforcement point the Friday incident lacked: the boundary between application intent and spendable capacity. We built one and measured it — a gateway that makes identity, budget, and routing explicit; a cost model that turns caching, batching, and loop pathologies into numbers; reliability and durable-execution machinery that make an external effect happen exactly once across crashes and compensate when a saga fails; a content-hashed release manifest; and a release argument of property tests and a powered canary. The recurring lesson: a prompt enforces nothing, but a stable key, a recorded activity, and an uncertainty-aware gate do. Chapter 27 operates what we shipped.
+
+## Exercises
+
+1. **Cascade knobs.** Using `run_cascade`, sweep the grader's `false_accept` rate from 0.0 to 0.3 and plot accuracy and total cost against it. At what false-accept rate does the cascade's accuracy fall below the router's? Explain, in terms of @eq-ch26-cost, why a worse grader costs both quality *and* money.
+2. **Atomic admission.** `Gateway.admit` checks a balance but does not reserve it, so two concurrent journeys that individually fit can together overspend. Add a reserve-and-release protocol (reserve at admit, settle or release at the end) and write a test in which two estimates individually fit the limit but the second is rejected once the first has reserved.
+3. **Break-even under expiry.** Extend @eq-ch26-cache so a cached prefix expires before reuse with probability $e$ and a miss pays both the lookup and the full uncached cost. Derive the new break-even reuse count, implement it beside `cache_breakeven`, and plot the boundary over $e$ for the chapter's write and read multipliers.
+4. **Reconciliation worker.** Implement a worker that resolves ledger records left `RESERVED` after a crash by querying the provider. Model three provider answers — `committed`, `not_found`, `unknown` — and give each a safe transition. Defend, in code and a sentence, why `unknown` must never invent a new effect key.
+5. **Saga with an irreversible step.** Modify `book_trip` so the event is irreversible and *succeeds*, but a later "insurance" step fails.
+    a. Show that the two compensatable bookings can be reversed while the irreversible event cannot.
+    b. Route the irreversible effect to a manual-review outcome instead of a compensation, and print the resulting effect log.
+    c. Argue which effects an autonomous workflow should be allowed to drive without a human, using your classification.
+6. **Replay divergence, measured.** Wrap `flaky_summarize` in a workflow whose next branch depends on whether the token count exceeds a threshold. Run it once, then run a naive re-execution and a journaled replay, and show that only the naive path can take a different branch. Relate this to why paid, non-deterministic calls belong inside recorded activities.
+7. **Power a rare-failure canary.** A critical failure is expected once in ten thousand journeys. Use `canary_sample_size` to show how many cases a live canary would need to expect one such event, explain why waiting to observe one may be unacceptable, then design a release argument that combines targeted offline adversarial cases, invariant gates, and shadow evidence to bound exposure without live proof.
+8. **Manifest completeness.** Write a release-bundle manifest for a permission-aware RAG agent covering every surface named in @sec-ch26-versioning. Mutate the tokenizer, the corpus snapshot, the policy, and the judge each independently, and show with `bundle_digest` and `manifest_diff` that each mutation flips the digest and names exactly the surface that changed.
