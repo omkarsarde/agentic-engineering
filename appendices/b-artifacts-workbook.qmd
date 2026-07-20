@@ -12,28 +12,9 @@ This appendix is a toolbox with three wings:
 
 Nothing here replaces the chapter that teaches a mechanism. When a field or drill is hard, follow its owner link, repair the gap, and return.
 
-## Contents
+## Using the toolbox {#app-b-use}
 
-- [How to use the toolbox honestly](#app-b-use)
-- [Cards and architecture decisions](#app-b-cards)
-- [Evaluation contracts and reports](#app-b-evals)
-- [Risk, privacy, safety, and AIMS artifacts](#app-b-risk)
-- [Operations and launch artifacts](#app-b-operations)
-- [Model-side sizing worksheets](#app-b-model-sizing)
-- [System-side sizing worksheets](#app-b-system-sizing)
-- [Agent reliability and critical-path worksheets](#app-b-reliability)
-- [The coding-drill circuit](#app-b-drills)
-- [Rapid-fire questions with follow-ups](#app-b-qa)
-- [The system-design workbook](#app-b-design)
-- [Worked design prompts, 45 minutes, and self-scoring](#app-b-timed)
-- [Build: one packet and one timed loop](#app-b-build)
-- [What endures, what changes](#app-b-endures)
-- [Exercises](#app-b-exercises)
-- [Notes and sources](#app-b-sources)
-
-## How to use the toolbox honestly {#app-b-use}
-
-Artifacts are review-after-building instruments. A blank form cannot make a system safe, and a filled form cannot substitute for the measurements it cites. Every consequential field should point to a versioned dataset, trace, test, query, dashboard, decision record, or accountable owner. Write **unknown** when evidence is missing.
+An artifact is something you fill in *after* building, to make a claim reviewable. A blank form cannot make a system safe, and a filled form cannot substitute for the measurements it cites, so every consequential field points to a versioned dataset, trace, test, query, dashboard, decision record, or accountable owner. Write **unknown** when evidence is missing; a visible gap is worth more than a confident guess.
 
 Use the workbook in a closed loop:
 
@@ -43,11 +24,12 @@ Use the workbook in a closed loop:
 4. repeat from a blank page after a delay;
 5. count a pass only when the properties hold—not when the code resembles a remembered answer.
 
-A memorized key is not a pass. For coding drills, change dimensions and adversarial cases. For design work, invert one requirement. For artifacts, ask another reviewer to follow every evidence pointer.
+For coding drills, change the dimensions and add adversarial cases; for design work, invert one requirement; for artifacts, ask another reviewer to follow every evidence pointer.
 
 The artifact bundle lives under `artifacts/templates/`; every template is linked individually in the sections below. Copy a template for a real project rather than editing the book's blank source.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-appb-lifecycle
 %%| fig-cap: "When is each evidence artifact created and who consumes it?"
 %%| fig-alt: "During scope and design, teams create cards, an ADR, lineage, and threat model. Evaluation produces a contract and report. Launch produces SLO, capacity, safety, privacy, AIMS, runbook, and launch review. Operation produces incidents, postmortems, and regression tests. Chapters 28 and 32 consume the connected packet."
@@ -72,7 +54,7 @@ Cards describe the thing being evaluated and the boundary of its claims. An arch
 
 ### Dataset card
 
-Use the [dataset-card template](../artifacts/templates/dataset-card.md) for training, tuning, retrieval, and evaluation collections.
+Use the [dataset-card template](../artifacts/templates/dataset-card.md), in the lineage of [Datasheets for Datasets](https://arxiv.org/abs/1803.09010), for training, tuning, retrieval, and evaluation collections.
 
 | Field | Evidence that earns it | Owner in the spine |
 |---|---|---|
@@ -88,7 +70,7 @@ The card does not claim “representative” without naming the population, samp
 
 ### Model card
 
-Use the [model-card template](../artifacts/templates/model-card.md) for a trained, adapted, merged, or selected model.
+Use the [model-card template](../artifacts/templates/model-card.md), following [Model Cards for Model Reporting](https://arxiv.org/abs/1810.03993), for a trained, adapted, merged, or selected model.
 
 | Field | Evidence that earns it | Owner |
 |---|---|---|
@@ -109,7 +91,7 @@ System claims are scenario-specific. “The model refuses harmful requests” is
 
 ### Architecture decision record
 
-Use the [ADR template](../artifacts/templates/architecture-decision-record.md). A useful ADR contains:
+Use the [ADR template](../artifacts/templates/architecture-decision-record.md), in [Nygard's formulation](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions). A useful ADR contains:
 
 - context and forces;
 - considered options, including the conventional baseline;
@@ -134,19 +116,20 @@ Minimum contract fields:
 | task set | immutable identity, version, sampling, exclusions, contamination controls |
 | system versions | model, prompt, policy, tools, data/index, runtime, evaluator |
 | success predicates | task outcome plus policy/final-state requirements |
-| graders | deterministic checks first; judge prompt/model and calibration where used |
+| graders | deterministic final-state checks first; any model judge calibrated against human labels (Cohen's kappa, fail-recall, position-flip rate) before its scores count |
 | slices | consequence, tenant, language, difficulty, tool path, safety, accessibility |
 | uncertainty | confidence interval, clustering unit, repeated-trial treatment |
-| decision rule | superiority/noninferiority margin, maximum regressions, AND gates |
+| decision rule | AND-gated: the paired (task-clustered) delta with a bootstrap lower bound versus a non-inferiority margin, per-slice floors, must-not-break/golden regressions, and a judge-calibration gate — every failing reason named |
 | cost and latency | measurement boundary, percentiles, retries, human allocation |
 | failure handling | invalid samples, timeouts, grader disagreement, missing telemetry |
 
 Then fill the [evaluation-report template](../artifacts/templates/evaluation-report.md) without changing the contract. The report includes sample flow, baseline and candidate deltas with uncertainty, slice table, regression list, judge agreement/calibration, cost/latency, adversarial results, trace links, and verdict.
 
-The report should distinguish:
+Tests and evals are the two halves of one release argument that Chapter 22 develops: a **test** asserts a deterministic invariant (a schema parses, a denied tool never runs), and an **eval** estimates behavior over a population. The report keeps both, applies its predeclared rule, and distinguishes:
 
 - **task success** from **policy compliance**;
-- **pass-at-$k$** (at least one success among attempts) from **pass-to-the-$k$** (all required steps or repeats succeed);
+- **pass@k** (best-of-$k$ capability) from **pass^k**, the pass-to-the-$k$ reliability the worksheets below compute;
+- the **task** as the unit of resampling from the individual trial, so repeated trials never shrink the interval into fake significance;
 - final-state checks from transcript-quality judgments;
 - exploratory analysis from the predeclared release rule;
 - missing evidence from a measured pass.
@@ -159,16 +142,14 @@ Four artifacts answer different questions. Combining them into one generic “re
 
 ### Threat model
 
-Use the [threat-model template](../artifacts/templates/threat-model.md). It asks:
+Use the [threat-model template](../artifacts/templates/threat-model.md). Chapter 24 frames agent security as four questions answered in order:
 
-- What assets and user outcomes matter?
-- Where do data and authority cross trust boundaries?
-- What attacker goals and abuse cases follow those flows?
-- Which preventive, detective, containment, and recovery controls cut each path?
-- Which test demonstrates the control?
-- What residual risk remains and who accepts it?
+- **Assets.** What must stay intact — user outcomes, private data, funds, and the model itself, which is an asset an attacker can extract or steer?
+- **Influence.** Where does untrusted input reach the system, and which components hold the lethal trifecta of untrusted influence, sensitive access, and an external effect at once?
+- **Authority.** Who may cause each effect, under what state? Does every consequential action pass one deterministic enforcement point — a policy decision point returning allow, deny, or review, and a policy enforcement point that is the only route to the effect — that derives identity from authenticated context rather than model arguments, so a compromised model cannot act as a confused deputy?
+- **Effect.** For each attacker goal and abuse case, which preventive, detective, containment, and recovery control cuts the path to the effect, which test demonstrates that control holds even when the model is fully compromised, and what residual risk remains and who accepts it?
 
-Chapter 24 owns agent-specific action security. The threat model is adversarial and system-specific.
+Chapter 24 owns agent-specific action security. The threat model is adversarial and system-specific: the strongest control sits immediately before the effect, not inside the model.
 
 ### Privacy impact assessment
 
@@ -193,15 +174,15 @@ Evidence quality matters more than document length. A failed test cannot be hidd
 
 Use the [AIMS risk-register template](../artifacts/templates/aims-risk-register-entry.md). It translates a technical risk into organizational management: affected objective/stakeholder, scenario, likelihood/impact method, controls, evidence, accountable risk owner, action owner, exposure, acceptance, recertification trigger, and review date.
 
-NIST AI RMF's govern/map/measure/manage functions and an AI management system such as ISO/IEC 42001 can inform the organization. The entry does not replace the threat model. One tracks organizational risk treatment; the other analyzes adversarial paths through a concrete system.
+The [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)'s govern/map/measure/manage functions and an AI management system such as ISO/IEC 42001 can inform the organization. The entry does not replace the threat model. One tracks organizational risk treatment; the other analyzes adversarial paths through a concrete system.
 
 ## Operations and launch artifacts {#app-b-operations}
 
 ### SLO document
 
-Use the [SLO template](../artifacts/templates/slo.md). For each service-level indicator (SLI), state event definition, numerator/denominator, exclusions, data source, aggregation window, objective, error budget, alert policy, and owner.
+Use the [SLO template](../artifacts/templates/slo.md); the SLI and error-budget discipline follows Google's [SRE Workbook](https://sre.google/workbook/table-of-contents/). For each service-level indicator (SLI), state the event definition, its good-event numerator and valid-event denominator, exclusions, data source, aggregation window, objective, error budget, multiwindow burn-rate alert policy, and owner.
 
-Agent SLIs may include exact effect rate, grounded task success, p95 completion, cost per success, queue age, unsafe-output containment, and human-review service. An SLO is a commitment with a budget policy, not a screenshot of current performance.
+Chapter 27 names four journey SLIs for the four promises an agent makes — it completes usefully, acts exactly as authorized, responds quickly, and stays inside a cost ceiling: the **success-and-grounded rate**, the **exactly-one-effect rate**, **p95 time-to-first-token**, and **cost per successful task** (total cost, including failed runs, divided by successful runs). Add queue age, unsafe-output containment, and human-review service where they carry a distinct promise. An SLO is a commitment with a budget policy, not a screenshot of current performance.
 
 ### Capacity model
 
@@ -225,7 +206,7 @@ Use the [launch-review template](../artifacts/templates/launch-review.md) as an 
 
 ## Model-side sizing worksheets {#app-b-model-sizing}
 
-The executable calculator is [`sizing.py`](../code/appb/sizing.py). Keep units in function names and worksheet cells.
+The executable calculator is [`sizing.py`](../code/appb/sizing.py); Chapter 33 develops the same back-of-envelope moves against the 45-minute interview clock. Keep units in function names and worksheet cells. The formulas are deliberately transparent approximations — their assumptions and owning chapters matter more than the constants.
 
 ### Training memory
 
@@ -335,7 +316,7 @@ $$
 P(\text{at least one})=1-(1-p)^k.
 $$
 
-Pass-at-$k$ measures capability under retries or sampling; pass-to-the-$k$ exposes compounding reliability for required work. Real errors are correlated, so measure full trajectories and repeated trials as Chapter 22 teaches.
+Pass-at-$k$ (**pass@k**) measures capability under retries or sampling; pass-to-the-$k$ (**pass^k**) exposes compounding reliability for required work. Real errors are correlated, so measure full trajectories and repeated trials as Chapter 22 teaches; the [$\tau$-bench](https://arxiv.org/abs/2406.12045) methodology scores exactly these multi-step trajectories.
 
 Mitigations change the effective sequence: deterministic validators catch local errors, checkpoints avoid restarting from zero, decomposition shortens dependent chains, idempotency makes retries safer, and human review gates high-consequence transitions. None makes $p^k$ disappear without an altered system model.
 
@@ -369,7 +350,7 @@ Each drill has five parts:
 4. common mistake checklist;
 5. owning chapter for repair.
 
-Solutions live in your working copy, not on the page. The assertions are the teaching contract.
+Solutions live in your working copy, not on the page — these drills are retrieval practice, and the first teaching lives in each drill's repair chapter.
 
 | Drill | Budget | Properties that must pass | Repair chapter |
 |---|---:|---|---:|
@@ -424,6 +405,7 @@ Common mistakes cluster:
 Use the dependency map after a miss.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-appb-drills
 %%| fig-cap: "When a coding drill fails, where should the reader retreat?"
 %%| fig-alt: "Transformer math supports attention, BPE, cache, LoRA, and sampling drills. API schemas support tool dispatch and MCP. Retrieval supports mini-RAG. Evaluation supports scorers, judges, and gates. Distributed effects support idempotency. These converge on the capstone."
@@ -543,20 +525,19 @@ Use a five-layer review rubric:
 
 A strong answer walks one request through all five layers. It gives approximate arithmetic early, labels assumptions, and returns to residual risk after adding controls.
 
-## Worked design prompts, 45 minutes, and self-scoring {#app-b-timed}
+## Timed practice and self-scoring {#app-b-timed}
 
-Use these eight prompts. Each has a fork question that changes the architecture and a pressure point the reviewer should push.
-
-| Design | Default shape | Fork question | Push point |
-|---|---|---|---|
-| A. enterprise knowledge support | ACL-prefiltered RAG, grounded response | read-only or ticket write-back? | cross-tenant retrieval and citation latency |
-| B. model-evaluation platform | immutable runs, calibrated graders, CI gate | offline benchmark or live traffic? | judge drift and statistical power |
-| C. transactional operations agent | typed proposals, approval hash, effect ledger | reversible drafts or real writes? | stale approval and duplicate delivery |
-| D. deep-research system | search/retrieve/synthesize with source graph | single adaptive agent or parallel specialists? | token multiplier, source independence, stopping |
-| E. long-running coding agent | sandbox, repo state, tests, checkpoints | patch only or deployment/migration authority? | malicious repo config and partial effects |
-| F. multi-tenant agent platform | gateway, policy plane, runtime, evidence plane | shared or dedicated topology? | noisy neighbor, residency, ownership split |
-| G. realtime multimodal assistant | session IDs, fresh observations, interruptible output | advisory or point-of-risk control? | sub-second tail and stale perception |
-| H. self-hosted model platform | serving gateway, autoscaling, rollout/eval | build engine or buy managed endpoint? | goodput, cache isolation, accelerator capacity |
+The worked design studies live in Part IX: the reusable seven-move framework and
+back-of-envelope toolkit in [Chapter 33](../chapters/33-sd-interview-framework.qmd), then
+one chapter per problem family — enterprise RAG ([Chapter 34](../chapters/34-sd-enterprise-rag.qmd)),
+the acting support agent ([Chapter 35](../chapters/35-sd-support-agent.qmd)), the serving
+platform ([Chapter 36](../chapters/36-sd-serving-platform.qmd)), the eval platform
+([Chapter 37](../chapters/37-sd-eval-platform.qmd)), cross-session memory
+([Chapter 38](../chapters/38-sd-memory-system.qmd)), multi-agent deep research
+([Chapter 39](../chapters/39-sd-deep-research.qmd)), and the multi-tenant agent platform
+([Chapter 40](../chapters/40-sd-agent-platform.qmd)). Each ends with a family-skeleton
+table of sibling prompts to practice against under the protocol below; the long-running
+coding agent is exercised in [Chapter 32](../chapters/32-capstone.qmd).
 
 ### The 45-minute protocol
 
@@ -621,11 +602,9 @@ Eight sizing tests verify frozen-versus-trainable memory, KV shape arithmetic, f
 
 The build succeeds when another reviewer can follow every packet claim to evidence, recompute every number with units, run the property assertions, and state the same launch conditions. A polished presentation with unresolved evidence links is not complete.
 
-## What endures, what changes {#app-b-endures}
+## Summary
 
-The enduring tools are evidence-linked cards, explicit decision records, frozen evaluation contracts, claims–argument–evidence safety cases, SLOs with budget policy, unit-aware capacity arithmetic, final-state property tests, and requirement-first design defense.
-
-What changes are template mappings to standards, model/hardware constants, provider prices, benchmark health, API versions, and which drill variants best expose current failure modes. Appendix C tracks those dated pins. Keep the forms short enough to review and strict enough that unknowns remain visible.
+This appendix is a working toolbox: evidence artifacts that turn claims into reviewable state, sizing worksheets that make architecture arithmetic explicit before boxes are drawn, and a workbook that tests whether you can reproduce mechanisms and defend tradeoffs cold. The enduring tools — evidence-linked cards, decision records, frozen evaluation contracts, claims–argument–evidence safety cases, SLOs with a budget policy, unit-aware capacity arithmetic, final-state tests, and requirement-first design defense — outlast the constants, prices, and template-to-standard mappings, which drift and live in Appendix C's dated registry. Keep the forms short enough to review and strict enough that unknowns stay visible.
 
 ## Exercises {#app-b-exercises}
 
@@ -642,7 +621,3 @@ What changes are template mappings to standards, model/hardware constants, provi
 6. Run a 45-minute Design D walkthrough under the write-heavy fork. Defend whether multi-agent coordination earns its critical-path and token cost, including the simpler rejected alternative.
 
 7. Take a Chapter 27 postmortem and update three linked artifacts: permanent regression test, runbook step, and AIMS risk row. Explain why one incident changes all three.
-
-## Notes and sources {#app-b-sources}
-
-The template lineage includes [Datasheets for Datasets](https://arxiv.org/abs/1803.09010), [Model Cards for Model Reporting](https://arxiv.org/abs/1810.03993), Michael Nygard's [ADR formulation](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions), the [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework), and Google's [SRE Workbook](https://sre.google/workbook/table-of-contents/) for SLO and postmortem practice. The trajectory-reliability worksheet connects to [$\tau$-bench](https://arxiv.org/abs/2406.12045). The executable formulas are deliberately transparent approximations; their assumptions and owning chapters are more important than memorizing constants.
