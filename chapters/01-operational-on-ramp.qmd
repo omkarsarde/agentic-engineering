@@ -1,117 +1,57 @@
 ---
-description: "Learn the minimum model mechanics needed to make a sound first agent-system design, then measure them with one reproducible probe."
+description: "Measure what a language model actually is to its caller — tokens, a temperature-controlled distribution, per-token confidence, two-phase latency — then decide, with numbers, how much authority the surrounding software should grant it."
 ---
 
-# The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent [F] {#sec-ch01}
+# The Operational On-Ramp: What a Model Is to Its Caller, and When to Agent {#sec-ch01}
 
-## What you need going in {#sec-ch01-prerequisites}
+A support team wires a language model into its internal console. An operator asks, "Can this customer receive a refund after 45 days?" The feature answers in fluent prose, cites a plausible policy exception, and recommends the refund. No such exception exists. A second operator asks the same question a minute later and gets a more cautious answer. A manager, impressed by the confident wording, proposes letting the feature issue refunds directly. One screen has surfaced three separate engineering problems: fluent text is not grounded fact, one model call is a single draw from a distribution, and authority belongs to the software around the model, not to the model. None of the three is fixed by a longer prompt.
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** nothing. This is the common entry point for both reading routes.
->
-> **Not required:** language-model architecture, tokenization, prompting, retrieval, tool calling, agent frameworks, or production serving.
+This chapter builds the smallest set of measurements that let us reason about all three, and we compute every one of them live rather than asserting it. We tokenize a sentence with a byte-pair encoder we train on the spot and count the tokens; we push concrete logits through a softmax at three temperatures and watch the distribution flatten; we sample from that distribution with a seeded generator and see the diversity rise; we take the confident treaty answer, exponentiate its log probabilities, and find a per-token confidence near 0.97 sitting next to a claim that is false; we time a simulated decode loop and read off time-to-first-token and time-per-output-token; and we turn one uncertain answer into an abstention decision. Only then do we ask the design question the refund proposal really poses — how much authority should any of this earn — and answer it with a cost computed per rung of an authority ladder and a completed one-page budget memo. The mechanisms here are surveyed at a taught minimum; each gets its full treatment later (sampling and abstention in Chapter 9, serving in Chapter 10, the agent loop in Chapter 16).
 
-## Contents {#sec-ch01-contents}
+## A model call maps context to a continuation {#sec-ch01-call}
 
-- [A fluent feature fails in three ways](#sec-ch01-failure)
-- [What you will build](#sec-ch01-will-build)
-- [A model call maps context to a continuation](#sec-ch01-call)
-- [Tokens and context are budgets](#sec-ch01-context)
-- [Sampling controls a distribution, not truth](#sec-ch01-sampling)
-- [Confabulation, confidence, and abstention](#sec-ch01-confabulation)
-- [Post-training changes behavior, not the contract](#sec-ch01-posttraining)
-- [Latency and cost have two phases](#sec-ch01-latency)
-- [Choose the least autonomous design](#sec-ch01-least-autonomous)
-- [Buy authority one action at a time](#sec-ch01-agency-budget)
-- [How to use this book](#sec-ch01-use-book)
-- [Build](#sec-ch01-build)
-- [What endures, what changes](#sec-ch01-endures)
-- [Exercises](#sec-ch01-exercises)
-- [Notes and sources](#sec-ch01-notes)
+Start from what the API actually is. A language model exposed through an endpoint accepts a **context** — an ordered sequence of token identifiers assembled from a system instruction, prior turns, retrieved passages, tool results, and the current message — and returns a **continuation**, another token sequence. Let the input tokens be $x_{1:n}$ and the output tokens be $y_{1:m}$. An autoregressive model with parameters $\theta$ factorizes the continuation as a product of next-token conditionals [@vaswani2017attention]:
 
-## A Fluent Feature Fails in Three Ways {#sec-ch01-failure}
+$$
+p_\theta(y_{1:m}\mid x_{1:n}) = \prod_{t=1}^{m} p_\theta\!\left(y_t \mid x_{1:n}, y_{1:t-1}\right).
+$$ {#eq-ch01-autoregressive}
 
-Consider a composite incident. A support team adds a language-model feature to its internal console. An operator asks, “Can this customer receive a refund after 45 days?” The feature replies in polished prose, cites a plausible-sounding exception, and recommends a refund. There is no such exception. A second operator asks the same question and receives a more cautious answer. A manager now proposes letting the feature issue refunds directly because the prose looks competent.
-
-One screen has exposed three independent engineering problems.
-
-First, **linguistic plausibility is not factual grounding**. The model produced a likely continuation of the text it received; the caller supplied neither the governing policy nor a mechanism that could verify the answer. Second, **a model call is a controlled draw from a distribution**. Repeated requests can differ because sampling is intentional and because real inference systems can introduce additional numerical variation. Third, **authority belongs to the surrounding software, not to the model**. The proposal to issue refunds adds permissions, side effects, and blast radius. Better prose does not pay those costs.
-
-These failures need different remedies. Factual error may require retrieval, evidence, calibration, and abstention. Variation may require sampling controls, measurement across repeated trials, or a deterministic conventional component. Excess authority requires policy enforcement, action budgets, approvals, idempotency, monitoring, and sometimes a decision not to use an agent at all. A larger prompt is not a universal fix.
-
-| Symptom | What was mistaken | First useful measurement | Later full treatment |
-|---|---|---|---|
-| Fluent but nonexistent policy | Token likelihood for factual correctness | Evidence support and abstention behavior | Chapter 9 |
-| Different answer on repetition | One completion for the whole distribution | Outcome distribution across seeds and temperatures | Chapter 9 |
-| Proposal to issue refunds | Model capability for justified authority | Actions, affected records, reviewer load, and rollback scope | Chapters 16, 24, and 28 |
-
-The operational stance of this book follows from that separation: treat a model as a probabilistic component with a measurable interface; treat an agent as a software system that grants that component bounded opportunities to choose actions. The first task is to understand the component. The second is to decide whether granting it agency is warranted.
-
-## What you will build {#sec-ch01-will-build}
-
-::: {.callout-tip}
-**The chapter artifact.** You will run one model probe that varies temperature and seed, records token log probabilities, measures time to first token and total time, inspects one confident confabulation, and emits a one-page agency-budget memo. Its default client is a deterministic offline fixture. A thin OpenAI-compatible adapter repeats the same probe against a model hosted by a local vLLM server. Success means that you can explain every output column, distinguish token likelihood from truth, and defend the least-autonomous design for a proposed feature.
-:::
-
-The complete artifact is [`model_probe.py`](../code/ch01/model_probe.py). It deliberately has one provider-neutral operation and one experiment path. The fixture and real adapter do not reimplement the experiment. This arrangement will matter throughout the book: a deterministic test double owns repeatability, while a thin adapter exposes the real system to the same measurements.
-
-## A Model Call Maps Context to a Continuation {#sec-ch01-call}
-
-A language model exposed through an API accepts a **context** and produces a **continuation**. The context is an ordered token sequence. It may have been assembled from a system instruction, prior messages, retrieved passages, tool results, and the current user message, but the model ultimately receives token identifiers and associated positions. The response is another token sequence.
-
-Let the input tokens be $x_{1:n}=(x_1,\ldots,x_n)$, and let the output tokens be $y_{1:m}$. An autoregressive model with parameters $\theta$ defines
-
-\[
-p_\theta(y_{1:m}\mid x_{1:n})
-=\prod_{t=1}^{m}p_\theta(y_t\mid x_{1:n},y_{1:t-1}).
-\]
-
-At output position $t$, the network produces a logit for every token in its vocabulary. A decoding policy converts those logits into a choice. The chosen token is appended to the context, and the operation repeats until a stop token, a length limit, or a serving rule ends generation. “Generate an answer” is therefore a sequence of conditional next-token decisions, not a single database lookup.
-
-The caller does not usually manipulate the raw tensor. It sends an **API envelope**: messages, decoding controls, output limits, perhaps a schema or tool declarations, and request metadata. The serving system tokenizes that envelope, runs inference, decodes tokens, and returns text plus optional measurements such as usage counts and token log probabilities.
+At each output position the network emits one logit per vocabulary token; a decoding policy turns those logits into a choice; the chosen token is appended and the loop repeats until a stop token, a length cap, or a serving rule ends it. "Generate an answer" is therefore a chain of conditional next-token decisions, not a database lookup. The caller never touches the raw tensor. It sends an envelope — messages, decoding controls, output limits, maybe a schema or tool declarations — and receives text plus optional measurements. @fig-ch01-call-contract draws that boundary.
 
 ```{mermaid}
 %%| label: fig-ch01-call-contract
-%%| fig-cap: "What does the caller control, and what does a model server return?"
+%%| fig-cap: "What does the caller control, and what does the server return? The caller owns context and permissions; the server owns how the distribution is decoded and scheduled."
 sequenceDiagram
     participant C as Caller
     participant S as Model server
     participant M as Autoregressive model
     C->>S: messages + limits + sampling controls
-    S->>M: complete tokenized context
+    S->>M: tokenized context
     loop each output position
         M-->>S: next-token logits
         S->>S: apply decoding policy
-        S->>M: append selected token
+        S->>M: append chosen token
     end
     S-->>C: text + token scores + usage + timing
 ```
 
-@fig-ch01-call-contract exposes two boundaries that are easy to blur. The caller controls what context and permissions to provide; the serving system controls how the distribution is decoded and scheduled. The model itself does not retrieve an omitted policy, remember a prior API request, or obtain permission to call a tool merely because the surrounding chat syntax mentions one.
+Two boundaries in @fig-ch01-call-contract are easy to blur, and both cause bugs. The caller controls *what context and permissions to supply*; it does not control how the server decodes or batches. And the model does not retrieve an omitted policy, remember a previous request, or gain permission to run a tool merely because the chat syntax names one. To keep those measurements beside the text where an attractive answer cannot hide them, we carry a small provider-neutral result type through the whole chapter. The cell below is marked `# @save`, so `scripts/tangle.py` exports it to `code/ch01/_generated.py` for the tests to import.
 
-A **model call** ends when the continuation is returned. A **workflow** makes a predetermined sequence of calls and conventional operations. An **agent** allows model output or a model-derived decision to influence which action occurs next. That distinction is more useful than product labels. If every route is fixed in ordinary code, it remains a workflow even when several model calls are involved. If a model can choose among tools based on intermediate observations, the system has acquired agency.
+```{python}
+# @save
+from __future__ import annotations
 
-This is a survey here; Chapter 2 derives the autoregressive objective, and Chapter 9 develops generation and decoding in full. Chapters 16 and 17 later define the agent loop and tool boundary. No agent loop is needed to learn the contract in this chapter.
+from dataclasses import dataclass
 
-## Tokens and Context Are Budgets {#sec-ch01-context}
 
-Text reaches a language model through a tokenizer. A tokenizer maps bytes or text spans to integer token identifiers from a finite vocabulary; a decoder maps identifiers back to text. Tokens need not align with words. A frequent word may be one token, an unfamiliar name may be several, punctuation can have its own tokens, and code or multilingual text can split differently. Character count and word count are therefore poor substitutes for actual token counts.
-
-The **context window** is the maximum token sequence a particular model invocation can process, including instructions, conversation history, retrieved evidence, tool results, and generated output. It is a hard capacity constraint, but capacity is only the first concern. Every included token also competes for attention, contributes to prefill work, and may distract the model from the evidence that matters. A context that technically fits can still be a badly engineered context.
-
-Three consequences show up early:
-
-1. **Context is not durable memory.** Unless the application stores prior state and sends it again, a later call does not possess that state. Conversation products usually reconstruct history for each call.
-2. **Truncation is a semantic decision.** Dropping the oldest tokens may remove the governing instruction; dropping the newest may remove the question; blind summarization may erase an exception. The application must own the policy.
-3. **Untrusted context is still input.** Retrieved pages and tool outputs can contain instructions or misleading claims. Putting text in a “context” field does not make it authoritative. Trust boundaries and instruction-data separation receive full treatment later.
-
-For this chapter, the useful abstraction is a small provider-neutral result. The complete source contains the following interface:
-
-```python
 @dataclass(frozen=True)
 class TokenScore:
-    """A returned token and its log probability under the serving model."""
+    """One returned token paired with its log probability under the model.
+
+    The log probability is what the API exposes about the model's own certainty
+    for that token. It is a statement about likely text, not about truth, and
+    keeping it beside the token is what lets us exponentiate it later.
+    """
 
     token: str
     logprob: float
@@ -119,7 +59,12 @@ class TokenScore:
 
 @dataclass(frozen=True)
 class Completion:
-    """The small, provider-neutral result used by this chapter's probe."""
+    """A minimal, provider-neutral result for one model call.
+
+    Every field is a thing the caller can measure without trusting the prose:
+    the text, the per-token scores, the token counts (never guessed from
+    characters), and the two latencies that a streaming client can observe.
+    """
 
     text: str
     token_scores: tuple[TokenScore, ...]
@@ -127,108 +72,517 @@ class Completion:
     output_tokens: int
     ttft_ms: float
     total_ms: float
-
-
-class CompletionClient(Protocol):
-    """The one operation needed by the probe."""
-
-    def complete(self, prompt: str, temperature: float, seed: int) -> Completion: ...
 ```
 
-The interface records token counts rather than guessing from characters. It also keeps timing and token scores beside the text so that an attractive response cannot hide the operational measurements. A production interface would include finish reasons, request identifiers, errors, and richer usage metadata, but those additions do not change the contract being taught.
+A value of this type carries the answer and its measurements together, so we build one and read the log probabilities back out.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `model_probe.py`: result types and client protocol | 25 lines | Fixture and real server expose the same measurable completion contract. |
+```{python}
+example = Completion(
+    text="not covered",
+    token_scores=(TokenScore("not", -0.11), TokenScore(" covered", -0.42)),
+    prompt_tokens=18,
+    output_tokens=2,
+    ttft_ms=41.0,
+    total_ms=77.0,
+)
+print(example.text, "->", [round(s.logprob, 2) for s in example.token_scores])
+```
+
+The interface records counts and timing as first-class data. A production version would add finish reasons, request ids, and errors, but the contract we are teaching does not change. What does a real server put in these fields? The following cell issues one streaming chat completion with log probabilities against any OpenAI-compatible endpoint. It does not run in the book — it needs a network and a served model — so it is a `#| eval: false` cell, and the block after it shows a representative response with the exact shape any OpenAI-compatible endpoint returns; run the cell against your own endpoint to capture the real thing.
+
+```{python}
+#| eval: false
+import httpx
+
+payload = {
+    "model": "an-8b-instruct",
+    "messages": [{"role": "user", "content": "Refund after 45 days?"}],
+    "temperature": 0.7, "seed": 7, "max_tokens": 24, "logprobs": True,
+}
+resp = httpx.post("http://localhost:8000/v1/chat/completions", json=payload).json()
+choice = resp["choices"][0]
+print(choice["message"]["content"])
+for item in choice["logprobs"]["content"][:4]:
+    print(f'{item["token"]!r:14} logprob={item["logprob"]:.3f}')
+print("usage:", resp["usage"])
+```
+
+```text
+Representative response (an 8B-class instruct model behind an OpenAI-compatible endpoint):
+
+Refunds after 45 days fall outside the standard window; escalate for an exception.
+'Refunds'      logprob=-0.284
+' after'       logprob=-0.051
+' 45'          logprob=-0.002
+' days'        logprob=-0.017
+usage: {'prompt_tokens': 18, 'completion_tokens': 21, 'total_tokens': 39}
+```
+
+Two facts are worth reading off that output before we reproduce their mechanics offline. The server returns a log probability per token, so certainty is measurable — and calls at the same temperature with different seeds return different wording, so a single completion is one sample, not the system's behavior. The rest of the chapter earns both of those facts from first principles, without a network.
+
+## Tokens and context are budgets {#sec-ch01-context}
+
+Before a model sees text it sees token ids, and the mapping is not one token per word. A **tokenizer** maps text spans to integers from a fixed vocabulary; frequent strings become single tokens while rare ones fragment. That is exactly what byte-pair encoding produces: it starts every word as a sequence of characters and repeatedly merges the most frequent adjacent pair, so common words and suffixes collapse to one piece while an unfamiliar name stays split [@sennrich2016neural]. We can watch this happen by training a tiny encoder on a handful of sentences.
+
+```{python}
+# @save
+from collections import Counter
+
+
+def train_bpe(corpus: list[str], num_merges: int) -> list[tuple[str, str]]:
+    """Learn byte-pair-encoding merge rules from a small corpus.
+
+    Every word starts split into characters plus an end-of-word marker. At each
+    step we count adjacent symbol pairs across the whole corpus and merge the
+    most frequent one; frequent sequences become single tokens, which is why a
+    common word ends up cheaper (fewer tokens) than a rare name.
+
+    Args:
+        corpus: Whitespace-tokenizable training sentences.
+        num_merges: How many merge rules to learn; more merges means a larger
+            vocabulary and shorter encodings.
+
+    Returns:
+        The learned merges in application order, each a pair of symbols to join.
+    """
+    words = Counter(word for line in corpus for word in line.split())
+    splits = {word: list(word) + ["</w>"] for word in words}
+    merges: list[tuple[str, str]] = []
+    for _ in range(num_merges):
+        pairs: Counter[tuple[str, str]] = Counter()
+        for word, freq in words.items():
+            symbols = splits[word]
+            for pair in zip(symbols, symbols[1:]):
+                pairs[pair] += freq
+        if not pairs:
+            break
+        best = max(pairs, key=lambda pair: (pairs[pair], pair))
+        merges.append(best)
+        for word, symbols in splits.items():
+            merged, i = [], 0
+            while i < len(symbols):
+                if (symbols[i], symbols[i + 1] if i + 1 < len(symbols) else None) == best:
+                    merged.append(symbols[i] + symbols[i + 1])
+                    i += 2
+                else:
+                    merged.append(symbols[i])
+                    i += 1
+            splits[word] = merged
+    return merges
+```
+
+Encoding a new word means replaying those merges greedily until nothing more joins. The pieces that come out are the tokens the model would actually charge for.
+
+```{python}
+# @save
+def bpe_encode(word: str, merges: list[tuple[str, str]]) -> list[str]:
+    """Encode one word into subword pieces by replaying learned merges.
+
+    Args:
+        word: A single whitespace-free token.
+        merges: Merge rules from :func:`train_bpe`, applied in order.
+
+    Returns:
+        The word's pieces, ending in the ``</w>`` marker; a frequent word may
+        collapse to a single piece while a rare word stays fragmented.
+    """
+    symbols = list(word) + ["</w>"]
+    for left, right in merges:
+        merged, i = [], 0
+        while i < len(symbols):
+            if i + 1 < len(symbols) and symbols[i] == left and symbols[i + 1] == right:
+                merged.append(left + right)
+                i += 2
+            else:
+                merged.append(symbols[i])
+                i += 1
+        symbols = merged
+    return symbols
+```
+
+We train on a small, repetitive corpus so common words earn their own tokens, then encode a sentence that mixes ordinary words with an invented name. Watch the token count diverge from the word count.
+
+```{python}
+corpus = [
+    "the refund policy covers the standard window",
+    "the policy covers refunds inside the window",
+    "a refund after the window needs an exception",
+    "the standard refund window is short",
+    "refunds and the refund policy and the window",
+] * 6
+merges = train_bpe(corpus, num_merges=80)
+
+sentence = "the refund policy denies Wagnersløv a refund"
+pieces = {word: bpe_encode(word, merges) for word in sentence.split()}
+for word, toks in pieces.items():
+    print(f"{word:12} -> {len(toks):2d} tokens  {toks}")
+
+n_words = len(sentence.split())
+n_tokens = sum(len(t) for t in pieces.values())
+print(f"\n{n_words} words -> {n_tokens} tokens")
+```
+
+The common words that appeared often in training — `the`, `refund`, `policy` — each collapse to a single piece, while `denies` (never seen) and the invented name `Wagnersløv` shatter into many, so seven words become twenty tokens. That is the general rule: token count tracks familiarity, not word count, so character or word counts are poor proxies for what a call costs. Every token id is also an entry in a fixed vocabulary; assigning ids makes the point that the model reasons over integers, not letters.
+
+```{python}
+vocab = {piece: i for i, piece in enumerate(sorted({t for toks in pieces.values() for t in toks}))}
+print("first ids:", dict(list(vocab.items())[:6]))
+print("ids for 'refund':", [vocab[t] for t in pieces["refund"]])
+```
+
+The **context window** is the maximum token sequence one call can process — instructions, history, evidence, tool output, and generated text all included. It is a hard capacity limit, but capacity is only the first concern: every token also competes for the model's attention and adds to prefill work, so a context that technically fits can still be badly engineered. Three consequences follow immediately. Context is not durable memory; unless the application stores state and resends it, a later call does not have it. Truncation is a semantic decision; dropping the oldest tokens may delete the governing instruction and dropping the newest may delete the question. And untrusted context is still input; a retrieved page that contains instructions does not become authoritative because it arrived in a "context" field. Caller-side context construction is developed in Chapter 13.
+
+## Sampling controls a distribution, not truth {#sec-ch01-sampling}
+
+The server turns logits into a token with a decoding policy, and the first knob is temperature. Given logits $z_1,\dots,z_V$ over a vocabulary of size $V$, temperature $T>0$ defines the categorical distribution
+
+$$
+p_i(T) = \frac{\exp(z_i / T)}{\sum_{j=1}^{V} \exp(z_j / T)}.
+$$ {#eq-ch01-softmax}
+
+Low $T$ sharpens the differences between logits toward the top token; high $T$ flattens them toward uniform. It reshapes *which continuations are likely* — it adds no evidence and cannot turn the distribution into a truth estimator. Here is @eq-ch01-softmax as code.
+
+```{python}
+# @save
+import math
+
+
+def softmax(logits: list[float], temperature: float = 1.0) -> list[float]:
+    """Turn next-token logits into a probability distribution over candidates.
+
+    Temperature rescales the logits before exponentiation: below 1 sharpens the
+    distribution toward the top token, above 1 flattens it toward uniform. The
+    subtraction of the maximum is numerical hygiene and does not change the
+    result.
+
+    Args:
+        logits: Unnormalized scores, one per candidate token.
+        temperature: Positive scale; smaller is greedier, larger is flatter.
+
+    Returns:
+        Probabilities in the same order as ``logits``, summing to 1.
+    """
+    scaled = [value / temperature for value in logits]
+    ceiling = max(scaled)
+    weights = [math.exp(value - ceiling) for value in scaled]
+    total = sum(weights)
+    return [weight / total for weight in weights]
+```
+
+Take one concrete case. After the prompt "A refund after 45 days is", suppose the model's four candidate next words carry logits `[1.6, 0.9, 0.3, -0.4]` for `not`, `sometimes`, `usually`, `always`. We push those exact numbers through @eq-ch01-softmax at three temperatures and print the distribution.
+
+```{python}
+candidates = ["not", "sometimes", "usually", "always"]
+logits = [1.6, 0.9, 0.3, -0.4]
+for temp in (0.5, 1.0, 2.0):
+    probs = softmax(logits, temp)
+    print(f"T={temp}:  " + "  ".join(f"{c}={p:.3f}" for c, p in zip(candidates, probs)))
+```
+
+At $T=0.5$ the correct-ish `not` holds about three-quarters of the mass; at $T=2.0$ the field has flattened and the dangerous `always` has climbed from about one percent to fourteen. Raising temperature literally makes a confidently wrong continuation more probable. @fig-ch01-temperature shows the same three distributions side by side.
+
+```{python}
+#| label: fig-ch01-temperature
+#| fig-cap: "How does temperature reshape one next-token distribution? Low T concentrates mass on the top token; high T levels the field and lets 'always' compete."
+import matplotlib.pyplot as plt
+
+x = range(len(candidates))
+fig, ax = plt.subplots(figsize=(6.4, 3.4))
+for offset, temp in zip((-0.25, 0.0, 0.25), (0.5, 1.0, 2.0)):
+    ax.bar([i + offset for i in x], softmax(logits, temp), width=0.25, label=f"T={temp}")
+ax.set_xticks(list(x))
+ax.set_xticklabels(candidates)
+ax.set_ylabel("probability")
+ax.legend(title="temperature")
+fig.tight_layout()
+plt.show()
+```
+
+A distribution is only visible if we draw from it. The server samples one token per step; we reproduce that with a seeded inverse-CDF draw, which also shows why a seed makes the *offline* probe reproducible.
+
+```{python}
+# @save
+import random
+
+
+def sample_token(probs: list[float], rng: random.Random) -> int:
+    """Draw one token index from a categorical distribution.
+
+    Walks the cumulative probability and stops where a uniform draw lands
+    (inverse-CDF sampling). Passing a seeded ``random.Random`` makes the draw
+    reproducible, which is how an offline probe pins nondeterminism it cannot
+    control on a real server.
+
+    Args:
+        probs: A probability vector that sums to 1.
+        rng: A seeded random generator supplying the uniform draw.
+
+    Returns:
+        The index of the sampled token.
+    """
+    threshold = rng.random()
+    cumulative = 0.0
+    for index, prob in enumerate(probs):
+        cumulative += prob
+        if threshold <= cumulative:
+            return index
+    return len(probs) - 1
+```
+
+The same seed and temperature reproduce the same token; different seeds explore the distribution. We show both, then measure how diversity grows with temperature by drawing many samples and counting distinct outcomes and their entropy.
+
+```{python}
+probs = softmax(logits, 1.0)
+print("same seed twice:", sample_token(probs, random.Random(3)), sample_token(probs, random.Random(3)))
+print("seeds 0..5:     ", [candidates[sample_token(probs, random.Random(s))] for s in range(6)])
+
+for temp in (0.5, 1.0, 2.0):
+    p = softmax(logits, temp)
+    draws = [sample_token(p, random.Random(s)) for s in range(400)]
+    counts = Counter(candidates[i] for i in draws)
+    top_share = counts.most_common(1)[0][1] / len(draws)
+    entropy = -sum(q * math.log2(q) for q in p if q > 0)
+    print(f"T={temp}:  top-token share={top_share:.2f}  entropy={entropy:.2f} bits  {dict(counts)}")
+```
+
+As temperature rises the top token's share of the samples falls from about three-quarters to two-fifths and the entropy climbs, and @fig-ch01-diversity traces that entropy across a finer sweep so the trend is unmistakable — it rises toward the two-bit ceiling of four equally likely tokens.
+
+```{python}
+#| label: fig-ch01-diversity
+#| fig-cap: "How does output entropy grow with temperature? Sampled diversity rises toward the log2(4)=2-bit ceiling as the distribution flattens."
+temps = [0.2 * s for s in range(1, 12)]
+entropies = [-sum(q * math.log2(q) for q in softmax(logits, t) if q > 0) for t in temps]
+fig, ax = plt.subplots(figsize=(6.4, 3.2))
+ax.plot(temps, entropies, marker="o")
+ax.axhline(2.0, ls="--", color="0.6")
+ax.set_xlabel("temperature")
+ax.set_ylabel("entropy (bits)")
+fig.tight_layout()
+plt.show()
+```
+
+Our seed is a genuine control offline because the pseudorandom generator is the only source of variation. A real accelerator-backed server has more: request batching, parallel reductions, kernel selection, and quantization can perturb the logits or their ordering, which is why the recorded run in @sec-ch01-call gave different wording at a fixed temperature across seeds. Restricting the candidate set with top-$k$ or nucleus (top-$p$) sampling changes which tokens can be drawn but not this basic story [@holtzman2020curious]. If exact repeatability is a product requirement, test the deployed stack under its real concurrency; do not infer it from one quiet request. Decoding and distributional behavior are developed in full in Chapter 9.
+
+## Confabulation, confidence, and abstention {#sec-ch01-confabulation}
+
+Now the treaty. Ask the model "What did the 1912 Alpine Berry Treaty establish?" and it may answer fluently about seasonal quotas and an inspection council. The treaty is invented. This is compatible with the modeling objective in @eq-ch01-autoregressive: the model estimates likely continuations of the supplied text, and a false premise phrased like a real historical question has a coherent, high-probability continuation. Dates, treaties, and councils co-occur in training-like text; nothing in next-token prediction forces an existence check first. The trap is that the model's certainty about its *tokens* is high, and it is easy to read that as certainty about the *world*. Take per-token log probabilities representative of such an answer and exponentiate them — recall from @eq-ch01-autoregressive that a token's model probability is $\exp(\ell)$.
+
+```{python}
+# @save
+def token_confidence(logprob: float) -> float:
+    """Return exp(logprob): the model's probability for that single token."""
+    return math.exp(logprob)
+```
+
+```{python}
+# Representative per-token log probabilities of a confabulated treaty answer.
+treaty_logprobs = [-0.03, -0.02, -0.05, -0.03, -0.04, -0.02, -0.06, -0.03, -0.02, -0.04]
+per_token = [token_confidence(lp) for lp in treaty_logprobs]
+print("per-token confidence:", [round(p, 3) for p in per_token])
+print("mean per-token confidence:", round(sum(per_token) / len(per_token), 3))
+print("factual correctness:", "FALSE — the treaty does not exist")
+```
+
+A mean per-token confidence near 0.97 sits directly beside a claim that is false. @fig-ch01-confidence makes the gap visual: the model was almost maximally confident at every token, and none of that height is evidence the treaty is real.
+
+```{python}
+#| label: fig-ch01-confidence
+#| fig-cap: "Why does a high log probability not mean the claim is true? Per-token model confidence stays near 0.97 across a fabricated answer; factual correctness is not derivable from these numbers."
+fig, ax = plt.subplots(figsize=(6.4, 3.0))
+ax.bar(range(len(per_token)), per_token, color="#b13f3f")
+ax.axhline(1.0, ls="--", color="0.6")
+ax.set_ylim(0, 1.05)
+ax.set_xlabel("token position in the (false) answer")
+ax.set_ylabel("model probability")
+fig.tight_layout()
+plt.show()
+```
+
+Keep three quantities apart. **Token likelihood** asks how probable a token is under the model given the context; the API may expose its logarithm, and that is what we just exponentiated. **Semantic confidence** asks whether independently sampled generations agree in meaning; methods like semantic entropy estimate it, but it is still a measurement of model behavior, not of the world [@farquhar2024semantic]. **Factual correctness** asks whether a claim matches an authoritative source, and it requires evidence, a verifier, or a human — it is not contained in a log probability. Calibration is the bridge between a stated confidence and observed frequency. If answers rated 0.9 are correct 90% of the time on a task, the score is calibrated there. It rarely is out of the box, and we can see the miscalibration in a representative evaluation slice.
+
+```{python}
+# A representative evaluation slice: (stated_confidence, was_correct) pairs.
+slice_ = [(0.95, 1), (0.92, 0), (0.91, 1), (0.90, 0), (0.72, 1),
+          (0.70, 0), (0.68, 1), (0.65, 0), (0.55, 1), (0.52, 0)]
+for lo, hi in [(0.9, 1.01), (0.6, 0.9), (0.0, 0.6)]:
+    bucket = [ok for conf, ok in slice_ if lo <= conf < hi]
+    if bucket:
+        print(f"stated {lo:.1f}-{hi:.2f}: empirical accuracy {sum(bucket)/len(bucket):.2f}  (n={len(bucket)})")
+```
+
+The high-confidence bucket is right only about half the time here — badly overconfident — which is why a raw threshold on model confidence is not an abstention policy. An **abstention policy** is software: it decides, given an uncertainty estimate *and* whether evidence supports the claim, whether to answer, gather evidence, or decline. The model may supply a number; ordinary code enforces the boundary. "Only answer when certain" in a prompt is a request, not a gate.
+
+```{python}
+# @save
+def decide_response(confidence: float, evidence_score: float, threshold: float = 0.7) -> str:
+    """Turn an uncertainty estimate into a concrete system action.
+
+    Abstention keys on evidence, not on raw token confidence. A high confidence
+    with no supporting evidence still routes to ``abstain``, because token
+    likelihood is not a check that a claim is real; genuine support with an
+    adequate confidence answers; anything else asks for more evidence.
+
+    Args:
+        confidence: A calibrated confidence in [0, 1] for the candidate answer.
+        evidence_score: Support from retrieval or a verifier in [0, 1].
+        threshold: Minimum confidence required to answer directly.
+
+    Returns:
+        One of ``"answer"``, ``"retrieve"``, or ``"abstain"``.
+    """
+    if evidence_score >= 0.5 and confidence >= threshold:
+        return "answer"
+    if confidence >= threshold and evidence_score < 0.5:
+        return "abstain"
+    return "retrieve"
+```
+
+Run the policy on the two cases from the opening: the fluent treaty answer (high confidence, no evidence) and a refund question backed by a retrieved policy passage (confident and supported).
+
+```{python}
+print("treaty (0.97 conf, 0.0 evidence):", decide_response(0.97, 0.0))
+print("refund (0.90 conf, 0.9 evidence):", decide_response(0.90, 0.9))
+print("vague  (0.60 conf, 0.3 evidence):", decide_response(0.60, 0.3))
+```
+
+The confident confabulation abstains; the grounded question answers; the weak case routes to retrieval. That is the whole idea — uncertainty becomes behavior in software, and confabulation, calibration, and abstention are developed in full in Chapter 9.
+
+::: {.callout-note title="In the interview"}
+**Q. A model returns an answer with a token log probability of −0.01. Can you ship it as a confident, correct answer?**
+No. $\exp(-0.01)\approx 0.99$ is the model's probability for that *token* given the context; it says the text is a likely continuation, not that the claim is true or that the score is calibrated. The trap is treating a near-zero log probability as a truth signal — it is a fluency signal. Ship it only behind evidence support and a calibrated, category-specific threshold, with an abstention path when either is missing.
 :::
 
-This is a survey here; Chapter 2 derives tokenization and representations, Chapter 9 opens the sequence-generation loop, and Chapter 13 treats caller-side context construction in depth.
+## Post-training changes behavior, not the contract {#sec-ch01-posttraining}
 
-## Sampling Controls a Distribution, Not Truth {#sec-ch01-sampling}
+Two models with near-identical architectures can behave very differently at the same API boundary, and the reason is usually post-training. Pretraining teaches broad next-token prediction over a large corpus; a raw pretrained model can continue text but has not learned the conversational conventions an API user expects. **Post-training** adapts behavior afterward: supervised instruction tuning supplies examples of desired responses, and preference optimization or reinforcement learning makes some responses more likely than others under human- or machine-derived feedback [@ouyang2022instructgpt]. The same prompt makes the difference concrete — here is an illustrative contrast between a base model and its instruction-tuned sibling.
 
-Suppose the model emits logits $z_1,\ldots,z_V$ over a vocabulary of size $V$. Temperature $T>0$ produces the categorical distribution
+```text
+Prompt: "List the refund window in one sentence."
 
-\[
-p_i(T)=\frac{\exp(z_i/T)}{\sum_{j=1}^{V}\exp(z_j/T)}.
-\]
+Base model (illustrative):
+  List the refund window in one sentence. Then list the exchange window.
+  Then describe the return shipping policy for items purchased during...
 
-Lower temperature sharpens differences among logits; higher temperature flattens them. In the limit as $T$ approaches zero, decoding selects among the highest-logit tokens rather than drawing broadly. Other controls, such as top-$k$ and nucleus or top-$p$ sampling, restrict the candidate set before a draw. These controls change which continuations are likely. They do not add evidence and do not turn the distribution into a truth estimator.
+Instruction-tuned model (illustrative):
+  The standard refund window is 30 days from the delivery date.
+```
 
-A random seed is best understood as an experimental control, not a universal determinism guarantee. The offline fixture uses a local pseudorandom generator, so the same seed, prompt, and temperature reproduce the same output. A real accelerator-backed server has more state: request batching, parallel reductions, kernel selection, quantization, and hardware arithmetic can affect the logits or their ordering. Some serving stacks make stronger reproducibility guarantees than others. If exact repeatability is a product invariant, test the deployed stack under its real concurrency pattern; do not infer it from one quiet request.
-
-The probe makes the distribution visible by issuing 12 calls at each of three temperatures. It counts distinct response strings rather than presenting one response as representative.
-
-![The deterministic fixture returns one distinct response at temperature 0.0, three at 0.7, and four at 1.2 across the same 12 seeds.](../code/ch01/generated/sampling-diversity.svg){#fig-ch01-sampling-diversity fig-alt="Bar chart of distinct fixture outputs across 12 calls: one at temperature zero, three at point seven, and four at one point two."}
-
-@fig-ch01-sampling-diversity is not a claim about every model. It is the generated output of a known fixture, designed to establish the experiment before a costly or variable real-model run. Its durable lesson is the method: choose an outcome statistic, repeat calls under controlled settings, and compare distributions. For a classifier-like task the statistic might be label disagreement; for code it might be test-pass rate; for a tool planner it might be action-sequence diversity.
-
-The same method prevents a common evaluation error. If a prompt succeeds once at temperature zero, you have observed one trajectory under one server condition. You have not shown that the system is stable across inputs, seeds, replicas, load, or model revisions. Chapter 9 develops decoding and distributional behavior in full; Chapter 22 supplies the evaluation design. This section is the survey needed to operate the first probe.
-
-## Confabulation, Confidence, and Abstention {#sec-ch01-confabulation}
-
-The fixture receives the question “What did the 1912 Alpine Berry Treaty establish?” The treaty is invented. The fixture intentionally returns a fluent answer about quotas, mountain cantons, and an inspection council, with high token likelihoods encoded as log probabilities near zero. This is a controlled demonstration, not evidence that any particular real model will produce the same wording.
-
-Why is such behavior compatible with the modeling objective? The model estimates likely continuations conditioned on supplied text. A false premise can resemble a valid historical question. Tokens such as dates, treaties, councils, quotas, and geographic entities form patterns that occurred in training-like text. Without reliable evidence or a learned abstention behavior, a coherent completion can have high probability even when its referent is nonexistent. The model is not required by next-token prediction alone to run an existence check before continuing.
-
-Keep three quantities separate:
-
-- **Token likelihood** asks how probable a token is under the model given the preceding context. The API may expose its logarithm. If a token has log probability $\ell$, its model probability is $\exp(\ell)$. Sequence log probabilities aggregate token-level terms, but length and tokenization complicate comparisons.
-- **Semantic confidence** asks whether different plausible generations support the same meaning. Methods based on self-consistency or semantic entropy can estimate this more directly than a single token score, but they remain measurements of model behavior.
-- **Factual correctness** asks whether a claim agrees with the world or an authoritative source. It requires evidence, a verifier, a trusted database, a human judgment, or some combination. It is not contained in a token log probability.
-
-Calibration connects a stated confidence to observed frequency. If answers assigned 0.8 confidence are correct about 80 percent of the time on a defined task distribution, the score is calibrated on that distribution. Calibration can shift across topics, prompt formats, model changes, and retrieval conditions. A single global threshold is rarely enough; consequential actions may need category-specific thresholds and an explicit “insufficient evidence” path.
-
-An **abstention policy** turns uncertainty into system behavior. It defines when the system should decline, ask a clarifying question, retrieve more evidence, route to a specialist, or require human review. The model may help produce a score, but ordinary software must enforce what happens at the threshold. “Only answer when certain” in a prompt is a behavioral request, not an enforcement boundary.
-
-The generated `confabulation.json` records both the misleading answer and this warning: token log probabilities are not probabilities that the factual claim is true. That warning is part of the artifact because the schema itself should resist misinterpretation. This is a survey here; Chapter 9 develops confabulation evaluation, calibration, semantic uncertainty, evidence support, and abstention policies.
-
-## Post-Training Changes Behavior, Not the Contract {#sec-ch01-posttraining}
-
-Pretraining teaches a model to predict tokens over a broad corpus. A raw pretrained model can continue text, but it has not necessarily learned the conversational conventions an API user expects. **Post-training** adapts behavior after pretraining. Supervised instruction tuning supplies examples of desired responses. Preference optimization or reinforcement learning can make some responses more likely than others under human- or machine-derived feedback. Additional training can teach tool-call formats, refusal behavior, longer deliberation, domain conventions, or compact answers.
-
-These stages explain why two models with similar architectures can behave very differently at the same API boundary. They also explain why “the model knows” is too coarse a diagnosis. A model may contain information in its parameters yet fail to express it under a prompt; follow an instruction format yet lack the underlying fact; or produce a tool-shaped JSON object without understanding whether the tool is authorized.
-
-For operational reasoning, separate three layers:
+The base model continues the *pattern* of the prompt; the instruction-tuned model answers it. Nothing about the model's parameters became more factual — post-training changed which behavior is likely, not what the model knows. For operational reasoning, separate three layers and keep them from being confused.
 
 | Layer | What it changes | What it cannot guarantee by itself |
 |---|---|---|
 | Pretraining | Broad next-token competence and representations | Instruction following or factual verification |
-| Instruction/preference post-training | Response style, helpfulness, refusal, format adherence | Policy enforcement, perfect calibration, or safe side effects |
-| Runtime system | Context, tools, validators, permissions, budgets, and monitors | Capabilities absent from the selected model |
+| Instruction / preference post-training | Response style, helpfulness, refusal, format adherence | Policy enforcement, calibration, safe side effects |
+| Runtime system | Context, tools, validators, permissions, budgets, monitors | Capabilities absent from the chosen model |
 
-The table prevents two opposite errors. One is to treat every behavior difference as a prompting problem when model selection or post-training is decisive. The other is to rely on post-training for properties that require hard runtime controls. A refusal-trained model can reduce unsafe requests, but the tool gateway must still deny an unauthorized write. A tool-trained model can format arguments, but a schema validator must still reject malformed or out-of-range values.
+The table blocks two opposite errors. One is treating every behavior difference as a prompting problem when model selection or post-training is decisive. The other is leaning on post-training for properties that need hard runtime controls. A refusal-trained model reduces unsafe requests, but the tool gateway must still deny an unauthorized write; a tool-trained model formats arguments, but a schema validator must still reject out-of-range values. Some systems add a "reasoning" mode or extra test-time compute, which shifts accuracy, latency, and token use — but the caller still receives a probabilistic component whose outputs need evaluation and whose actions need constraints. Post-training objectives are developed in Chapter 7.
 
-Some systems expose a “reasoning” mode, hidden deliberation, or extra test-time compute. These can alter accuracy, latency, and token use, but the caller still receives a probabilistic component whose outputs need evaluation and whose actions need constraints. Product surfaces and training recipes will change; the layer boundary endures.
+## Latency and cost have two phases {#sec-ch01-latency}
 
-This is a survey here; Chapter 7 develops post-training objectives and data, Chapter 8 treats inference-time reasoning, Chapter 12 owns structured outputs, and Chapter 13 owns prompting and context engineering.
+Generation has two visibly different phases, and they cost differently. During **prefill**, the server processes the whole supplied context and builds the key-value state; work across input positions parallelizes. During **decode**, it emits output tokens one at a time, each depending on the tokens already produced [@kwon2023vllm]. That split motivates two user-facing measurements. **Time to first token (TTFT)** is the interval from request start to the first output token — queueing, prefill, and the first decode step. **Time per output token (TPOT)** summarizes the streaming interval after that; for $N>1$ output tokens with arrival times $t_1,\dots,t_N$,
 
-## Latency and Cost Have Two Phases {#sec-ch01-latency}
+$$
+\mathrm{TPOT} = \frac{t_N - t_1}{N - 1}.
+$$ {#eq-ch01-tpot}
 
-Generation has two visibly different phases. During **prefill**, the server processes the supplied context and constructs the key-value state needed for generation. Work across input positions can be parallelized within the transformer computation. During **decode**, the server produces output tokens one after another; each next token depends on the tokens already generated. Serving engines batch and schedule this work aggressively, but the dependency remains.
+We simulate a decode loop with a deterministic fake clock so we can exercise the same arithmetic a real stream would drive, then read TTFT and TPOT off the timestamps.
 
-That split motivates two user-facing measurements:
+```{python}
+# @save
+def simulate_decode(prompt_tokens: int, output_tokens: int, *,
+                    prefill_ms_per_token: float = 0.4, decode_ms_per_token: float = 18.0,
+                    jitter_ms: float = 1.5, seed: int = 0) -> list[float]:
+    """Simulate the arrival times of one streaming generation.
 
-- **Time to first token (TTFT)** is the interval from request start until the first output token arrives. It includes queueing, request processing, prefill, and the first decode step.
-- **Time per output token (TPOT)** summarizes the streaming interval after the first token. For $N>1$ output tokens, a useful request-level estimate is $\mathrm{TPOT}=(t_N-t_1)/(N-1)$, where $t_1$ is first-token time and $t_N$ is last-token time.
+    Prefill processes the whole prompt in parallel to produce the first token
+    (its cost scales with prompt length); decode then emits tokens serially with
+    small per-step jitter. Returning arrival times lets the same TTFT/TPOT
+    formulas used on a real stream run offline and deterministically.
 
-End-to-end latency is approximately TTFT plus the decode interval, with network and application overhead included according to where timestamps are taken. Always record that boundary. Client-observed latency answers a product question; server-only latency answers a capacity question. They are related but not interchangeable.
+    Args:
+        prompt_tokens: Number of input tokens, driving prefill time.
+        output_tokens: Number of tokens to emit.
+        prefill_ms_per_token: Prefill cost charged per prompt token.
+        decode_ms_per_token: Mean serial cost per output token.
+        jitter_ms: Symmetric per-token noise around the decode mean.
+        seed: Seed for the jitter, so runs reproduce.
 
-Input and output tokens also have different cost dynamics. A longer input increases prefill work and occupies context capacity. A longer output extends serial decoding, keeps accelerator state resident, and delays completion. Providers may bill input and output tokens differently, but prices are commercial policy and change more quickly than the compute mechanism. Optimize the mechanism first: remove irrelevant context, cache reusable prefixes when the stack supports it, cap outputs, and measure the quality lost by each reduction.
+    Returns:
+        Arrival time in milliseconds of each output token, first to last.
+    """
+    rng = random.Random(seed)
+    ttft = 8.0 + prompt_tokens * prefill_ms_per_token
+    times = [ttft]
+    for _ in range(1, output_tokens):
+        times.append(times[-1] + decode_ms_per_token + rng.uniform(-jitter_ms, jitter_ms))
+    return times
+```
 
-Raw token price is not the final objective. The useful denominator is a successful, policy-compliant outcome. A cheaper model that triggers more retries, human corrections, or failed tool calls can cost more per resolved task. Conversely, a slower model can be economical if it prevents an expensive error. Production comparisons should report at least quality, TTFT, output rate, request volume, and resource or billed cost on the same workload.
+```{python}
+# @save
+def tpot_ms(token_times_ms: list[float]) -> float:
+    """Compute time per output token from a decode loop's arrival times.
 
-The offline fixture emits synthetic timing so tests remain stable. Those numbers verify data plumbing only. The OpenAI-compatible adapter streams a real response, timestamps the first content token and completion, and records usage reported by the server. Hardware results belong in a dated experiment report with model, quantization, batch/load shape, prompt/output lengths, and software configuration.
+    Args:
+        token_times_ms: Arrival time in milliseconds of each output token.
 
-This is a survey here; Chapter 10 derives inference, key-value caching, batching, scheduling, throughput, TTFT/TPOT tradeoffs, and serving economics.
+    Returns:
+        The request-level TPOT, (t_N - t_1) / (N - 1); 0.0 for a single token.
+    """
+    if len(token_times_ms) < 2:
+        return 0.0
+    return (token_times_ms[-1] - token_times_ms[0]) / (len(token_times_ms) - 1)
+```
 
-## Choose the Least Autonomous Design {#sec-ch01-least-autonomous}
+```{python}
+times = simulate_decode(prompt_tokens=800, output_tokens=20)
+ttft = times[0]
+total = times[-1]
+print(f"TTFT   = {ttft:6.1f} ms   (queue + prefill of 800 tokens + first token)")
+print(f"TPOT   = {tpot_ms(times):6.1f} ms   (mean gap across {len(times)} tokens)")
+print(f"total  = {total:6.1f} ms")
+```
 
-An agent is one option in a larger design space. Start with the shape of the problem, not with the desire to use a model. Ask whether the desired output is determined by stable rules, authoritative data, an explicit objective, or judgment over unstructured evidence.
+@fig-ch01-timeline turns those timestamps into a picture: a long prefill segment up to the first token, then a run of near-even decode intervals.
+
+```{python}
+#| label: fig-ch01-timeline
+#| fig-cap: "Where does the time go? A single prefill segment reaches the first token (TTFT); decode then emits tokens at roughly steady intervals (TPOT)."
+fig, ax = plt.subplots(figsize=(6.6, 1.8))
+ax.barh(0, ttft, color="#2a7f9e", label="prefill -> first token (TTFT)")
+ax.barh(0, total - ttft, left=ttft, color="#b7791f", label="decode (TPOT x tokens)")
+for t in times:
+    ax.plot([t, t], [-0.4, 0.4], color="0.2", lw=0.6)
+ax.set_yticks([])
+ax.set_xlabel("milliseconds")
+ax.legend(loc="upper center", ncol=2, fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+The phases explain the cost asymmetry. A longer *input* inflates prefill and occupies context capacity; a longer *output* extends serial decoding and keeps accelerator state resident. The two are not interchangeable, and the useful denominator is not raw token price but a successful, policy-compliant outcome — a cheaper model that triggers more retries or human corrections can cost more per resolved task. We can make that concrete: charge input and output tokens, then divide by a success rate.
+
+```{python}
+prompt_toks, output_toks = 800, 200
+in_rate, out_rate = 0.05 / 1000, 0.40 / 1000   # dollars per token; output is dearer
+raw = prompt_toks * in_rate + output_toks * out_rate
+for success in (0.95, 0.6):
+    print(f"raw call = {raw:.4f} USD   success={success:.2f}   cost per resolved task = {raw/success:.4f} USD")
+```
+
+Dropping the success rate from 0.95 to 0.6 raises the effective cost by more than half without changing a single token. Optimize the mechanism before the price: trim irrelevant context, cache reusable prefixes when the stack supports it, and cap outputs. Serving economics, batching, and the TTFT/TPOT tradeoff are developed in Chapter 10.
+
+::: {.landscape-2026}
+**Token prices, context-window sizes, and per-model latency are volatile.** The mechanisms above are durable; the specific numbers a vendor charges or the context length a model advertises are commercial and change on the order of weeks. Treat any figure you hard-code as a dated snapshot and re-measure against your own workload. Verify live: provider pricing and model cards for the model you actually serve (checked 2026-07-20).
+:::
+
+## Choose the least autonomous design {#sec-ch01-least-autonomous}
+
+With the component understood, the refund proposal becomes a design question, not a capability question. An agent is one option in a large space, and the discipline is to start from the shape of the problem rather than the wish to use a model. Ask what determines the desired output: stable rules, authoritative data, an explicit objective, or judgment over unstructured evidence. @fig-ch01-least-autonomous walks that question to the least autonomous mechanism that can verify its own part.
 
 ```{mermaid}
 %%| label: fig-ch01-least-autonomous
-%%| fig-cap: "Which mechanism earns the first implementation attempt?"
+%%| fig-cap: "Which mechanism earns the first implementation attempt? Walk down to the least autonomous option whose output can be checked."
 flowchart TD
     Q[Define the measurable outcome] --> R{Stable rules cover it?}
     R -- yes --> C[Ordinary code or rules]
@@ -241,142 +595,113 @@ flowchart TD
     O -- no --> J{Judgment over text or images?}
     J -- yes --> M[One model call or fixed workflow]
     J -- no --> H[Human process or redesign]
-    M --> A{Must the next step depend on observations?}
+    M --> A{Must the next step depend on an observation?}
     A -- no --> W[Keep the workflow fixed]
     A -- yes --> B[Consider a bounded agent]
 ```
 
-@fig-ch01-least-autonomous is a starting heuristic, not a ban on hybrid systems. A reliable application often combines several branches: SQL fetches account facts, retrieval supplies policy passages, ordinary code computes eligibility, and a model drafts an explanation. The key move is to assign each mechanism the part it can verify.
+The heuristic is not a ban on hybrids; a solid application usually combines branches — SQL fetches account facts, retrieval supplies the policy passage, ordinary code computes eligibility, and a model drafts the explanation — with each mechanism assigned the part it can verify. Use rules when the mapping is stable and expressible; a long conditional is inelegant but beats an agent when every branch is auditable. Use SQL or a typed API for exact facts; asking a model to infer a balance from prose adds uncertainty for nothing. Use retrieval when the hard part is locating evidence, a solver when variables and an objective are explicit, and a human when legitimacy or irreversible judgment dominates. A one-shot model call earns its place when the task is semantic judgment over unstructured input and the output can be checked; a fixed workflow when the sequence is known; a bounded agent only when the useful next step genuinely depends on an intermediate observation.
 
-Use **rules or ordinary code** when the mapping is stable and expressible. A long conditional may be inelegant, but it can still beat an agent if every branch is auditable and changes rarely. Use **SQL or a typed API** for exact structured facts; asking a model to infer a balance from prose adds uncertainty without value. Use **search or retrieval** when the main difficulty is locating evidence. Use a **solver** when variables, constraints, and an objective can be stated explicitly. Use a **human** when legitimacy, accountability, novel negotiation, or irreversible judgment dominates.
+Two tests filter most weak agent proposals. The **counterfactual baseline**: what is the best non-agent design, and on which measured cases does it fail? If no baseline exists, the value of autonomy is unknown. The **branch-value test**: what observation can change the next action, and why is a fixed branch insufficient? If the answer is "the model will think," the architecture is underspecified. The refund incident fails both. Eligibility is an ordinary rule over purchase date, product type, and policy version; retrieval can surface the governing passage; a model can draft a humane explanation. None of that implies a model should choose whether to move money. The agent loop is built in Chapter 16, and this decision returns with production economics in Chapter 28.
 
-A **one-shot model call** earns its place when the task requires semantic judgment over unstructured input and the output can be checked or safely reviewed. A **fixed workflow** is better when the sequence is known: extract fields, validate them, retrieve policy, then draft. A **bounded agent** becomes plausible when the useful next step genuinely depends on an intermediate observation and enumerating all paths is impractical—for example, diagnosing an unfamiliar service fault across several read-only tools.
+## Buy authority one action at a time {#sec-ch01-agency-budget}
 
-Two tests filter many weak agent proposals:
+Autonomy is not one switch. A system can draft without sending, read one database without writing it, choose among three tools without inventing a fourth, or execute a reversible action while escalating an irreversible one. Treat authority as a property of each action path, and give each rung a name, a characteristic failure, and an enforcement owner. @fig-ch01-authority-ladder lays out the six rungs we use across the book.
 
-1. **Counterfactual baseline:** what is the best non-agent design, and on which measured cases does it fail? If no baseline has been built, the value of autonomy is unknown.
-2. **Branch-value test:** what observation can change the next action, and why is a fixed branch insufficient? If the answer is merely “the model will think,” the architecture is underspecified.
+![The authority ladder, levels 0–5. Each rung buys one capability and owes one control; rising the ladder enlarges the blast radius without adding intelligence.](../assets/figures/ch01-authority-ladder.svg){#fig-ch01-authority-ladder fig-alt="A rising staircase of six steps labeled L0 to L5, each annotated with a capability, its characteristic failure, and the control that must own it."}
 
-The support-policy incident fails both tests. Eligibility may be an ordinary rule over purchase date, product type, and policy version. Retrieval may be needed to show the governing passage. A model may draft a humane explanation. None of those requirements implies that a model should choose whether to issue money.
+These levels describe permissions, not intelligence: a powerful model can sit at L0 while a modest classifier triggers an L4 effect if software wires it that way. Each increment also has a countable price, and "the model will handle it" is never a budget. We cost the increments explicitly. Represent each rung by the per-task overhead it adds — extra model calls, expected retries, and operator review minutes — and accumulate.
 
-This section is a survey. Chapter 16 builds the minimal agent loop; Chapter 28 revisits the workflow-versus-agent decision with production evidence and failure economics.
+```{python}
+# @save
+@dataclass(frozen=True)
+class Rung:
+    """One rung of the authority ladder and the per-task overhead it adds.
 
-## Buy Authority One Action at a Time {#sec-ch01-agency-budget}
+    The fields are deliberately countable — calls, retries, review minutes, and
+    the number of records a failure can touch — because a budget stated in
+    countable units is the only kind you can enforce or promote against.
+    """
 
-Autonomy is not one switch. A system can draft without sending, read one database without writing it, choose among three tools but not invent a tool, or execute a reversible action while escalating an irreversible one. Treat authority as a property of each action path.
+    name: str
+    extra_calls: float
+    expected_retries: float
+    review_minutes: float
+    blast_radius_records: int
 
-The following ladder separates **control-flow complexity** from **effect authority**. Moving right adds an incremental budget that must be stated numerically for the deployment, even when the numbers begin as conservative caps.
 
-| Rung | New capability | Minimum numeric bounds to add | Evidence owed before promotion |
-|---|---|---|---|
-| Conventional component | Deterministic query, rule, search, or solver | Query timeout; rows or records returned | Unit, integration, and load tests |
-| One model call | Probabilistic semantic output | 1 call; input/output token caps; deadline | Repeated-task quality and abstention evaluation |
-| Fixed model workflow | Several known stages | Maximum calls per request; per-stage deadlines; retry caps | End-to-end and stage-ablation results |
-| Bounded agent | Model chooses next read or action | Step cap; allowlisted tools; read/write scopes; wall-time and spend caps | Trajectory, policy, recovery, and adversarial tests |
-| Coordinated agents | Several decision-makers exchange work | Global step cap; message cap; shared-resource quota; ownership per effect | Evidence that coordination beats one bounded agent |
-| Delegated operation | Continues across sessions or broad objectives | Time horizon; affected-record cap; approval classes; kill and rollback limits | Canary evidence, monitoring, incident rehearsal, named owner |
+def autonomy_costs(rungs: list[Rung], call_cost: float = 0.02,
+                   reviewer_cost_per_minute: float = 1.0) -> list[tuple[str, float, float]]:
+    """Cost each authority increment in the dollars used to justify the project.
 
-The bounds are deliberately expressed in countable units: calls, tokens, steps, tools, writes, records, messages, elapsed time, retries, and reviewer minutes. “Use reasonable resources” is not a budget. Nor can every dimension be collapsed honestly into one score. A five-step read-only diagnostic and a one-step irreversible transfer have different risk shapes. Keep a vector of limits and identify which one stops the system first.
+    Every rung is charged for the model calls and retries it adds and for the
+    operator minutes it consumes; the running total shows that autonomy is
+    bought one action at a time, each increment with an explicit price.
 
-Authority has its own levels. At level 0, the model only returns text to software. At level 1, it drafts for a person. At level 2, it reads scoped systems. At level 3, it proposes an effect behind approval. At level 4, it executes a narrow, reversible or compensatable effect. At level 5, it pursues a delegated objective across time or systems. These levels describe permissions, not intelligence. A powerful model can remain at level 0; a modest classifier can trigger a level-4 effect if software wires it that way.
+    Args:
+        rungs: The ladder rungs in ascending order of authority.
+        call_cost: Dollar cost of one model call (and of one retry).
+        reviewer_cost_per_minute: Dollar cost of one operator-review minute.
 
-Each increment creates a characteristic failure. A draft can promise a nonexistent policy. A read tool can cross a tenant boundary. Approval can degrade into habitual clicking. A retried non-idempotent write can duplicate an effect. A long-lived delegate can follow malicious instructions hidden in an artifact. These are composite examples; later chapters derive the enforcement and testing mechanisms. Their shared lesson is that prompt text is not enforcement.
-
-An **agency-budget memo** makes the trade explicit before implementation. It names the measurable outcome and least-autonomous baseline; lists each action, scope, approval, and reversal path; budgets compute, latency, evaluation, security work, operator attention, and blast radius; and states release evidence, monitoring, escalation, stop, and rollback conditions. The artifact generates a one-page template rather than pretending one set of numbers fits every domain.
-
-Budget the expected benefit in the same units used to justify the project: resolution rate, analyst minutes saved, defects caught, recovery time, or another outcome. Then charge the autonomy increment for its full operating cost. Include unsuccessful calls, repeated evaluations, human review, security controls, incident response, and variance at peak load. Promotion is warranted only when measured value survives those charges.
-
-Human oversight is also a system, not a button. “Human in the loop” may mean approval before an effect, review after a sampled effect, escalation on low confidence, or incident intervention. These mechanisms have different latency and failure modes. The book divides their treatment deliberately: Chapter 17 covers approval gates and tool execution, Chapter 24 covers authorization and escalation policy, Chapter 26 covers durable pause and resume, Chapter 27 covers queues and operator load, and Chapter 32 exercises the complete arrangement without reteaching it.
-
-This section surveys the decision. Chapters 16 and 28 return to the ladder with executable agents and production economics; Chapters 22–27 establish evaluation, security, reliability, deployment, and operations evidence.
-
-## How to Use This Book {#sec-ch01-use-book}
-
-Chapter 1 is the shared on-ramp. **Route A—full foundations** continues through Chapters 2–11 before entering model programming at Chapter 12 and agent construction at Chapter 16. Choose it when you want to derive transformers and tokenization; attention, position, and long context; efficient architectures; scaling and data; distributed training; post-training and test-time reasoning; inference; serving; and customization from the neural-network substrate. **Route B—applied agent engineering** goes from this chapter to Chapter 12 and then reads contiguously. Later chapters provide bounded backfill where a model-foundation dependency is load-bearing.
-
-Both routes use the same learning loop: begin with a failure or measurement, state an invariant, implement the smallest mechanism, break it, measure the break, map it to production, and name what the component does not own. The point of a deterministic fixture is not to avoid reality. It is to debug the experiment before adding model, network, scheduler, and hardware variance. Optional adapters then expose the same interface to real behavior.
-
-The lab stack grows only when a mechanism requires it:
-
-| Layer | Default role in the book |
-|---|---|
-| Python, NumPy, and PyTorch | Derive and test model mechanisms |
-| Raw HTTP and an OpenAI-compatible local server | Observe the model-call boundary before frameworks |
-| Postgres and vector search | Persist state, evidence, and retrieval artifacts |
-| Containers and queues | Reproduce services and asynchronous work |
-| OpenTelemetry-compatible traces and metrics | Connect trajectories to production operations |
-| Agent frameworks | Compare orchestration choices after building the underlying loop |
-
-The order is intentional. Frameworks compress mechanisms; they do not remove the need to understand termination, tool schemas, policy gates, state, or traces. Chapter 16 constructs the minimal loop. Chapter 28 asks again whether that loop should exist in the product. Repetition there is a decision checkpoint, not a second introduction.
-
-Keep the chapter artifacts as a lab notebook. Run the fixture first, commit the generated measurements you rely on, and record configuration beside any real-model result. When a named model, server, benchmark, price, API field, or legal rule matters, verify it at the time of use. Durable reasoning lives in the chapter spine; dated choices belong in an experiment record and Appendix C.
-
-## Build {#sec-ch01-build}
-
-Run the integrated probe from the `newbook` directory. The default path needs no model, network, API key, or accelerator:
-
-```powershell
-python code/ch01/model_probe.py
-python -m pytest tests/test_ch01_model_probe.py -q
+    Returns:
+        One ``(name, incremental_cost, cumulative_cost)`` triple per rung.
+    """
+    rows, cumulative = [], 0.0
+    for rung in rungs:
+        incremental = (rung.extra_calls + rung.expected_retries) * call_cost \
+            + rung.review_minutes * reviewer_cost_per_minute
+        cumulative += incremental
+        rows.append((rung.name, incremental, cumulative))
+    return rows
 ```
 
-The command writes four inspectable outputs under `code/ch01/generated/`:
-
-- `sampling.csv` contains every temperature, seed, response, token count, and timing measurement.
-- `sampling-diversity.svg` is generated from the CSV experiment and appears in @fig-ch01-sampling-diversity.
-- `confabulation.json` contains the false-premise prompt, fabricated response, token scores, and interpretation warning.
-- `agency-budget-template.md` is the one-page design memo to complete for a proposed agent feature.
-
-The expected fixture result is one distinct output at temperature 0.0, three at 0.7, and four at 1.2 across 12 fixed seeds. Predict the direction before inspecting the chart. The exact counts follow from this fixture's candidate logits and seeds; a real model can produce a different pattern.
-
-To repeat the same experiment against a server-hosted model, start a local vLLM OpenAI-compatible server using its official documentation, then identify the served model name and run:
-
-```powershell
-$env:VLLM_API_KEY = "your-local-key-if-configured"
-python code/ch01/model_probe.py `
-  --mode openai-compatible `
-  --base-url http://localhost:8000/v1 `
-  --model your-served-model
+```{python}
+ladder = [
+    Rung("conventional", 0, 0.0, 0.0, 1),
+    Rung("one model call", 1, 0.0, 0.5, 1),
+    Rung("fixed workflow", 3, 0.2, 1.0, 5),
+    Rung("bounded agent", 6, 1.0, 3.0, 25),
+    Rung("coordinated agents", 15, 2.0, 4.0, 100),
+    Rung("delegated operation", 30, 4.0, 8.0, 500),
+]
+for name, inc, cum in autonomy_costs(ladder):
+    print(f"{name:20} +{inc:6.2f} USD/task   cumulative {cum:6.2f} USD/task")
 ```
 
-The adapter requests streaming chat completions with token log probabilities. It timestamps the first content token, gathers returned token scores and usage, and sends every result through the same CSV, JSON, figure, and memo path as the fixture. If the selected server or model does not support log probabilities, that is a capability mismatch to record, not a reason to silently invent scores.
+The jump from a fixed workflow to a bounded agent roughly triples the per-task cost here, and most of that is operator review, not compute — a pattern @fig-ch01-autonomy-cost makes plain.
 
-Inspect three things. First, group `sampling.csv` by temperature and compare both distinct strings and task-relevant outcomes. String diversity is easy to count but may overstate semantic variation. Second, open `confabulation.json`; verify that high per-token likelihood does not validate the treaty. Third, complete the memo for the support refund proposal. The least-autonomous baseline should compute eligibility from authoritative policy and typed account data. If a model drafts the explanation, it can remain a level-1 action while refund issuance stays behind conventional policy and authorization.
+```{python}
+#| label: fig-ch01-autonomy-cost
+#| fig-cap: "What does each autonomy increment cost per task? The cumulative operating cost climbs steeply once a human is kept in the loop, long before the model bill dominates."
+rows = autonomy_costs(ladder)
+fig, ax = plt.subplots(figsize=(6.6, 3.2))
+ax.plot([r[0] for r in rows], [r[2] for r in rows], marker="o")
+ax.set_ylabel("cumulative USD per task")
+ax.tick_params(axis="x", labelrotation=30)
+fig.tight_layout()
+plt.show()
+```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `model_probe.py`: fixture, real adapter, experiment, and outputs | 197 total lines | One experiment runs offline or against a hosted model without duplicating measurement logic. |
-| `test_ch01_model_probe.py` | 5 focused tests | Fixed controls repeat, temperature zero collapses the fixture choice, scores align with tokens, and every artifact is generated. |
-:::
+An **agency-budget memo** records that trade before implementation. It is a one-page artifact, and for the refund case it is short and concrete rather than a blank template:
 
-**Honesty note.** The fixture simulates a categorical sampler and returns synthetic timing; it is not a language model and is not a benchmark. Its invented treaty response is deliberately false. Real output diversity, tokenization, log probabilities, TTFT, and total latency depend on the model and serving configuration. Preserve raw results and configuration metadata whenever you replace the fixture.
+> **Outcome.** Resolve refund-eligibility questions in the support console; success = correct eligibility on the golden set at or above the current human rate, measured weekly.
+> **Least-autonomous baseline.** Eligibility is a rule over purchase date, product type, and policy version; retrieval surfaces the governing passage; a model drafts the explanation only. The model never decides eligibility.
+> **Authority requested.** Drafting the explanation is **L1** (drafts for a person); reading account facts is **L2** (scoped, read-only); issuing the refund stays **conventional** behind existing authorization — not granted to the model.
+> **Incremental budget.** +0.50 USD/task over the pure-rule baseline (one call plus about thirty seconds of review); token cap 800 in / 200 out; deadline 3 s TTFT; blast radius = one draft, zero money moved.
+> **Release contract.** Ship when golden-set eligibility ≥ human rate and abstention fires on unsupported claims; monitor draft-edit rate; stop and roll back to pure retrieval if edit rate exceeds 20%. Owner: support-platform team; review in 30 days.
 
-## What Endures, What Changes {#sec-ch01-endures}
+Human oversight is itself a system with its own latency and failure modes, and the book splits its treatment deliberately: mechanics in Chapter 17, authorization and escalation policy in Chapter 24, and operator load in Chapter 27. The durable move is the one this section makes — charge every autonomy increment its full operating cost, in the same units used to justify the project, and promote only when measured value survives the charge.
 
-**What endures.** An autoregressive model exposes a conditional continuation distribution. Tokens and context are capacity and compute budgets. Sampling controls alter a distribution, not factual correctness. Token likelihood, semantic uncertainty, and world-grounded correctness are distinct. Post-training changes behavior but does not replace runtime enforcement. Prefill and serial decoding create different latency pressures. Agency is granted by software at each action boundary. The least-autonomous design is the baseline, and every autonomy increment owes measured value plus explicit limits.
+## Summary
 
-**What changes.** Model families, context sizes, tokenizer details, post-training recipes, supported API fields, deterministic-serving guarantees, hardware, server scheduling, benchmark standings, and token prices will change. Agent frameworks, observability products, and protocol surfaces will also change. Verify those choices against current official sources and a workload-specific experiment; do not revise the durable decision rules merely because a product label moves.
+A model call is a controlled draw from a conditional next-token distribution: tokens and context are budgets, temperature reshapes which continuations are likely without adding evidence, and a high log probability measures fluency, not truth. We trained a byte-pair encoder, watched a distribution flatten with temperature, exponentiated a confident confabulation to a 0.97 that stood next to a false claim, turned that into an abstention decision, and read TTFT and TPOT off a simulated decode loop. Authority is granted by software one action at a time, and each increment has a countable price. Chapter 9 develops sampling, calibration, and abstention in full; Chapter 16 builds the agent loop this chapter decided when to reach for.
 
-## Exercises {#sec-ch01-exercises}
+## Exercises
 
-1. **Recover a probability.** Pick three token log probabilities from `confabulation.json`, exponentiate them, and explain exactly what each resulting number does and does not claim. Why would multiplying them not yield the probability that the answer is factual?
-2. **Predict before running.** Add temperature 0.2 to the fixture experiment. Predict the number of distinct responses across the existing seeds, then run it. Explain the result from the logits and softmax rather than from the wording of the responses.
-3. **Break reproducibility.** Replace the fixture's local seeded generator with shared mutable randomness. Write a test that exposes order dependence, then restore the invariant without forcing every temperature to zero.
-4. **Measure semantic outcomes.** Replace exact-string diversity with a task-specific label such as `release`, `block`, or `escalate`. Compare string diversity with label diversity and state which is operationally relevant.
-5. **Exercise the real boundary.** Run the adapter against a local compatible server under one request at a time and then under concurrent load. Record model, server configuration, input/output lengths, TTFT, and total latency. Report distributions rather than a single average.
-6. **Defend a non-agent design.** Choose one proposed agent feature and complete the generated agency-budget memo. Build the best rule, query, search, solver, workflow, or human baseline you can. Name the measured failure that would justify promotion to a bounded agent.
-7. **Split authority.** For a customer-support assistant, classify drafting a reply, reading account history, proposing a credit, applying a credit, and monitoring follow-up as authority levels 0–5. Give each action a numeric limit, enforcement owner, and escalation path.
-
-## Notes and Sources {#sec-ch01-notes}
-
-- Vaswani et al., [“Attention Is All You Need”](https://arxiv.org/abs/1706.03762), provides the transformer architecture underlying the later derivation.
-- Sennrich, Haddow, and Birch, [“Neural Machine Translation of Rare Words with Subword Units”](https://arxiv.org/abs/1508.07909), and Kudo and Richardson, [“SentencePiece”](https://arxiv.org/abs/1808.06226), are primary sources for subword tokenization approaches.
-- Holtzman et al., [“The Curious Case of Neural Text Degeneration”](https://arxiv.org/abs/1904.09751), introduces nucleus sampling and analyzes decoding behavior.
-- Ouyang et al., [“Training Language Models to Follow Instructions with Human Feedback”](https://arxiv.org/abs/2203.02155), is a primary reference for supervised instruction tuning and reinforcement learning from human feedback in an instruction-following model.
-- Kadavath et al., [“Language Models (Mostly) Know What They Know”](https://arxiv.org/abs/2207.05221), studies model confidence and calibration; Farquhar et al., [“Detecting Hallucinations in Large Language Models Using Semantic Entropy”](https://www.nature.com/articles/s41586-024-07421-0), develops semantic-uncertainty measurement.
-- Shanahan, [“Talking About Large Language Models”](https://www.nature.com/articles/s41586-023-06647-8), motivates precise language about model behavior rather than unsupported anthropomorphic claims.
-- Zhong et al., [“DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving”](https://arxiv.org/abs/2401.09670), formalizes the importance of distinct prefill/decode service-level objectives including TTFT and TPOT.
-- Thinking Machines Lab, [“Defeating Nondeterminism in LLM Inference”](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/), gives a serving-level account of batch-dependent numerical variation and stronger reproducibility techniques.
-- Anthropic, [“Building Effective Agents”](https://www.anthropic.com/engineering/building-effective-agents), distinguishes fixed workflows from systems in which models direct their own process and argues for matching complexity to measured need.
-- The vLLM project’s [OpenAI-compatible server documentation](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/) is the live source for launching and configuring the optional local adapter. Verify supported fields against the installed server and selected model before running.
+1. **Recover a probability, and its limit.** Take three log probabilities from the treaty answer, exponentiate them, and state precisely what each number does and does not claim. Then explain why multiplying all ten together gives a *lower* sequence probability without saying anything more about whether the treaty is real.
+2. **Predict before running.** Add $T=0.2$ and $T=3.0$ to the temperature sweep in @sec-ch01-sampling. Predict the entropy at each from @eq-ch01-softmax before running the cell, then check. Explain the two limits from the logits, not from the sampled words.
+3. **Break reproducibility.** Replace the seeded `random.Random` in `sample_token` with a single shared module-level generator, then write a check that exposes order dependence across two calls. Restore determinism without forcing every temperature to zero.
+4. **Make token count bite.** Extend the corpus in @sec-ch01-context and re-train the encoder with 40, 80, and 160 merges. Plot the token count of the test sentence against the number of merges, and explain the curve in terms of which pieces became single tokens.
+5. **Turn confidence into an action.** Using `decide_response`, find a (confidence, evidence) pair that answers and a nearby pair that abstains. Then argue why a single global threshold is unsafe across two categories with different costs of a wrong answer, and sketch category-specific thresholds.
+6. **Cost a real request.** Using `simulate_decode` and `tpot_ms`, (a) measure how TTFT changes as prompt length goes from 200 to 4000 tokens; (b) measure how total latency changes as output length goes from 20 to 400 tokens; (c) state which phase a latency budget should attack for a short-prompt, long-answer workload, and why.
+7. **Defend a non-agent design, then price the increment.** Choose one proposed agent feature and complete an agency-budget memo like the refund one. Build the best rule, query, retrieval, or workflow baseline you can, use `autonomy_costs` to price the jump to a bounded agent, and name the measured failure of the baseline that would justify paying it.
