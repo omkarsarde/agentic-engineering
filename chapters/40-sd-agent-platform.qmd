@@ -1,0 +1,247 @@
+---
+description: "The platform family of the agentic system-design round, worked once: a multi-tenant agent platform for fifty teams, where the product is not tokens but accountable runs, and the design is governance made mechanical — identity, immutable releases, cells, and evidence, priced by cost per successful task."
+---
+
+# Platform Design: A Multi-Tenant Agent Platform {#sec-ch40}
+
+This is the last family on the taxonomy (@sec-ch33-families) and the one that inverts the others: the customers are fifty engineering teams, not end users, so the thing we design is the control plane itself — releases, identity, isolation, and evidence promoted to the product. We run the seven moves once, on one prompt, and end with the family skeleton that re-instantiates the same bones across a tool registry, a review platform, and an agent CI/CD system. The fork that identifies this family is the one the whole chapter turns on: *which controls are mandatory per risk tier, and where is the reviewed escape hatch?*
+
+## The prompt, and scoping fifty teams {#sec-ch40-scope}
+
+The interviewer says it like this:
+
+> *"We have fifty teams shipping agents, and every one of them is rebuilding identity, durability, evals, deployment, and incident response from scratch. Design the platform so they stop. Some agents just answer questions; some take real business actions. It's multi-tenant, but we do not want one giant shared super-agent."*
+
+Underspecified on purpose: no isolation boundary, no risk taxonomy, no statement of which service levels the platform owns versus which the teams own. The first five minutes buy exactly the answers that fork the architecture, and the platform family has four such clarifiers.
+
+*What workload shapes are in scope?* Read-only assistants need identity and evals; agents that issue refunds or file tickets drag in the whole approval-and-effect machinery of the acting-agent family (@sec-ch26-ledger). If both are in scope — they are — the platform must serve the strict superset, which means the effect ledger is not optional.
+
+*Where is the tenant and failure isolation boundary?* This is the difference between a noisy-neighbour incident that touches one team and one that takes down fifty. The senior answer names **cells** — capacity partitioned by tenant, risk tier, or region so a failure's blast radius is a fraction, not the fleet.
+
+*Which controls are mandatory per risk tier, and where is the escape hatch?* This is the family fork. A platform with no mandatory controls is a wiki; a platform with no escape hatch grows shadow platforms in the teams that need the exception. The answer is risk-tiered mandatory controls plus a *reviewed* escape hatch whose exceptions carry an owner and an age.
+
+*Which SLO is platform-owned and which is product-owned?* The platform owns the substrate's availability, admission latency, and rollback time; a team owns its own task success rate. Confusing the two is how a platform ends up paged for a product's bad prompt.
+
+A senior closes the move by restating the problem with numbers and naming a non-goal aloud: no shared super-agent, no cross-tenant data flow, no platform ownership of product quality.
+
+| Requirement | Number / decision |
+|---|---|
+| Tenants | 50 teams, mixed workloads |
+| Workload range | read-only assistants → approval-gated business actions |
+| Isolation | cells by tenant · risk tier · region |
+| Deployable unit | immutable release bundle behind an alias |
+| Mandatory controls | risk-tiered; reviewed escape hatch with exception debt |
+| Platform SLO | control-plane availability, admission/queue delay, rollback time |
+| Product SLO | task success, groundedness — owned by the team |
+| Headline metric | cost per **successful** task, not agents deployed |
+| Out of scope | shared super-agent · cross-tenant flow · product quality |
+
+: What the platform promises, restated with numbers before any boxes are drawn. {#tbl-ch40-reqs}
+
+## The numbers first {#sec-ch40-boe}
+
+Numbers before boxes. The platform family's classic numeric trap is a *metric* trap: reporting "agents deployed" and "cost per call" hides the retry tax, because an agent task that fails still costs money. The number a senior computes live is **cost per successful task** — the per-attempt cost divided by the success rate — and it is the one the vanity dashboard never shows. We compute it with the back-of-envelope toolkit from Chapter 33 (@sec-ch33-loops), importing its loop-cost calculator rather than rebuilding it.
+
+```{python}
+import importlib.util
+import sys
+from pathlib import Path
+
+
+def load_chapter(chapter: str, name: str):
+    """Import a committed chapter's tangled module under an explicit name."""
+    spec = importlib.util.spec_from_file_location(name, Path("code") / chapter / "_generated.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+sd = load_chapter("ch33", "ch40_sd")   # the back-of-envelope toolkit from Chapter 33
+price = sd.TokenPrice(input_per_million=3.00, output_per_million=15.00,
+                      cached_input_per_million=0.30)
+
+# a representative governed business-action task: an 8-step loop over a hot prompt cache
+attempt = sd.loop_cost(8, 2_500, 700, 250, price, cached_resend=True)
+success_rate = 0.70
+per_success = attempt / success_rate
+print(f"cost per task attempt          : ${attempt:.4f}")
+print(f"cost per SUCCESSFUL task       : ${per_success:.4f}   <- the unit that matters")
+print(f"retry tax the vanity metric hides: {(per_success / attempt - 1) * 100:.0f}%")
+```
+
+At a 70% success rate the true unit cost is 43% above the per-attempt number — a platform billed and capacity-planned on cost-per-call is undercounting by nearly half, and the fix costs one spoken sentence. That unit scales to a fleet, and two more anchor numbers size the platform's blast radius and its paved-path health. The prices, volumes, and rates here are illustrative teaching constants chosen for round arithmetic, not quotes.
+
+```{python}
+tasks_per_day = 50 * 4_000                 # 50 teams x ~4k successful tasks/team/day
+cells = 8                                  # capacity partitioned into failure domains
+releases, on_escape_hatch = 320, 26        # live releases; those on a reviewed exception
+
+print(f"fleet spend/day at {tasks_per_day:,} successful tasks : ${per_success * tasks_per_day:,.0f}")
+print(f"blast radius, one cell of {cells}              : {1 / cells * 100:.0f}% of the fleet")
+print(f"runs on the supported (paved) path        : {(1 - on_escape_hatch / releases) * 100:.0f}%")
+print(f"open escape-hatch exceptions              : {on_escape_hatch}  (each carries an owner + an age)")
+```
+
+Four numbers in five minutes: a five-figure daily fleet bill that per-call accounting would misstate, an eight-cell partition that caps any single failure at an eighth of the fleet, and a paved-path adoption rate with a countable exception debt. The last two are the platform's real health indicators — not "agents deployed." @fig-ch40-cost draws the trap directly: how the true unit cost pulls away from the per-call number as success rates fall.
+
+```{python}
+#| label: fig-ch40-cost
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does one governed task really cost? The flat line is the per-attempt cost a vanity dashboard reports; the curve is cost per successful task. The gap is the retry tax, and it widens fast as success rates fall."
+import matplotlib.pyplot as plt
+
+rates = [r / 100 for r in range(40, 101, 2)]
+true_cost = [attempt / r for r in rates]
+fig, ax = plt.subplots(figsize=(6.6, 3.4))
+ax.plot([r * 100 for r in rates], true_cost, color="#b13f3f", label="cost per successful task")
+ax.axhline(attempt, ls="--", color="#2a7f9e", label="cost per attempt (the vanity number)")
+ax.axvline(success_rate * 100, ls=":", color="0.4")
+ax.text(success_rate * 100 + 1, attempt * 1.55, "70% success", fontsize=8, color="0.4")
+ax.set_xlabel("task success rate (%)")
+ax.set_ylabel("cost per task (USD)")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
+
+## The contract and the four-plane skeleton {#sec-ch40-skeleton}
+
+The caller here is a team, not a browser, so the contract is a publishing surface, not a request-response API. A team ships an **immutable release bundle** — code and graph digest, pinned prompt, model, tool, and skill versions, MCP schema digests, the policy version, eval results, and a risk tier — to a registry, which admits it and returns an **alias**; the alias, never a mutable name, is what production points at, so a rollback is a pointer flip (@sec-ch26-versioning). Runs then enter through one idempotent boundary, whether the trigger is a webhook, a schedule, or a chat turn. The platform SLOs are the substrate's: control-plane availability, admission and queue delay, and restore time — measured as error-budget burn, not a green average (@sec-ch27-slos). Task success stays a product SLO.
+
+Now the boxes, and the reason to draw the platform as **four planes** is that each holds a different kind of authority, and the one rule that keeps them honest is the direction of authority: the control plane publishes *downward* into the request path, and the evidence plane records what happened but must never gate the hot path (@sec-ch26-planes). @fig-ch40-planes locates them.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch40-planes
+%%| fig-cap: "Who owns task logic, reproducibility, orchestration, and durable state — and which way does authority flow? The control plane publishes downward; the evidence plane records but never gates the hot path."
+flowchart LR
+    TEAM["50 teams<br/>publish release bundles"] --> BUILD["Build plane<br/>code · graph · evals · risk tier"]
+    BUILD --> CONTROL["Control plane<br/>registry · policy · alias · budgets"]
+    CONTROL -->|"atomic alias pointer"| RUN["Run plane<br/>identity · admit · checkpoint · effect"]
+    TRIG["webhook · schedule · chat"] --> RUN
+    RUN <--> DATA[("Data plane<br/>checkpoints · effect ledger · receipts")]
+    RUN -. "traces · usage" .-> EVID[("Evidence plane<br/>metrics · traces · audit · evals")]
+    RUN -. "authoritative receipt" .-> EVID
+```
+
+The **build plane** owns task logic and turns a repo into a candidate bundle with eval results and a declared risk tier. The **control plane** owns discovery and admission: the registry stores bundles and resolves aliases, the policy gate decides tier-appropriate controls, and budgets are published ahead of traffic. The **run plane** owns one journey — it authenticates to a trusted identity, admits against quota and deadline, resolves the alias to a pinned bundle, checkpoints, proposes, authorizes, and invokes effects through the ledger (@sec-ch26-ledger). The **data plane** holds what outlives a request. The **evidence plane** records four sources of truth and is deliberately powerless over the hot path.
+
+Two pipelines connect these planes, and @fig-ch40-pipelines draws them: a change reaches production through the **release pipeline**, and every trigger enters through the **run pipeline's** one idempotent boundary. Neither a webhook nor a chat turn gains tool authority by arriving — authority comes only from the resolved identity, which we design next.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch40-pipelines
+%%| fig-cap: "What is the deployable unit, and how do a webhook, a schedule, and a chat turn all enter without gaining tool authority? The release pipeline admits an immutable bundle behind an alias; the run pipeline funnels every trigger through one idempotent boundary."
+flowchart LR
+    subgraph REL ["release pipeline"]
+        T["tests"] --> EV["evals"] --> PG["policy gate<br/>risk tier"] --> AD["registry admission"] --> CN["canary"] --> AL["alias promotion"]
+    end
+    subgraph RUNP ["run pipeline"]
+        TR["webhook · schedule · chat"] --> IDEM["idempotent boundary<br/>dedup run"] --> RID["resolve identity<br/>+ release"] --> ADM["admit<br/>quota · deadline"] --> CP["checkpoint → propose<br/>authorize → effect"]
+    end
+    AL -. "alias points at digest" .-> RID
+```
+
+## Deep dive: the LLM gateway {#sec-ch40-gateway}
+
+The interviewer forks first into the shared gateway, because it is the box every team's traffic crosses. Its identity rule is the platform's spine: a client header saying `tenant=bank-a` is *data*, not identity; the gateway issues a virtual key and resolves it server-side to a **four-dimensional identity** — actor, workload, release, and tool audience — and authorization is the *intersection* of the four plus a resource-server check, never a credential handed to the model (@sec-ch26-gateway). Registration in the registry is discovery, not trust: a tool being listed does not authorize any actor to call it.
+
+The dive the interviewer actually wants is routing. Four operations look alike and are not, and confusing them is a production bug (@sec-ch26-gateway): **routing** picks a deployment *before* the call; a **cascade** tries a cheap model and escalates *after* a grader judges it insufficient; a **fallback** switches provider *after* an operational failure to preserve availability; a **hedge** fires a redundant attempt *before* the first returns, to cut tail latency. @fig-ch40-gateway separates them by when they fire.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch40-gateway
+%%| fig-cap: "Four operations that look alike: which fires before the call, which after a grader, which after a failure — and which fallbacks are legal? A fallback is constrained by policy, not just health."
+flowchart TD
+    REQ["Resolved identity<br/>actor · workload · release · audience"] --> ROUTE{"Route<br/>before the call"}
+    ROUTE -->|"cheap"| SMALL["small model"]
+    ROUTE -->|"hard"| LARGE["large model"]
+    SMALL --> GRADE{"grader<br/>sufficient?"}
+    GRADE -->|"no"| LARGE
+    SMALL -.->|"operational failure"| FB{"legal fallback set<br/>same residency · policy · capability"}
+    FB -->|"in-policy peer"| ALT["eligible deployment"]
+    FB -->|"none eligible"| SHED["shed / degrade"]
+```
+
+The senior point, the one that separates deciding from reciting, is **fallback legality**. A fallback is not "any healthy deployment that can answer" — it is any deployment that also satisfies the *same* residency, policy, and capability constraints as the primary. A technically-available fallback that violates residency is illegal, not available.
+
+*When the interviewer pushes* — "your EU-only endpoint is down; fail over to the US region?" — the answer is no: crossing the residency boundary to preserve availability trades a five-minute outage for a reportable compliance breach. The fallback set is filtered by policy before it is filtered by health; if it comes up empty, the correct behaviour is to shed or degrade the workload, and the run's residency constraint is a field in its release bundle's policy version, so the gateway can enforce it mechanically rather than trusting an operator under pressure.
+
+## Deep dive: trace versus audit {#sec-ch40-evidence}
+
+The second fork is the evidence plane, and the trap is treating it as one logging system. It is at least two, with conflicting reliability needs. A **trace** is sampled diagnostic telemetry that answers *why did this run behave this way* — it deliberately over-retains errors and drops most successes, which makes it superb for debugging and useless for counting. An **audit** is an unsampled, append-only, tamper-evident record of governed effects that answers *who authorized this, under which policy, with what receipt*. A run fans out to four channels joined by stable identities — unsampled metrics for rates, sampled traces for trajectory, an unsampled usage ledger for money, and an append-only effect audit for consequences — and no single channel answers billing, debugging, alerting, and audit at once (@sec-ch27-fanout). @fig-ch40-evidence draws the split.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch40-evidence
+%%| fig-cap: "Which evidence answers 'why did this run?' and which answers 'who authorized this effect?' Sampled traces diagnose; an unsampled append-only audit holds accountable — and they must not be the same store."
+flowchart LR
+    RUN["Agent run<br/>run · attempt · release · tenant"] --> TRACE[("Sampled trace<br/>trajectory · timing<br/>short retention · mutable")]
+    RUN --> AUDIT[("Append-only audit<br/>policy · approval · receipt<br/>unsampled · tamper-evident")]
+    TRACE -. "diagnose: why did it behave this way" .-> ENG["engineer debugging"]
+    AUDIT -. "hold accountable: who authorized it" .-> GOV["governance · reconciliation"]
+```
+
+*When the interviewer pushes* — "why not just query the traces to find out who authorized a refund?" — the answer names two failures: the trace is *sampled*, so the exact run you need may never have been recorded, and it is short-retention and mutable, so it cannot be evidence in a dispute. The audit is the authoritative channel for effects, and it reconciles against the usage ledger and the metrics so that *evidence is absent* is distinguishable from *the event is absent* (@sec-ch27-fanout). Replay lives on the trace side and must route every write through a no-effect adapter, or diagnosing a refund becomes a second refund (@sec-ch27-tracing).
+
+## Tradeoffs and failure {#sec-ch40-tradeoffs}
+
+Every platform decision buys something and costs something; the table names the exchange, the risk, and the control that bounds it.
+
+| Choice | Cost | Buys | Risk | Control |
+|---|---|---|---|---|
+| Opinionated paved path | constrains unusual teams | consistency · fleet queries · smaller incident surface | shadow platforms | self-service + reviewed escape hatch, exception debt measured |
+| Immutable release bundle | build overhead | reproducible rollback = alias flip | version sprawl | registry lifecycle + deprecation |
+| Cells by tenant / risk / region | capacity fragmentation | bounded blast radius | under-utilization | size cells to failure domains |
+| Registry = discovery only | extra authz step per call | no fleet-wide confused deputy | perceived friction | runtime authorizes actor · workload · release · audience · resource |
+
+: The platform tradeoffs, each with the control that makes its risk survivable. {#tbl-ch40-tradeoffs}
+
+Now walk the design as an adversary and an accountant. The failure with no partial credit is a **cross-tenant leak** — one team's data reachable from another's run — which cells and negative isolation tests in the release gate exist to prevent, and which pages a human on the first occurrence. A **control-plane outage** must not take down running agents: because the control plane only publishes downward, the run plane keeps serving on the last-resolved alias, and a trace-collector outage degrades observability, not availability (@sec-ch26-planes). A **compromised MCP server** is answered by the registry-as-dependency-graph: one query returns every live release that depends on it, and each is deprecated by alias flip.
+
+The 2026 defaults close the pass. *Cost is an attack surface*: a runaway loop in one tenant is denial-of-wallet, so per-tenant budgets, a hard step cap, and backpressure at every boundary — one propagated deadline, autoscaling on queue delay rather than CPU — bound the bill (@sec-ch33-loops). *Credentials never enter model-visible context*: the four-dimensional identity is resolved at the gateway and carried out of band, so an injected instruction cannot exfiltrate a key the model never held (@sec-ch24).
+
+## Evolution: build order and the changed requirement {#sec-ch40-evolution}
+
+Build the boring substrate first, because it is what every workload needs and what teams most want to skip. The order is an evidence-gathering sequence: (1) one idempotent run boundary plus virtual-key identity and a registry with immutable bundles and alias promotion — the minimum paved path; (2) durable execution with checkpoints and an effect ledger, so a crash mid-refund does not double-charge (@sec-ch26-durable); (3) the evidence plane's trace/audit split and the platform SLOs; (4) risk-tiered mandatory controls with the reviewed escape hatch, operated through the AIMS loop (@sec-ch28-aims). Measure two things first: cost per successful task, and the fraction of runs on the supported path — the paved road is only real if teams stay on it.
+
+Then the interviewer flips one requirement: *"a new regulation requires EU tenant data to stay in-region."* The senior answer is the delta, not a redraw. Residency becomes a field in the bundle's policy version; cells gain a region dimension; the gateway's fallback set is already filtered by policy, so fallback legality now enforces region for free (@sec-ch40-gateway). The four planes, the two pipelines, the registry, the effect ledger, and five of the six anchor numbers do not move. What changes is one field and one cell dimension; what survives is the architecture — which is the point of having built it as reasoned decisions rather than a picture.
+
+## Interviewer probes {#sec-ch40-probes}
+
+**"A vendor silently changes a remote MCP tool's description overnight. What happens on your platform?"** A remote tool-description change is a change to the model's prompt surface, so it must re-gate every dependent, exactly like a code change (@sec-ch19-poisoning). We pin tool definitions by hash in the release bundle; a description that no longer matches its pinned digest fails admission and the affected releases do not silently absorb the new text. The registry answers *which live releases depend on this server* in one query, so the rug-pull's blast radius is known, not discovered during an incident. Token-passthrough to the tool's own audience is banned; the confused-deputy defense is that authority comes from the resolved four-dimensional identity, not from whoever the tool trusts (@sec-ch19-security).
+
+**"Who decides a release is high-risk, and what does the tier actually buy?"** The risk tier is declared in the immutable bundle and validated at the policy gate, not asserted in a launch meeting. The tier *selects the mandatory control set* — a read-only assistant may need only eval coverage and tracing, while an approval-gated business action requires the effect ledger, human review, and a stricter eval gate. The AIMS loop maps purpose and impact, measures the evidence, and treats residual risk through an authorized owner (@sec-ch28-aims); the escape hatch is a reviewed exception with an owner and an age, so bypassing a control is possible, visible, and debt — never silent.
+
+**"Fifty teams means fifty ways to route around you. How do you keep the paved path from becoming shadow platforms?"** By making the paved path the cheapest path: self-service publishing, fast canary, and rollback-by-alias-flip beat rebuilding durability and audit from scratch. Discover value before demanding autonomy, and measure adoption — the fraction of runs on the supported path and the exception-debt count — as first-class metrics (@sec-ch28-discovery). A rising escape-hatch count is the early signal that the paved road is too narrow; the response is to widen the road, not to forbid the exception.
+
+## The platform family {#sec-ch40-family}
+
+The same four-plane bones — control plane as product, an immutable versioned unit behind an alias, four-dimensional identity, registry-as-discovery, and risk-tiered controls with a reviewed escape hatch — re-instantiate across the family. What changes is the unit being governed, and that one change flips specific decisions.
+
+| Sibling prompt | The changed constraint | What flips |
+|---|---|---|
+| **This chapter** — multi-tenant agent platform | mixed workloads with real effects | full four planes; effect ledger + audit are central |
+| **Internal MCP-tool registry / gateway** | the governed unit is a *tool*, not an agent | registry keys on tool + schema digest; the deprecation / rug-pull path (@sec-ch19-poisoning) is the main event; no run plane |
+| **HITL review platform** | the product is *human decisions*, not autonomy | the evidence plane and a review queue (@sec-ch27-hitl) become the product; SLO is reviewer latency and inter-rater agreement, not task success |
+| **Agent CI/CD platform** | the unit ships *code + evals*, no live runs | the release pipeline is the whole product; the gate is eval coverage; no run plane or effect ledger, but rollback-by-alias survives |
+
+: The platform family — same bones, one changed constraint, a different decision each time. {#tbl-ch40-family}
+
+Naming which bone dominates before drawing is the transfer skill: a tool registry is this platform with the run plane deleted, a review platform is this platform with the evidence plane promoted, and a CI/CD platform is this platform with the release pipeline as the only surface. None is a new language.
+
+## Summary
+
+The platform family designs the control plane as the product: fifty teams stop rebuilding identity, durability, evals, and incidents because the platform makes the paved path the cheapest path. We restated the prompt with numbers, computed the family's real unit — cost per successful task, not per call — and drew four planes whose authority flows downward while evidence never gates the hot path. The gateway resolves a four-dimensional identity and enforces fallback legality; the evidence plane splits sampled traces from an append-only audit. Mandatory controls are risk-tiered with a reviewed escape hatch, and a residency flip moves one field, not the architecture.
+
+## Exercises
+
+1. **Recompute the headline unit.** Using the toolkit's `loop_cost`, hold the 8-step task fixed but drop the success rate to 55%; report the new cost per successful task and the retry tax. Then find the success rate at which the true unit cost is exactly double the per-attempt cost, and explain in one sentence why "agents deployed" is a worse platform metric than either.
+2. **Size the cells.** The fleet must survive any single failure touching at most 10% of tenants. How many cells does that require, and what does the answer cost in capacity utilization if each cell must hold warm headroom? State the tradeoff-table row this exercises.
+3. **Fallback legality.** Write the predicate a gateway applies to build a *legal* fallback set from a pool of healthy deployments, given a run's residency, policy, and capability constraints. Then give one concrete case where the legal set is empty and name what the run should do instead of failing over.
+4. **Trace versus audit, in anger.** A dispute requires proving who authorized a specific refund six months ago. Explain why querying the trace store can fail even though the run "definitely happened," and list the three properties the audit channel must have that the trace channel deliberately lacks (recall @sec-ch27-fanout).
+5. **The changed requirement, worked twice.** (a) The interviewer swaps the residency flip for *"one team's agents must never call another team's tools."* Name exactly which box enforces it and why registration alone does not. (b) Now the flip is *"a regulator demands a single reproducible record of every governed action for seven years."* Which plane owns it, and which anchor numbers change?
+6. **Escape-hatch debt.** Open exceptions have grown from 26 to 80 over a quarter while the fleet is flat. Argue from @sec-ch28-discovery whether the correct response is to tighten the gate or widen the paved path, and name the one metric that would settle it.
+7. **Redraw for a sibling.** Take the MCP-tool-registry sibling from @tbl-ch40-family. Draw its skeleton by deleting and relabeling boxes from @fig-ch40-planes, then state which deep dive (gateway or trace-versus-audit) becomes the interview's center of gravity and why.

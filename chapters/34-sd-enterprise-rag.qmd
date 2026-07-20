@@ -1,0 +1,241 @@
+---
+description: "The retrieval-heavy family worked at interview depth: enterprise RAG over ten million ACL-scoped documents at sub-2s TTFT and pennies a query, with the freshness fork, the permissions-before-search dive, and the flip that turns this design into its nearest neighbor."
+---
+
+# Enterprise RAG: The Retrieval-Heavy Family {#sec-ch34}
+
+The retrieval-heavy family is where most agentic system-design rounds begin, because almost every enterprise assistant is a search problem wearing a chat interface. This chapter runs that family at full depth on the prompt Chapter 33 previewed in miniature (@sec-ch33-run): question answering over ten million internal documents, cited, permissioned, fast, and cheap. We work all seven moves (@sec-ch33-moves) — scope, numbers, contract, skeleton, dives, failure, evolution — but here the section titles are the work rather than the labels, and every anchor number is computed live from the toolkit Chapter 33 tangled. By the end we have a defensible design, five numbers we produced at the whiteboard, two deep dives with their alternatives, and the one requirement flip that turns this design into its nearest neighbor.
+
+The move that decides the round is the first: naming the clarifier that forks the architecture rather than merely scaling it. For this family that clarifier is freshness — do the documents change nightly or hourly? — because the answer chooses between two indexing architectures, not two settings of one. We take nightly as the baseline and flip it back to hourly in the evolution move, so the reader leaves with both the design and its derivative.
+
+## Scoping the problem {#sec-ch34-scope}
+
+The interviewer states it the way interviewers do — underspecified, with the hard parts hidden in adjectives:
+
+> "We have about ten million internal documents — wikis, tickets, PDFs, code. Build question answering over them. Answers must cite their sources, respect each user's permissions, feel instant, and cost pennies."
+
+The first five minutes buy information, and the discipline is to ask only questions whose answers change the design. Four clarifiers earn their place. *Do documents change nightly or hourly?* — the family fork: nightly permits a rebuild-and-swap index, hourly forces an incremental plane with a freshness watermark. *Is the assistant read-only, or does it also file tickets?* — write-back imports the approval-and-effect machinery of the acting-agent family (@sec-ch35), a different design center; we take read-only. *How fine are permissions — a handful of groups, or can a user see two percent of the corpus?* — coarse permissions survive filtering after search, fine-grained ones do not, as we prove in @sec-ch34-acl. *Does "instant" bound the first token or the whole answer?* — the two are set by different mechanisms and only one of them is keepable at "sub-two-seconds," which the numbers move settles.
+
+A senior closes scope by restating the problem with numbers and naming a non-goal aloud. @tbl-ch34-reqs is that restatement; "no cross-tenant search, no write-back, nothing fresher than a day" is the non-goal, and saying it is a signal the rubric rewards (@sec-ch33-grading).
+
+| Requirement | Value | Why it forks the design |
+|---|---|---|
+| Cite every claim; abstain when support is thin | `answerable=false` is a first-class result | grounding and abstention, not just generation (@sec-ch14-grounding) |
+| Enforce per-user permissions strictly | fine-grained; a user may see ~2% of docs | filter *before* search, not after |
+| Corpus | 10M docs ≈ 30M chunks | size the index from chunks, not docs |
+| Peak load | ~50 QPS | fleet sizing, not architecture |
+| p99 time-to-first-token | < 900 ms | set by the query pipeline waterfall |
+| Completion | < 6 s at a 250-token cap | set by the output cap, not retrieval |
+| Cost | ≈ \$0.02 / query | prefix caching is the lever |
+| Freshness (baseline) | ≤ 24 h | nightly rebuild is legal |
+
+: The prompt restated with numbers: functional requirements on top, the non-functional envelope below. Out of scope, said aloud: cross-tenant search, write-back, sub-day freshness. {#tbl-ch34-reqs}
+
+## The numbers first {#sec-ch34-boe}
+
+Numbers before boxes. We import the back-of-envelope toolkit Chapter 33 built and tangled — `index_bytes`, `completion_ms`, `cost_per_query`, `context_budget` — rather than re-deriving anything, and drive it with this prompt's shape. The prices, per-stage latencies, the three-chunks-per-document ratio, and the 1024-dimension embedding are illustrative teaching constants carrying the same caveat as Chapter 33's toolkit (@sec-ch33-cost); the formulas, not the constants, are the lesson.
+
+```{python}
+import importlib.util
+import sys
+from pathlib import Path
+
+
+def load_chapter(chapter: str, name: str):
+    """Import a committed chapter's tangled module under an explicit name."""
+    spec = importlib.util.spec_from_file_location(name, Path("code") / chapter / "_generated.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+boe = load_chapter("ch33", "ch33_boe")     # the back-of-envelope toolkit from Chapter 33
+
+chunks = 10_000_000 * 3                      # ~3 chunks per document — not one
+for label, width in (("fp32", 4), ("int8", 1)):
+    total = boe.index_bytes(chunks, dim=1024, bytes_per_dim=width, overhead=1.5, replicas=2)
+    print(f"{label}: {total / 1e9:6.1f} GB / 2 replicas  ({total / 2 / 1e9:.0f} GB per copy)")
+
+pack = boe.context_budget(32_000, system=400, history=600, retrieval=2_500, output_reserve=300)
+print("packed query context:", pack)
+```
+
+Two lessons land here. First, the family's quiet numeric trap: sizing from *documents* (ten million) instead of *chunks* (thirty million) understates the index threefold. Thirty million chunks at fp32 is 369 GB — shard it or quantize it; int8 brings one copy to 46 GB, a single memory-heavy node. Second, the packed query is about 3,500 input tokens (system, a little history, five 500-token chunks) inside a comfortable window: for RAG the context window is *not* the binding constraint, so retrieval width — how many chunks we pack — is the cost lever, not window pressure. Now the latency and the bill:
+
+```{python}
+stages = {"embed query": 20.0, "ACL prefilter": 30.0, "ANN top-100": 50.0,
+          "rerank top-5": 150.0, "queue + prefill": 400.0}
+ttft = sum(stages.values())
+print(f"TTFT budget (sum of stages): {ttft:.0f} ms")
+for cap in (250, 60):
+    print(f"completion at a {cap:3d}-token cap, 20 ms/token: "
+          f"{boe.completion_ms(ttft, cap, 20.0) / 1000:.2f} s")
+
+price = boe.TokenPrice(input_per_million=3.00, output_per_million=15.00,
+                       cached_input_per_million=0.30)
+cold = boe.cost_per_query(3_500, 250, price)
+warm = boe.cost_per_query(3_500, 250, price, cached_input_tokens=2_500)
+print(f"cost / query: ${cold:.4f} cold cache   ${warm:.4f} warm prefix")
+```
+
+The waterfall totals 650 ms against a 900 ms TTFT budget — 250 ms of margin, defensible under p99 tail. But completion at the 250-token cap is 5.6 seconds, and this is the family's second trap, the one to say aloud: *"instant" cannot mean sub-two-seconds to completion.* Only a 60-token answer completes in under two seconds, and a 60-token answer cannot cite a paragraph. The keepable promise is a TTFT SLO with margin plus a completion SLO at a stated output cap — never a single "sub-2s." On cost, the warm-prefix query is three-quarters of a cent, comfortably inside "pennies," and it is warm only because a stable system-and-tool prefix caches (@sec-ch10-prefix-cache); the cold-cache query costs nearly double. @fig-ch34-waterfall draws the split.
+
+```{python}
+#| label: fig-ch34-waterfall
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Can this design promise 'instant'? As TTFT, yes — 650 ms with a 250 ms margin under the 900 ms budget. As a 250-token completion, never: decode pushes it to 5.6 s. The SLO must name which latency it bounds."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(7.2, 2.6))
+colors = ["#2a7f9e", "#b13f3f", "#3e7a52", "#7356a8", "#b7791f"]
+left = 0.0
+for (name, width), color in zip(stages.items(), colors):
+    ax.barh(1, width, left=left, color=color, edgecolor="white", label=name)
+    left += width
+ax.barh(0, left, color="0.85", edgecolor="white")
+ax.barh(0, boe.completion_ms(left, 250, 20.0) - left, left=left, color="#4f5d75",
+        edgecolor="white", label="decode, 250 tokens")
+ax.axvline(900, ls="--", color="0.3")
+ax.text(930, 1.35, "TTFT budget 900 ms", fontsize=8, color="0.3")
+ax.axvline(2000, ls=":", color="0.5")
+ax.text(2030, 0.35, "the 'sub-2s' ask", fontsize=8, color="0.5")
+ax.set_yticks([1, 0]); ax.set_yticklabels(["TTFT", "completion"])
+ax.set_xlabel("milliseconds"); ax.legend(loc="lower right", fontsize=7, ncol=2)
+fig.tight_layout(); plt.show()
+```
+
+Five anchor numbers in five minutes: 30M chunks, 46 GB int8 per copy, 650 ms TTFT with margin, 5.6 s completion at the cap, three-quarters of a cent warm. Each is one sentence of narration, and the two traps — chunks not documents, TTFT not completion — are the ones a junior misses.
+
+## The contract and the skeleton {#sec-ch34-contract}
+
+The contract is one endpoint: a streamed answer with an inline citation list, and `answerable=false` returned as a real outcome rather than a confabulated paragraph (abstention is a feature; @sec-ch14-grounding owns the mechanism). The SLOs are the two computed above, stated as a pair. Success is measured, not asserted: groundedness and citation precision on a pinned golden set, weekly, with the abstention rate watched alongside so the system cannot buy groundedness by refusing everything.
+
+Now the boxes — late, because the numbers and the contract have already chosen most of them. The retrieval-heavy skeleton is two planes sharing one index (@fig-ch34-planes). An **indexing plane** runs asynchronously: chunk, embed, build, validate, publish a *versioned* index. An **online query plane** runs inside the 650 ms budget: embed the query, filter by ACL, ANN-search, rerank, pack, generate with citations, validate or abstain. The planes meet only at the index — a versioned artifact — so a bad build rolls back by flipping a pointer, never by rebuilding under fire. Confusing the two planes, or letting the online path do work the offline path already did, is the classic mid-level error.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch34-planes
+%%| fig-cap: "Where does work happen off the hot path, and where must every online millisecond be defended? The two planes share only a versioned index and an ACL store; they meet at a pointer swap, so a bad build rolls back instantly."
+flowchart LR
+    subgraph IDX ["indexing plane — async, nightly"]
+        S["sources<br/>wiki · tickets · PDF · code"] --> CH["chunk + embed"] --> BV["build + validate"]
+    end
+    BV --> IX[("versioned ANN index<br/>+ metadata / ACL store")]
+    subgraph QRY ["query plane — online, 650 ms budget"]
+        Q["query"] --> E["embed"] --> F["ACL prefilter"] --> A["ANN top-100"]
+        A --> RR["rerank top-5"] --> PK["pack (reserve output)"] --> G["generate + cite"] --> V["validate / abstain"]
+    end
+    IX -. allow-predicate .-> F
+    IX --> A
+```
+
+Each stage in the query plane is a funnel that narrows the corpus to the five chunks the model reads, and one stage caps the quality of everything downstream. @fig-ch34-funnel makes the narrowing visible: thirty million chunks become the user's visible subset, then a hundred candidates, then five. The stage that caps quality is retrieval recall — if the right chunk is not in the top-100, no reranker and no prompt can recover it (@sec-ch14-metrics owns this measurement, and it is why recall is the first thing we instrument in the evolution move).
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch34-funnel
+%%| fig-cap: "What are the swappable stages, and which one caps quality? Each stage narrows the corpus; recall at the ANN stage is the ceiling — a chunk missed here cannot be reranked back."
+flowchart LR
+    C["corpus<br/>30M chunks"] --> F["ACL-visible<br/>~2% for this user"]
+    F --> N["ANN<br/>top-100"] --> R["cross-encoder<br/>top-5"] --> P["packed context<br/>5 × 500 tok"] --> O["cited answer"]
+    N -.->|"recall ceiling<br/>lives here"| N
+```
+
+## Deep dive: permissions before search {#sec-ch34-acl}
+
+The fork the interviewer pushes on first is permissions, and the decision is a single sentence with an alternative and a reason: **the ACL filter runs before the vector search, not after.** Post-filtering — search first, then drop what the user cannot see — is simpler and perfectly fine when permissions are coarse. It breaks when they are fine-grained, and the break is arithmetic, not taste:
+
+```{python}
+import math
+
+visible = 0.02          # this user can see 2% of the corpus
+topk = 100
+print(f"post-filter top-{topk}: ~{topk * visible:.0f} of {topk} candidates survive the ACL check")
+print(f"P(a post-filtered top-10 returns nothing visible) = {(1 - visible) ** 10:.0%}")
+print(f"to expect 5 usable results post-filter, you must fetch top-{math.ceil(5 / visible)}")
+```
+
+A user who can see two percent of the corpus gets about two usable results from a post-filtered top-100, and a post-filtered top-10 returns *nothing they can see* eighty-two percent of the time. Recovering five results means fetching the top-250, which blows the ANN latency budget — and post-filtering leaks document existence besides, because response timing and result counts reveal that hidden documents matched. Pre-filtering fixes both: we hand the ANN index an allow-predicate — a per-principal reachable-set maintained as a bitmap and intersected at query time — so the search only ever traverses visible vectors (@sec-ch15-security owns permission-aware retrieval and its failure modes). **When the interviewer pushes** on cost: the bitmap is built in the indexing plane and refreshed with the index, so the online cost is one intersection, the 30 ms `ACL prefilter` stage already in the waterfall; and a permission *revocation* is an index update, not a query-time special case — which is exactly the seam the freshness flip reopens in @sec-ch34-evolution.
+
+## Deep dive: rerank, recall, and the cache {#sec-ch34-rerank}
+
+The second fork is the query plane's two quality knobs — the reranker and the cache — and both are decisions owned by a measured curve, not a preference. A cross-encoder reranker buys precision@5 by scoring all hundred candidates jointly with the query, at a cost of 150 ms and a device (@sec-ch14-encoders owns bi- versus cross-encoders). The alternative is to skip it and pack a wider top-k directly — cheaper, and worse: it spends context tokens on lower-precision chunks and dilutes the evidence. The decision is not "always rerank" but "rerank until the recall-versus-precision curve stops paying," and **when the interviewer pushes on tail latency** the answer is a shed path: under burst, drop to no-rerank mode, which degrades precision *measurably* instead of degrading availability.
+
+The semantic cache is the cost lever with a correctness trap. Returning a stored answer for a near-duplicate query removes 30–40% of model calls on FAQ-heavy traffic — real money at the day-rates the cost cell implied. Its risk is serving a stale or wrongly-scoped answer, and the control is the cache key: it **must** include the ACL scope and the index version, never the query text alone. A cache keyed on text alone will hand user B an answer computed from documents only user A could see — a permission leak dressed as a performance win. Invalidate on index swap; scope on every read. This is the point where cost and correctness are the same decision.
+
+## Tradeoffs and failure {#sec-ch34-failure}
+
+Every major choice trades something measurable for something else, and a senior states the whole row — cost, benefit, risk, and the control that bounds the risk (@tbl-ch34-tradeoffs).
+
+| Choice | Cost | Buys | Risk | Control |
+|---|---|---|---|---|
+| ANN (not exact) search | ~5% recall loss (illustrative) | latency inside budget | miss the right chunk | widen top-k + cross-encoder rerank; measure recall@k |
+| Nightly rebuild (not incremental) | up to 24 h staleness | simpler, cheaper indexing | stale answers | fork to the incremental plane if freshness is demanded |
+| Cross-encoder rerank | +150 ms, one device | precision@5 | tail latency under burst | small reranker; cap candidates at 100; shed to no-rerank |
+| Semantic cache | staleness / false hits | 30–40% fewer model calls | wrong-scope answer reuse | key on ACL scope + index version; invalidate on swap |
+| Filter before search | per-principal bitmap upkeep | correct top-k under fine ACL | index-time complexity | maintain reachable-sets in the indexing plane |
+
+: The retrieval-heavy tradeoff table: what each decision costs, buys, risks, and how the risk is bounded. {#tbl-ch34-tradeoffs}
+
+Three failure modes carry the security-and-cost pass. **The reranker saturates under burst** — control: shed to no-rerank, trading precision for availability, and page only if recall-at-5 on live traffic drops below the golden-set floor. **A poisoned document carries injected instructions** — retrieved text is data, not commands, so it is delimited and provenance-tagged before it reaches the model (@sec-ch24 owns the architecture; PoisonedRAG and hostile evidence are worked in @sec-ch15-security). **A mis-scoped ACL entry leaks a document** — this is the one failure with no partial credit: it is caught by negative isolation tests in CI (assert principal X *cannot* retrieve document Y), and a leak in production pages a human immediately. Cost is the last attack surface: an adversary submitting long, expensive, cache-busting queries is a denial-of-wallet vector, so query length is capped, per-user rate limits are enforced, and the day-rate arithmetic from the cost cell is the number that justifies both.
+
+## Evolution: the freshness flip {#sec-ch34-evolution}
+
+Build order is an evidence-gathering sequence, not a feature list: ship the nightly-rebuild index with plain top-k, *no* reranker and *no* cache, and measure retrieval recall first — it caps everything downstream, so tuning generation before recall is measuring the wrong thing (@sec-ch14-metrics is the lesson). Add the reranker when the recall curve says candidates are there but mis-ordered; add the semantic cache when the traffic histogram shows a fat FAQ head. Each addition is justified by a measurement the previous stage produced.
+
+Then the interviewer flips the fork: **documents now change hourly.** The senior answer is the delta, not a redraw. The indexing plane becomes incremental — upsert changed chunks, tombstone deleted ones, and publish a monotonically increasing **freshness watermark** that the query plane reads so a caller can be told how current the answer is (@fig-ch34-freshness). Crucially, an ACL *revocation* is also a tombstone: a document a user lost access to must disappear from their results within the freshness SLA, which makes freshness a security property here, not merely a UX one. What survives the flip is almost everything — the query plane, the contract, the two SLOs, and five of the six anchor numbers are untouched; only the indexing plane and the cache-invalidation trigger change. And if a *second* requirement flips — the assistant must now file tickets — the retrieval design still holds: the query plane becomes the context-assembly step of an acting agent, with `validate → authorize → effect` bolted on after generation, which is the acting-agent family and its own chapter (@sec-ch35).
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch34-freshness
+%%| fig-cap: "What changes when freshness goes from nightly to hourly? Only the indexing plane: a rebuild-and-swap becomes upsert-plus-tombstone with a watermark the query plane checks. The query plane and the contract do not move."
+flowchart TB
+    subgraph NIGHT ["nightly (baseline)"]
+        N1["rebuild full index"] --> N2["validate"] --> N3["swap pointer"]
+    end
+    subgraph HOUR ["hourly (the flip)"]
+        H1["upsert changed chunks"] --> H2["tombstone deletes + ACL revocations"]
+        H2 --> H3["advance freshness watermark"]
+    end
+    H3 -. "query plane reads watermark,<br/>everything else unchanged" .-> QP["query plane"]
+```
+
+## Interviewer probes {#sec-ch34-probes}
+
+**"Your ANN misses the one relevant document. How would you even know?"** Recall@k measured offline against a golden set is how — ANN trades a few points of recall for latency, and the loss is invisible unless instrumented (@sec-ch14-metrics). Two controls claw it back and one catches the residual: widen top-k and rerank to recover mis-ordered results, and let abstention catch the rest — an answer with thin support returns `answerable=false` rather than confabulating, which turns a silent retrieval miss into a visible, measurable refusal.
+
+**"A user's permissions change mid-session and the cache serves them a document they can no longer see."** That is a leak, not a staleness bug, and it is prevented by construction: the cache key carries the ACL scope and the index version, so a revocation that advances the version for affected principals misses the stale entry entirely. The revocation itself is a tombstone in the indexing plane, and a negative isolation test in CI asserts the principal can no longer retrieve the document. The incident to page on is the leak, never the cache miss.
+
+**"Why not skip retrieval entirely and put all ten million documents in a long-context model?"** Three reasons, priced. Cost: even at cached rates the token bill and prefill latency for a multi-million-token context are untenable at 50 QPS — the cost cell's day-rate arithmetic makes that concrete. Latency: prefill over that context blows the TTFT budget by orders of magnitude. And permissions: a long-context model cannot enforce per-user ACLs without filtering the evidence at retrieval time anyway (@sec-ch15-longcontext weighs long-context against RAG). Retrieval is the permission boundary, not just a cost trick.
+
+## The retrieval-heavy family {#sec-ch34-family}
+
+The bones we just built — two planes, an evidence funnel with a recall ceiling, permissions enforced before search, evidence assembled before generation — are the family skeleton. Its siblings keep the skeleton and flip one constraint, and naming which decision flips is the transfer skill the round grades (@tbl-ch34-family).
+
+| Sibling prompt | The constraint that changes | The decision that flips | Owner |
+|---|---|---|---|
+| **This design** — text RAG, fine ACL, nightly | — | filter-before-search; cross-encoder rerank; rebuild-and-swap | @sec-ch14, @sec-ch15 |
+| **Visual-document RAG** (ColPali-class) | evidence is page *images*, not extracted text | late-interaction MaxSim over patch embeddings replaces single-vector ANN; multi-vector index blows up; OCR becomes optional | @sec-ch29-visual-rag |
+| **Analytics agent over a warehouse** | evidence is *rows behind a schema*, not chunks | text-to-SQL + a semantic layer replaces embedding search; verify against live DB state; the rigor band (units, leakage, p-hacking) replaces recall@k | @sec-ch21-rigor, @sec-ch15-structured |
+| **Code search** over a repo | evidence has *exact symbols and structure* | lexical grep / AST search beats embeddings for exact identifiers; embeddings serve only fuzzy "where is X handled" | @sec-ch15-structured |
+
+: The retrieval-heavy family skeleton: same bones, one changed constraint, one flipped decision. {#tbl-ch34-family}
+
+The pattern across the row: the two-plane shape and the evidence-before-generation discipline survive every sibling, while the *retrieval primitive* and the *quality metric* flip with the evidence type — single-vector ANN and recall@k for text, MaxSim and patch recall for images, SQL and a rigor band for warehouses, lexical match for code. Identify the evidence type in the first minute and the primitive follows.
+
+## Summary
+
+Enterprise RAG is the retrieval-heavy family's flagship, and it is a search problem before it is a language problem. We scoped it around one forking clarifier — freshness — computed five anchor numbers live (30M chunks, 46 GB int8, 650 ms TTFT, sub-cent warm queries), and let two traps set the design: size from chunks not documents, and bound TTFT not completion. The skeleton is two planes sharing a versioned index; the load-bearing dive is filtering permissions *before* search, because post-filtering collapses under fine-grained ACLs. The freshness flip changes only the indexing plane. Chapter 35 takes the acting-agent family, where the system changes external state.
+
+## Exercises
+
+1. **Re-run the design with freshness required.** Documents now change every fifteen minutes. Redraw only the indexing plane, define the freshness watermark the query plane checks, and state which of the five anchor numbers move and which do not. What new failure mode does the incremental plane introduce that the nightly rebuild did not?
+2. **Push the cost model.** Using `cost_per_query` and the chapter's illustrative prices: (a) the product wants ten cited chunks instead of five — recompute the input tokens and the warm-cache cost, and say which term now dominates; (b) find the cached-input fraction at which the query drops below half a cent; (c) at 50 QPS, quantify the daily saving from a semantic cache that removes 35% of calls.
+3. **Work the ACL collapse both ways.** For a user who can see 5% of the corpus, recompute the expected usable results from a post-filtered top-100 and the top-k needed to expect five. Then argue, in two sentences, why pre-filtering also closes the existence-leak side channel that post-filtering opens.
+4. **The interviewer swaps the reranker for a bigger ANN.** They propose dropping the cross-encoder and packing the top-20 directly. Draw the recall-versus-precision argument, name the metric that decides it, and state the one traffic condition under which their proposal is correct.
+5. **Size the index for a different corpus.** Ten million documents become one hundred million, chunk size doubles (halving chunk count per document), and the embedding dimension drops to 384. Recompute the int8 index size with `index_bytes`, decide single-node versus sharded, and name the anchor number a junior would get wrong.
+6. **Turn the design into a sibling.** Take the visual-document RAG row of @tbl-ch34-family and write its version of @tbl-ch34-reqs: which requirements are identical, which change, and what replaces "recall@k" as the quality metric (@sec-ch29-visual-rag).
+7. **Absorb a second flip.** The assistant must now also file a ticket when it cannot answer. Name the boxes you add to the query plane, cite the family that owns the new machinery, and state the one anchor number from this chapter that becomes irrelevant and the one new number you must now compute.
+8. **Run the clock cold.** Set a 45-minute timer and run all seven moves on this prompt from scratch without rereading the chapter, scoring yourself with Appendix B's 0–4 scale. Log the minute each move actually started against @fig-ch33-clock, and route your weakest layer to its owning chapter.

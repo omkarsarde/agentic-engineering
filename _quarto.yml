@@ -80,6 +80,13 @@ book:
     - part: "Part IX — The Agentic System-Design Interview"
       chapters:
         - chapters/33-sd-interview-framework.qmd
+        - chapters/34-sd-enterprise-rag.qmd
+        - chapters/35-sd-support-agent.qmd
+        - chapters/36-sd-serving-platform.qmd
+        - chapters/37-sd-eval-platform.qmd
+        - chapters/38-sd-memory-system.qmd
+        - chapters/39-sd-deep-research.qmd
+        - chapters/40-sd-agent-platform.qmd
 
   appendices:
     - appendices/a-bridge.qmd

@@ -1,0 +1,289 @@
+---
+description: "The orchestration family worked as one interview: a multi-agent deep-research system that turns open-ended questions into cited briefs in minutes, priced in dollars per task — where the whole design hangs on whether coordination earns its token multiplier."
+---
+
+# Designing a Multi-Agent Deep-Research System {#sec-ch39}
+
+The system in this chapter answers a question no index can answer directly — *what has been written across everything we can read, and what should we conclude* — by spending a small team of language models on it and returning a cited brief in a few minutes. It is the orchestration family from @sec-ch33-families: the work exceeds one context window and one agent's clock, so the design is a plan step and a merge boundary, and the whole thing turns on one question — does the coordination earn its token multiplier? We run the seven moves of @sec-ch33 on it at interview depth, importing that chapter's back-of-envelope toolkit rather than rebuilding it, and citing @sec-ch20 for the economics it already teaches. The parts, in order: scope and the family fork, the numbers, the contract and skeleton, two deep dives (what crosses the worker boundary, and how a single writer keeps the brief honest), the tradeoff and failure pass with cost treated as an attack, the evolution flip, and the family skeleton that carries the design to its siblings.
+
+## The prompt, and scoping it {#sec-ch39-scope}
+
+The interviewer states it the way interviewers do, underspecified: *"Our analysts ask open-ended research questions over the web and our internal corpora. Build them something that reads widely and comes back in a few minutes with a written brief that cites its sources. Watch the cost."* No corpus size, no freshness bar, no budget number — the gaps are the interview.
+
+Three clarifiers change the architecture, and I ask only those. First, the family fork (@sec-ch33-families): **is the work read-parallel or write-coupled?** If the task is breadth-first reading — many independent sub-questions whose answers combine — it parallelizes across workers. If the deliverable is one evolving artifact where each edit depends on the last (a codebase, a single argued document), it does not, and the honest design collapses to a single agent with compaction (@sec-ch13-compaction). This prompt is read-parallel: gather evidence on independent facets, then synthesize. Second, **is the budget cents or dollars per task?** A research task that reads dozens of sources is priced in dollars, not the cents a chat turn costs, and that number decides whether a team is affordable at all. Third, **web, internal, or both — and are workers permission-scoped?** Internal corpora force per-worker access control (@sec-ch15-security); the open web forces provenance and poisoning defenses (@sec-ch24). @fig-ch39-fork draws the fork that dominates.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch39-fork
+%%| fig-cap: "The one question that decides whether this is a multi-agent problem at all: is the work read-parallel, or coupled to a single evolving artifact? Only the left branch justifies an orchestrator and workers."
+flowchart TD
+    P["Deep-research prompt"] --> Q{"Read-parallel<br/>or write-coupled?"}
+    Q -->|"independent sub-questions,<br/>answers combine"| M["Orchestrator + isolated workers<br/>→ single-writer brief"]
+    Q -->|"one evolving artifact,<br/>each edit depends on the last"| S["Single agent + compaction<br/>(Ch 13) — refuse the team"]
+```
+
+Restated with numbers, and a non-goal said aloud: tens of gigabytes of internal documents plus web search; open-ended queries; a cited brief of one to three thousand words; a per-task budget near two dollars with a hard ceiling; time-to-brief in minutes, not seconds; a handful of concurrent analyst tasks, not consumer QPS. Out of scope, stated: sub-minute freshness, taking any action or writing back, and consumer-scale throughput. @tbl-ch39-reqs fixes the requirements.
+
+| Requirement | Value | Consequence |
+|---|---|---|
+| Query type | open-ended, multi-facet | fan-out to workers, not one call |
+| Deliverable | cited brief, 1–3k words | single-writer synthesis + citation check |
+| Latency | p95 time-to-brief < 5 min | parallel workers; no TTFT SLO |
+| Cost | ~\$2/task, hard ceiling ~\$5 | dollars-per-task economics; spawn caps |
+| Throughput | tens of concurrent tasks | queue, not a serving fleet |
+| Correctness | every claim cited + verifiable; abstain if thin | typed findings + cite-check phase |
+| Out of scope | real-time freshness, write-back, consumer QPS | — |
+
+: Requirements for the deep-research system, each numbered clarifier carrying its design consequence. {#tbl-ch39-reqs}
+
+## The numbers first {#sec-ch39-numbers}
+
+Numbers before boxes. The anchors here are a token total, a dollar cost per task, a multiplier against a stated baseline, and a wall-clock time — and the family's numeric trap is that every one of them depends on a choice you must say aloud. We import the committed toolkit from @sec-ch33 and price the design phase by phase.
+
+The key modeling move: a worker is not one call, it is an internal retrieval loop (@sec-ch15-loop), and its cost is the resend-quadratic `loop_cost` from the toolkit — each step re-sends the growing context, so a four-step worker's input tokens are not four times the base but the triangular sum. That is where the reported "~30k tokens per subagent" comes from; it is a consequence of the loop, not a guess.
+
+```{python}
+import importlib.util
+import sys
+from pathlib import Path
+
+
+def load_chapter(chapter: str, name: str):
+    """Import a committed chapter's tangled module under an explicit name."""
+    spec = importlib.util.spec_from_file_location(name, Path("code") / chapter / "_generated.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+tk = load_chapter("ch33", "ch33_generated")  # the BoE toolkit from Chapter 33
+price = tk.TokenPrice(input_per_million=3.00, output_per_million=15.00,
+                      cached_input_per_million=0.30)
+
+# One worker = a 4-step retrieval loop: base 3k, +3k evidence/step, 500 out/step.
+worker_cost = tk.loop_cost(4, 3_000, 3_000, 500, price)
+worker_tokens = 4 * 3_000 + 3_000 * 4 * 3 // 2 + 4 * 500     # resend-quadratic input + output
+findings_typed, findings_raw = 4 * 2_000, 4 * 30_000          # what the lead re-reads at merge
+
+n = 4
+lead = tk.cost_per_query(5_000, 1_000, price)
+merge_typed = tk.cost_per_query(4_000 + findings_typed, 3_000, price)
+merge_raw = tk.cost_per_query(4_000 + findings_raw, 3_000, price)
+cite = tk.cost_per_query(8_000, 1_000, price)
+team_cost = lead + n * worker_cost + merge_typed + cite
+team_tokens = 6_000 + n * worker_tokens + (4_000 + findings_typed + 3_000) + 9_000
+
+# The multiplier is a ratio, so its denominator is a choice we must state:
+single_chat, single_research = 10_000, 42_000
+latency = {"plan": 20, "worker": 90, "merge": 40, "cite": 20}     # seconds
+parallel = sum(latency.values())                                  # workers overlap
+serial = latency["plan"] + n * latency["worker"] + latency["merge"] + latency["cite"]
+
+print(f"one worker         : {worker_tokens:>7,} tokens   ${worker_cost:.3f}")
+print(f"merge re-reads     : {findings_typed:>7,} typed  ${merge_typed:.3f}   "
+      f"vs {findings_raw:,} raw  ${merge_raw:.3f}")
+print(f"whole task ({n} subs) : {team_tokens:>7,} tokens   ${team_cost:.2f}")
+print(f"multiplier vs chat / vs single research agent : "
+      f"{team_tokens/single_chat:.1f}x  /  {team_tokens/single_research:.1f}x")
+print(f"wall-clock          : {parallel/60:.1f} min parallel  vs  {serial/60:.1f} min serial")
+```
+
+Two dollars was the budget; sixty-three cents is the priced task, so the shape fits — *because* the workers return compressed findings. The merge line is the deep dive previewed as arithmetic: a merge over four 2k typed findings costs eight cents, while re-reading the workers' raw 120k of pages would cost forty-two cents and, more to the point, would not fit a merge window.
+
+The trap is the multiplier, and it is a trap because it is a ratio and a ratio has a denominator. Against a single chat turn the team is about sixteen times the tokens — which is the shape of the widely quoted "~15x" figure that @sec-ch20-economics tracks and labels as a *reported* measurement of one system, not a universal constant. Against a single agent that actually does the research with compaction, the same team is only about four times. Nothing changed but the baseline. The senior move is to name it: "the multiplier you quote depends entirely on what you compare against; against a chat turn it is ~15x, against a competent single agent it is ~4x, and the design question is whether the parallelism is worth *that* four, not the fifteen." The wall-clock line makes the case parallelism actually wins: four workers are four times the token *work* but roughly one times the wall-clock of the slowest (@sec-ch20-latency) — 2.8 minutes instead of 7.3. @fig-ch39-budget stacks where the tokens go.
+
+```{python}
+#| label: fig-ch39-budget
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where do a task's ~150k tokens go? The four parallel workers dominate; the lead's plan, merge, and cite-check are a thin coordination tax — which is exactly why worker count is the cost lever and the attack surface."
+import matplotlib.pyplot as plt
+
+phases = [("lead plan", 6_000, "#4f5d75"), ("4 workers", n * worker_tokens, "#2a7f9e"),
+          ("merge", 4_000 + findings_typed + 3_000, "#b7791f"), ("cite-check", 9_000, "#3e7a52")]
+fig, ax = plt.subplots(figsize=(7.0, 1.9))
+left = 0
+for name, width, color in phases:
+    ax.barh(0, width, left=left, color=color, edgecolor="white")
+    ax.text(left + width / 2, 0, f"{name}\n{width/1000:.0f}k", ha="center", va="center",
+            fontsize=8, color="white")
+    left += width
+ax.set_xlim(0, left)
+ax.set_yticks([])
+ax.set_xlabel("tokens per task")
+fig.tight_layout()
+plt.show()
+```
+
+::: {.callout-note .landscape-2026}
+### Landscape 2026 — the constants in this design
+
+The token prices (\$3.00 and \$15.00 per million, cached at a tenth), the per-worker loop shape, the phase latencies, and the \$2 per-task budget are **illustrative teaching constants** chosen for round arithmetic; the ~15x multiplier is a **reported** figure for one vendor's system, not a law. The formulas hold; the numbers move with every pricing page and model generation. **Verify live:** your provider's pricing, your own measured per-task token and latency distributions, and the current multi-agent economics reports before quoting any of these. Checked 2026-07-20.
+:::
+
+## The contract and the skeleton {#sec-ch39-skeleton}
+
+The caller sees an asynchronous job, not a request-response call. One endpoint — `research(question, corpus_scope, effort_hint)` — returns a job id and streams progress, and the terminal result is a brief, a citation list, a confidence, and, as a first-class outcome, `insufficient_evidence` when the corpus cannot support an answer (abstention is a feature, recall @sec-ch15-crag). The SLOs are the two the numbers forced: a **time-to-brief** target (p95 under five minutes) and a **cost-per-task** budget (p95 under two dollars, hard-killed at five), plus a **citation-integrity** rate measured on a golden set — every claim in a shipped brief must resolve to a source that supports it. There is no TTFT here, and saying so is the point: this family's SLO is completion and dollars, and pricing it per call in cents hides the per-task reality in dollars.
+
+Now the boxes, and they were mostly chosen already. @fig-ch39-skeleton is the orchestration skeleton: a lead plans and spawns isolated workers, each worker reads under its own budget and returns a compressed typed finding set, and a single writer merges those into the brief before a cite-check gate lets it out.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch39-skeleton
+%%| fig-cap: "The orchestrator-worker skeleton for deep research: where does parallel reading happen, and where does the one writer turn findings into a cited brief? Every worker is isolated; only the lead writes."
+flowchart TD
+    U["analyst question"] --> L["<b>lead</b>: decompose,<br/>set effort + spawn cap"]
+    L -->|"brief + tool budget"| W1["worker 1<br/>isolated context"]
+    L -->|"brief + tool budget"| W2["worker 2<br/>isolated context"]
+    L -->|"brief + tool budget"| W3["worker N<br/>isolated context"]
+    W1 -->|"typed findings"| MG["<b>single writer</b>:<br/>merge + synthesize"]
+    W2 -->|"typed findings"| MG
+    W3 -->|"typed findings"| MG
+    MG --> CC{"cite-check:<br/>each claim<br/>entailed by source?"}
+    CC -->|"pass"| B["cited brief"]
+    CC -->|"fail"| MG
+    subgraph CTRL ["control plane"]
+        BUD["per-task \$ budget · spawn cap · effort rules"]
+    end
+    BUD -.-> L
+```
+
+Each box has one responsibility. The **lead** decomposes the question, decides how much effort it warrants, and enforces the spawn cap — it plans, it does not research. Each **worker** owns an isolated context (@sec-ch20-context): its own window, its own tool budget, and an output contract that says what a finding looks like. The **single writer** is the only component that composes prose; workers contribute intelligence, never sentences. The **cite-check** gate re-verifies citations before release. Beside the data path sits a thin **control plane** carrying the per-task budget, the spawn cap, and the effort rules — the machinery that keeps the family's economics from becoming its failure mode.
+
+## Deep dive: what crosses the worker boundary {#sec-ch39-boundary}
+
+The interviewer forks here first, because it is where multi-agent designs quietly fail. **The decision: a worker returns a bounded, typed finding set — claims, each with a source id, a supporting span, and an uncertainty — not its raw reading.** A finding is one to two thousand tokens; the worker's thirty thousand tokens of pages stay inside the worker and die with it. @fig-ch39-boundary draws the contrast.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch39-boundary
+%%| fig-cap: "What should a worker hand back? Raw pages overwhelm the lead's window and cost ~5x to re-read; typed findings keep the merge bounded and make citation-checking possible. The compression is the architecture."
+flowchart LR
+    subgraph WK ["inside one worker (dies at return)"]
+        R["30k tokens of<br/>fetched pages + tool logs"]
+    end
+    R --> C["compress to typed findings:<br/>claim · source_id · span · uncertainty"]
+    C -->|"~2k tokens"| L["lead's bounded<br/>merge context"]
+    R -. "raw dump<br/>(rejected)" .-> X["120k into merge:<br/>window blows, ~5x cost,<br/>no citation handle"]
+```
+
+The alternative — let the lead read everything the workers read — is what a mid-level design does, and it fails twice. It costs roughly five times as much at merge (the forty-two-cents-versus-eight line from the numbers), and it defeats the entire reason for isolated contexts: the lead's window fills with undigested pages and its reasoning rots (@sec-ch20-context). Compression also *creates* the handle citation-checking needs — a claim tagged with a source id and a span is a thing you can verify; a paragraph of synthesized prose is not.
+
+**When the interviewer pushes** — "isn't the digest lossy? what if the worker compresses away the decisive detail?" — the honest answer is yes, and the control is the finding *schema*, not more tokens. A finding carries its uncertainty and its span, so the writer can tell a hedged claim from a firm one and can pull the exact quoted evidence without re-reading the page. If a facet genuinely needs deep context that will not compress, that facet is the tell that the work was write-coupled after all, and it belongs to a single agent with compaction — which is the family fork reasserting itself inside a dive.
+
+## Deep dive: the single-writer merge and citation integrity {#sec-ch39-merge}
+
+The second fork is coordination correctness. **The decision: exactly one component writes the artifact.** Workers propose findings; the lead alone composes the brief. The reason is that two writers make contradictory *implicit* decisions — one worker's "the vendor is X" and another's "the incumbent is Y" become a brief that asserts both — and no amount of prompt discipline prevents it, because neither worker can see the other's prose. Concentrating the write is the structural fix (@sec-ch20-orchestrator); the toolkit's `context_budget` is what keeps that single writer affordable, since it is absorbing 8k of findings, not 120k of pages.
+
+Citation integrity is the merge boundary's real product, and it is a two-part control. First, the typed finding makes a claim inseparable from its source id and span, so a claim without provenance cannot enter the brief by construction. Second, a **cite-check** phase re-fetches each cited span and verifies that it entails the claim before the writer ships it — the same self-correcting-retrieval move as @sec-ch15-crag, applied to the team's output rather than one agent's. A claim that fails the check is dropped or flagged, never silently merged. This is also where the web's hazards land: retrieved text is data, not instructions (@sec-ch24), and a poisoned source that plants a false "finding" (@sec-ch15-security) is caught only if the cite-check verifies entailment against the actual source rather than trusting the worker's summary.
+
+**When the interviewer pushes** — "your frontier lead is expensive; can the workers be a cheaper model?" — yes, and it is a good cost lever precisely because the single-writer rule contains the risk: cheap workers produce more variable findings, but every finding is validated against its provenance at the merge gate before it can reach the brief, so worker quality degrades coverage, not correctness. That is the fourth row of the tradeoff table, and it is the strongest argument for the whole shape.
+
+## Tradeoffs, failure, and cost as an attack {#sec-ch39-tradeoffs}
+
+@tbl-ch39-tradeoffs is the design walked as an accountant: each choice, what it costs, what it buys, the risk it carries, and the control that makes the risk survivable.
+
+| Choice | Cost | Buys | Risk | Control |
+|---|---|---|---|---|
+| Multi-agent vs single | ~15x tokens (vs chat) | parallel coverage + context isolation | over-spawning | effort rules + hard spawn cap |
+| Isolated worker contexts | lossy digests | bounded lead context | worker context rot | cap worker steps; artifact refs, not raw pages |
+| Parallel spawn | 4x token work | ~1x wall-clock | merge conflicts | single-writer rule |
+| Frontier lead, cheap workers | quality variance | cost control | weak findings | validate claims vs provenance pre-merge |
+
+: The four decisions that define a deep-research team, priced as choices with controls. {#tbl-ch39-tradeoffs}
+
+The failures that page a human are three. A **merge conflict** — two findings that cannot both be true — is contained by the single-writer rule and surfaced by the cite-check; the writer must abstain or flag, not average. **Worker context rot** — a long worker loop drifting off its brief — is bounded by a hard step cap and compaction (@sec-ch13-compaction), and caught by the same failure-attribution move @sec-ch20-failure teaches: find the earliest decisive step, because later workers amplify an error they did not originate. And **citation fabrication** — a confident claim whose source does not support it — is the one with no partial credit, caught by the cite-check gate, and a leak of an unverified claim into a shipped brief is a defect that pages someone.
+
+Cost is the attack surface this family is defined by, and it has a name: **denial-of-wallet**. An uncapped orchestrator, or one an adversarial query can talk into deep decomposition, spends real money at machine speed. The controls are all arithmetic, and the toolkit prices them.
+
+```{python}
+def team_cost_n(k: int) -> float:
+    """Price a task with k subagents; merge and cite-check grow with findings."""
+    merge_k = tk.cost_per_query(4_000 + k * 2_000, 3_000, price)
+    cite_k = tk.cost_per_query(2_000 + k * 1_500, 1_000, price)
+    return lead + k * worker_cost + merge_k + cite_k
+
+
+budget = 2.00
+max_subs = max(k for k in range(1, 200) if team_cost_n(k) <= budget)
+print(f"cost at 4 / 20 / 50 subs : ${team_cost_n(4):.2f} / ${team_cost_n(20):.2f} / ${team_cost_n(50):.2f}")
+print(f"most subs a ${budget:.0f} budget allows : {max_subs}  (${team_cost_n(max_subs):.2f})")
+# uncapped recursive spawning: each of 4 workers spawns 3, and so on
+for depth in (1, 2, 3):
+    workers = sum(4 * 3 ** d for d in range(depth))
+    print(f"recursive depth {depth}: {workers:>2} workers  ${team_cost_n(workers):.2f}")
+# a worker's own loop is capped by a sub-budget, via the toolkit
+print(f"worker steps a $0.20 sub-budget allows : "
+      f"{tk.max_affordable_steps(0.20, 3_000, 3_000, 500, price)}")
+```
+
+Fifty subagents cost more than three times the budget, and an *uncapped* design where workers recursively spawn their own workers reaches fifty-two workers and \$6.89 by depth three — past the hard ceiling, for one query. The four controls, each a line in the code above: an **effort rule** that classifies query complexity before spawning (a lookup gets zero subagents), a **hard spawn cap** the orchestrator enforces, a **per-task dollar budget** that kills the task and returns a partial brief at the ceiling, and a **worker sub-budget** — `max_affordable_steps` says a twenty-cent worker affords five loop steps, so a runaway worker cannot silently 10x its reading. The fifth control is operational: alert on the spawned-per-query distribution, because a shift in that histogram is a denial-of-wallet attack or a prompt regression before it is a bill (@sec-ch26-cost). @fig-ch39-dow makes the budget the ceiling it is.
+
+```{python}
+#| label: fig-ch39-dow
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does cost grow with subagent count, and where does the budget cap it? Fan-out is near-linear; uncapped recursive spawning (marked points) blows past the ceiling. The cap is the security control made visible."
+ks = list(range(1, 51))
+costs = [team_cost_n(k) for k in ks]
+fig, ax = plt.subplots(figsize=(6.6, 3.3))
+ax.plot(ks, costs, color="#2a7f9e", label="fan-out (capped)")
+for depth in (2, 3):
+    w = sum(4 * 3 ** d for d in range(depth))
+    if w <= 50:
+        ax.plot(w, team_cost_n(w), "o", color="#b13f3f")
+        ax.annotate(f"recursive\ndepth {depth}", (w, team_cost_n(w)), fontsize=7,
+                    textcoords="offset points", xytext=(-4, 8), color="#b13f3f")
+ax.axhline(budget, ls="--", color="0.4")
+ax.text(1.5, budget + 0.15, "per-task budget", fontsize=8, color="0.4")
+ax.set_xlabel("subagents spawned")
+ax.set_ylabel("cost per task (USD)")
+ax.legend(loc="lower right", fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+## Evolution: build order and the flip {#sec-ch39-evolution}
+
+Build the cheap thing first and let the numbers justify the team. Start with a single agent plus compaction (@sec-ch13-compaction) and measure two things: whether it saturates its window on real questions, and whether those questions actually decompose into independent facets. Only when both hold — the four-condition test of @sec-ch20-mistake, which this family passes exactly when the work parallelizes, needs more than one window, merges without conflict, and is worth the multiplier — do you split into orchestrator and workers. Add the cite-check gate before you trust a single brief in front of an analyst; add the spawn cap and per-task budget before you expose it to anyone who can phrase a hostile query. What to measure first is the spawned-per-query distribution and the cost-per-task, because those two cap everything downstream.
+
+Then the interviewer flips the requirement, and for this family the sharpest flip moves the fork itself: *"the deliverable is no longer a one-shot brief but a single living report the team maintains and re-runs weekly."* That makes the writing write-coupled — each run edits a persistent artifact whose current state every decision depends on. The answer is the delta, in two sentences. The reading plane is unchanged: workers still fan out and return typed findings, because gathering evidence is still read-parallel. But the merge boundary gains a supersede-or-append decision against the previous artifact (the ADD/UPDATE/DELETE logic of @sec-ch18), the living report becomes a cached stable prefix rather than a rebuild (@sec-ch13-prefix), and if the editing genuinely cannot be concentrated in one writer, the fork has tipped and the honest move is to say so — the team survives for reading and collapses to a single agent for writing.
+
+## Interviewer probes {#sec-ch39-probes}
+
+**"An adversarial analyst crafts a query engineered to look like it needs deep decomposition. How do you stop it from spending five hundred dollars?"** Cost is an attack surface, so the defenses are structural, not vibes. An effort rule classifies the query before any spawn and refuses to fan out a shallow one; a hard spawn cap and a per-task dollar budget bound the task regardless of what the query claims to need, killing it at the ceiling with a partial brief rather than an unbounded bill; each worker carries its own sub-budget so it cannot silently deepen its own loop; and I alert on the spawned-per-query distribution so an induced shift shows up as an incident before it shows up on the invoice (@sec-ch26-cost). The arithmetic from the numbers section is the justification I quote — fifty subagents is already three budgets.
+
+**"A subagent returns a confident claim with a citation that does not actually support it. How does that not reach the brief?"** Because the boundary carries typed findings, not prose: a claim arrives welded to a source id and a span, so a claim without provenance cannot enter by construction, and the cite-check phase re-fetches the cited span and verifies entailment before the single writer includes it (@sec-ch15-crag). An unverifiable claim is dropped or flagged, never averaged in. This is also the poisoning defense — a hostile web source that plants a false finding (@sec-ch15-security) is caught only because the check verifies against the actual source, treating retrieved text as data, not as the worker's trustworthy word (@sec-ch24).
+
+**"When would you refuse to build this as multi-agent at all?"** When the work is write-coupled. The four-condition test (@sec-ch20-mistake) is a conjunction: the task must parallelize, exceed one window, merge without conflict, and be worth the multiplier — and a single evolving artifact, a codebase migration, or a tightly coupled multi-hop chain fails the merge clause. There I collapse to one agent with compaction and say the multiplier out loud as the reason: paying ~4x over a competent single agent buys wall-clock and coverage, and if the work will not merge, it buys neither.
+
+## The family skeleton {#sec-ch39-family}
+
+The orchestration bones — a plan step, a fan-out, isolated workers, and a merge boundary — recur across the family; what flips from sibling to sibling is *what the merge boundary produces* and whether the lead survives at all. @tbl-ch39-family re-instantiates the same skeleton across three siblings.
+
+| Sibling prompt | Changed constraint | What flips | Owner |
+|---|---|---|---|
+| Deep research (this) | open-ended, read-parallel, cited brief | baseline: lead + workers + single-writer prose + cite-check | @sec-ch20, @sec-ch15 |
+| Parallel code-migration fleet | output is code, verifier is the test suite | merge boundary becomes the CI/merge queue; findings become diffs gated by tests, not prose | @sec-ch20, @sec-ch21 |
+| Batch document processing | items are independent, no synthesis | the lead disappears — a work queue with a per-item budget replaces the orchestrator (map, no reduce) | @sec-ch21 |
+| Eval-fleet orchestration | the product is a trusted number | merge becomes a paired statistical gate; the "brief" is a release verdict | @sec-ch22 |
+
+: The orchestration family: same fan-out bones, and the one constraint that flips the merge boundary. {#tbl-ch39-family}
+
+The lesson the table teaches is where the family's design pressure lives. The fan-out is the easy part and it survives everywhere; the decision that defines each system is the merge — prose synthesis under a cite-check here, a test-gated merge queue for code, nothing at all for an embarrassingly parallel batch, a statistical gate for evals. Identify the merge boundary and you have identified the design.
+
+## Summary
+
+A deep-research system is the orchestration family: a lead plans, isolated workers read in parallel and return typed compressed findings, and a single writer synthesizes a cited brief behind a cite-check gate. The fork is read-parallel versus write-coupled: only parallel reading earns an orchestrator. Costs are priced in dollars per task, not cents per call, and the token multiplier is a ratio whose baseline you must name aloud (~15x versus a chat turn, ~4x versus a competent single agent). Cost is the attack surface, so spawn caps and per-task budgets are denial-of-wallet defenses; citation integrity is enforced at the merge boundary. Chapter 40 turns to the platform family.
+
+## Exercises
+
+1. **Re-run the fork.** The interviewer changes the deliverable to "a single maintained wiki page updated nightly." Using @sec-ch39-scope's fork, decide whether this is still a multi-agent problem, name which plane survives and which collapses, and state the two boxes that change from @fig-ch39-skeleton.
+2. **Move the multiplier.** Using the numbers cell, (a) recompute the multiplier against a *single research agent* baseline of 25k, 42k, and 80k tokens and state what a "correct" multiplier even means; (b) change worker findings from 2k to 8k tokens and report what happens to the merge cost and to the whole-task total.
+3. **Price the cap.** With `team_cost_n`, find the largest spawn cap that keeps p95 cost under \$1.50, then under \$3.00. Which analyst-visible quality knob does each cap trade away, and how would you measure the loss?
+4. **Break the wallet.** Model an adversarial query that induces recursive spawning to depth 4 (each worker spawns 3). Compute the worker count and cost, then design the single control from @sec-ch39-tradeoffs that most cheaply bounds it, and justify the choice with one sentence of arithmetic.
+5. **Defend a citation.** A worker returns the claim "revenue fell 12% in Q3" citing a source whose span says "revenue rose 12% in Q2." Trace how the merge boundary (@sec-ch39-merge) and cite-check catch it, and name the one worker-side schema field that makes the catch possible.
+6. **Swap the family sibling.** Take the eval-fleet row of @tbl-ch39-family and draw its skeleton: keep the fan-out, replace the merge with a paired statistical gate (@sec-ch22), and state which two boxes from @fig-ch39-skeleton you delete and which one you add.
+7. **Set the SLO honestly.** This family has no TTFT. Write the two SLOs it does have, compute the time-to-brief from the phase latencies at 8 workers instead of 4, and explain in one sentence why adding workers past a point stops improving wall-clock (recall @sec-ch20-latency).
+8. **Cost-matched, for real.** Give a single agent the whole team's token budget (158k) and the same question, per the discipline in @sec-ch20-economics. Argue what the extra budget does and does not buy the single agent, and state the one measurement that would settle whether the team was worth it.
