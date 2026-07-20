@@ -1,82 +1,139 @@
-"""Focused tests for the Chapter 22 evaluation artifact."""
+"""Executable invariants for Chapter 22's evaluation suite and release gate.
+
+Imports only the tangled module ``code/ch22/_generated.py`` (the chapter's
+``# @save`` cells in document order) under a chapter-unique module name, and
+drives it against the committed trace and judge-calibration fixtures.
+"""
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import sys
-import unittest
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "code" / "ch22"))
+_SPEC = importlib.util.spec_from_file_location(
+    "ch22_generated", ROOT / "code" / "ch22" / "_generated.py"
+)
+ch22 = importlib.util.module_from_spec(_SPEC)
+assert _SPEC.loader is not None
+sys.modules["ch22_generated"] = ch22
+_SPEC.loader.exec_module(ch22)
 
-import eval_harness as harness
+TRACES = ROOT / "code" / "ch22" / "fixtures" / "traces.jsonl"
+JUDGE = ROOT / "code" / "ch22" / "fixtures" / "judge_calibration.json"
 
 
-class EvalHarnessTests(unittest.TestCase):
-    def test_trace_fixture_expands_to_isolated_trials(self) -> None:
-        rows = harness.grade_traces()
-        self.assertEqual(len(rows), 96)
-        self.assertEqual(len({row["environment_id"] for row in rows}), 96)
+def test_trace_fixture_expands_to_isolated_trials() -> None:
+    rows = ch22.grade_traces(TRACES)
+    assert len(rows) == 96
+    assert len({row["environment_id"] for row in rows}) == 96
 
-    def test_unsafe_success_does_not_pass(self) -> None:
-        rows = harness.grade_traces()
-        row = next(
-            item
-            for item in rows
-            if item["task_id"] == "refund-en"
-            and item["system"] == "candidate"
-            and item["trial"] == 2
-        )
-        self.assertTrue(row["state_pass"])
-        self.assertFalse(row["policy_pass"])
-        self.assertFalse(row["success"])
 
-    def test_judge_calibration_fixture(self) -> None:
-        report = harness.judge_report()
-        self.assertEqual(report["n"], 100)
-        self.assertAlmostEqual(report["agreement"], 0.89)
-        self.assertAlmostEqual(report["kappa"], 0.7355769230769231)
-        self.assertAlmostEqual(report["fail_recall"], 0.80)
-        self.assertAlmostEqual(report["position_flip_rate"], 0.12)
+def test_grade_trial_conjunction_blocks_the_unsafe_success() -> None:
+    tasks = ch22.load_jsonl(TRACES)
+    refund = tasks[0]  # golden refund-en
+    unsafe = ch22.grade_trial(refund["runs"]["candidate"][2], refund)
+    assert unsafe["state_pass"] is True
+    assert unsafe["policy_pass"] is False
+    assert unsafe["success"] is False  # one failed component sinks the conjunction
 
-    def test_capability_and_reliability_estimators(self) -> None:
-        self.assertAlmostEqual(harness.pass_at_k_estimate(4, 2, 2), 5 / 6)
-        self.assertAlmostEqual(harness.pass_pow_k_estimate(4, 2, 2), 1 / 6)
-        self.assertEqual(harness.pass_pow_k_estimate(4, 1, 2), 0.0)
 
-    def test_task_cluster_is_the_unit_of_uncertainty(self) -> None:
-        rows = harness.grade_traces()
-        baseline = harness.task_metrics(rows, "baseline")
-        candidate = harness.task_metrics(rows, "candidate")
-        result = harness.paired_cluster_uncertainty(baseline, candidate)
-        self.assertAlmostEqual(result["point"], 0.125)
-        self.assertAlmostEqual(result["low"], -0.020833333333333332)
-        self.assertAlmostEqual(result["high"], 0.22916666666666666)
-        self.assertEqual(len(result["task_deltas"]), 12)
+def test_grade_traces_rejects_reused_environment_identity() -> None:
+    tasks = ch22.load_jsonl(TRACES)
+    corrupt = copy.deepcopy(tasks)
+    corrupt[1]["snapshot"] = corrupt[0]["snapshot"]  # collide two tasks' snapshots
+    corrupt_path = ROOT / "code" / "ch22" / "fixtures" / "_corrupt_tmp.jsonl"
+    import json
 
-    def test_slices_and_golden_case_both_survive_aggregation(self) -> None:
-        report = harness.release_report()
-        self.assertEqual(report["slices"]["candidate"]["mixed-language"], 0.8125)
-        self.assertEqual(report["verdict"], "BLOCK")
-        self.assertIn("must-not-break regression: refund-en", report["reasons"])
+    corrupt_path.write_text("\n".join(json.dumps(t) for t in corrupt), encoding="utf-8")
+    try:
+        with pytest.raises(ValueError):
+            ch22.grade_traces(corrupt_path)
+    finally:
+        corrupt_path.unlink()
 
-    def test_trajectory_measure_is_separate_from_outcome(self) -> None:
-        report = harness.release_report()
-        self.assertGreater(
-            report["trajectory_f1"]["candidate"],
-            report["trajectory_f1"]["baseline"],
-        )
-        self.assertEqual(report["verdict"], "BLOCK")
 
-    @unittest.skipUnless(importlib.util.find_spec("matplotlib"), "matplotlib not installed")
-    def test_plot_functions_return_source_backed_figures(self) -> None:
-        reliability = harness.plot_reliability()
-        release = harness.plot_release(harness.release_report())
-        self.assertEqual(len(reliability.axes), 2)
-        self.assertEqual(len(release.axes), 2)
+def test_cohen_kappa_exposes_the_always_pass_judge() -> None:
+    human = ["PASS"] * 90 + ["FAIL"] * 10
+    always_pass = ["PASS"] * 100
+    assert sum(h == j for h, j in zip(human, always_pass)) / 100 == pytest.approx(0.90)
+    assert ch22.cohen_kappa(human, always_pass) == pytest.approx(0.0)
+
+
+def test_judge_calibration_fixture() -> None:
+    report = ch22.judge_report(JUDGE)
+    assert report["n"] == 100
+    assert report["agreement"] == pytest.approx(0.89)
+    assert report["kappa"] == pytest.approx(0.7355769230769231)
+    assert report["fail_recall"] == pytest.approx(0.80)
+    assert report["position_flip_rate"] == pytest.approx(0.12)
+
+
+def test_capability_and_reliability_estimators_diverge() -> None:
+    assert ch22.pass_at_k_estimate(4, 2, 2) == pytest.approx(5 / 6)
+    assert ch22.pass_pow_k_estimate(4, 2, 2) == pytest.approx(1 / 6)
+    assert ch22.pass_pow_k_estimate(4, 1, 2) == 0.0
+    assert ch22.pass_at_k_estimate(4, 3, 2) == 1.0
+    assert ch22.pass_pow_k_estimate(4, 3, 2) == pytest.approx(0.5)
+
+
+def test_task_cluster_is_the_unit_of_uncertainty() -> None:
+    rows = ch22.grade_traces(TRACES)
+    baseline = ch22.task_metrics(rows, "baseline")
+    candidate = ch22.task_metrics(rows, "candidate")
+    result = ch22.paired_cluster_uncertainty(baseline, candidate)
+    assert result["point"] == pytest.approx(0.125)
+    assert result["low"] == pytest.approx(-0.020833333333333332)
+    assert result["high"] == pytest.approx(0.22916666666666666)
+    assert result["mde_80"] == pytest.approx(0.18288502039846424)
+    assert len(result["task_deltas"]) == 12
+
+
+def test_primary_failure_categorizes_at_earliest_boundary() -> None:
+    rows = ch22.grade_traces(TRACES)
+    refund_fails = [
+        r for r in rows
+        if r["task_id"] == "refund-en" and r["system"] == "candidate" and not r["success"]
+    ]
+    categories = {ch22.primary_failure(r) for r in refund_fails}
+    assert categories == {"policy_violation", "poor_explanation"}
+    assert all(ch22.primary_failure(r) is None for r in rows if r["success"])
+
+
+def test_error_burden_separates_equal_success_unequal_harm() -> None:
+    def row(name: str, **flags: bool) -> dict:
+        base = {"slice": name, "system": "candidate", "schema_pass": True,
+                "state_pass": True, "policy_pass": True, "judge_pass": True}
+        base.update(flags)
+        base["success"] = all(base[k] for k in
+                              ("schema_pass", "state_pass", "policy_pass", "judge_pass"))
+        return base
+
+    rows = (
+        [row("a") for _ in range(6)] + [row("a", policy_pass=False) for _ in range(2)]
+        + [row("b") for _ in range(6)] + [row("b", judge_pass=False) for _ in range(2)]
+    )
+    burden = ch22.error_burden(rows, "candidate")
+    assert burden["a"]["success"] == burden["b"]["success"] == 0.75
+    assert burden["a"]["failures"] == {"policy_violation": 2}
+    assert burden["b"]["failures"] == {"poor_explanation": 2}
+
+
+def test_release_report_blocks_the_flattering_candidate() -> None:
+    report = ch22.release_report(TRACES, JUDGE)
+    assert report["verdict"] == "BLOCK"
+    assert "must-not-break regression: refund-en" in report["reasons"]
+    assert "paired lower bound exceeds the allowed quality loss" in report["reasons"]
+    # every candidate slice clears the floor, yet the release still blocks
+    assert min(report["slices"]["candidate"].values()) >= 0.75
+    # a favorable process metric does not rescue the verdict
+    assert report["trajectory_f1"]["candidate"] > report["trajectory_f1"]["baseline"]
 
 
 if __name__ == "__main__":
-    unittest.main()
+    raise SystemExit(pytest.main([__file__, "-q"]))

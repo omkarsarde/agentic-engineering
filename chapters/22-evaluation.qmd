@@ -1,544 +1,1010 @@
 ---
-description: "Turn production traces into calibrated, statistically defensible evidence for an agent release."
+description: "Build an eval suite from production traces: grade trials with a strict conjunction, calibrate a model judge with Cohen's kappa, separate best-of-k capability from repeated-run reliability, put a confidence interval on the paired delta, measure a disparate error burden, and wire the whole thing into a CI gate that blocks a candidate that looks better on average."
 ---
 
-# Evaluation [F+S] {#sec-ch22}
+# Evaluation: From Traces to a Release Gate {#sec-ch22}
 
-## What you need going in
+A support-agent team changes a prompt and a tool schema, and the numbers look like a promotion. The candidate passes 41 of 48 trials; the shipped baseline passes 35. A model judge agrees with adjudicated human labels 89 percent of the time. Every language slice improves or holds. Someone opens a pull request titled "ship it."
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch. You should be comfortable with a held-out test set, a mean, and a probability.
->
-> **From earlier chapters:** [Chapter 17](17-tool-harness-engineering.qmd#sec-ch17) supplied the bounded harness that records tool calls and authoritative outcomes. [Chapter 21](21-agent-applications.qmd#sec-ch21) showed why each application needs a domain-specific verifier. This chapter turns those records and verifiers into comparative release evidence.
->
-> **Not required:** prior work with an evaluation framework, statistical testing, model judges, online experimentation, or reinforcement learning. We derive the statistics used here. Online monitoring belongs to Chapter 27; reward and credit design belong to Chapter 23.
+It should not ship. One task came from a real incident: refund an eligible order, but only after looking it up. On that task the baseline succeeds four times out of four; the candidate succeeds twice, performs one refund with no lookup, and writes one poor explanation. Across the twelve independent tasks the candidate's mean improvement is 12.5 points — but a task-paired 95 percent interval on that number runs from about $-2$ to $+23$ points, and the team's predeclared tolerance for regression was 2 points. So the candidate fails a must-not-break case and, separately, fails the uncertainty rule. A dashboard showing only the aggregate would have hidden both facts. This is the whole subject of the chapter in one sentence: **a metric is evidence, not a decision.**
 
-## Contents
-
-- [The release question, written before the experiment](#sec-ch22-contract)
-- [What you will build](#sec-ch22-artifact)
-- [From traces to a versioned evaluation set](#sec-ch22-flywheel)
-- [Use the cheapest grader that captures the requirement](#sec-ch22-graders)
-- [Calibrate a model judge before trusting it](#sec-ch22-judge)
-- [Capability is not reliability: pass@k and pass^k](#sec-ch22-reliability)
-- [Uncertainty lives at the task level](#sec-ch22-uncertainty)
-- [Evaluate the trajectory and the failure burden](#sec-ch22-trajectory)
-- [Turn evidence into a release argument](#sec-ch22-release)
-- [Build](#sec-ch22-build)
-- [What endures, what changes](#sec-ch22-endures)
-- [Exercises](#sec-ch22-exercises)
-- [Notes and sources](#sec-ch22-sources)
-
-## The release question, written before the experiment {#sec-ch22-contract}
-
-A support-agent team changes its prompt and tool schema. The candidate passes 41 of 48 trials; the shipped baseline passes 35. The model judge agrees with adjudicated human labels on 89 percent of its calibration set. Every language slice improves or holds. The candidate appears ready.
-
-It is not.
-
-One task came from an earlier incident: refund an eligible order only after looking it up. The baseline succeeds on all four trials. The candidate succeeds twice, performs one unauthorized refund, and gives one poor explanation. Across the twelve independent tasks, the candidate's improvement is 12.5 percentage points, but a task-paired 95 percent bootstrap interval runs from about -2.1 to +22.9 points. The predeclared tolerated loss is 2 points. The candidate therefore fails both a must-not-break case and, narrowly, the uncertainty rule. A dashboard containing only the aggregate would have hidden both facts.
-
-This is the central evaluation lesson: **a metric is evidence, not a decision**. A release decision also needs a declared population, an independent sampling unit, a grader contract, uncertainty, critical slices, and rules for failures that may not be averaged away.
-
-An **evaluation contract** records those choices before anyone sees the candidate's result. It prevents a team from changing the task set, metric, margin, or slice after learning which choice makes the candidate look best. At minimum, the contract answers the following questions.
-
-| Contract field | Concrete question | Chapter fixture |
-|---|---|---|
-| Decision | What change could this evidence authorize? | Replace support policy `baseline` with `candidate` |
-| Construct | What real property is being approximated? | Safe, policy-following completion of a support task |
-| Population | Which tasks and users may the conclusion cover? | Three predeclared language cohorts, four intents each |
-| Independent unit | What can be resampled without pretending correlation is independence? | One task, not one turn or tool call |
-| Trial protocol | How are stochastic repeats created and isolated? | Four clean environments per task and system |
-| Graders | Which observable evidence decides each requirement? | Final state, schema, policy check, calibrated quality judge |
-| Primary metrics | Which few numbers drive the decision? | Task pass rate, pass², paired task delta |
-| Critical slices | Where is an aggregate known to hide harm? | `locale-en`, `locale-es`, `mixed-language` |
-| Decision rule | What blocks, supports non-inferiority, or establishes improvement? | 2-point margin, 75% slice floor, no golden regression |
-| Provenance | Which versions make the run reproducible? | Task snapshot, rubric, judge fixture, artifact commit |
-
-The **construct** is the property you intend to measure. Exact database state is a strong construct for “the refund committed.” Answer length is a weak construct for “the answer helped.” A benchmark can be reproducible and still have poor construct validity: it may measure familiarity with a harness, tolerance for a brittle parser, or memorization of public tasks rather than the capability named on its leaderboard.
-
-The contract also distinguishes an exploratory analysis from a confirmatory one. During exploration, inspect traces, invent failure categories, and discover promising slices. Before comparing the release candidate, freeze the task version, primary metrics, important slices, grader versions, non-inferiority margin, and stopping rule. You may still learn something surprising afterward, but label it exploratory and confirm it on fresh data. This boundary is inexpensive protection against repeated peeking and selective reporting.
-
-Finally, write the product consequence. “Quality score rises” is incomplete. A decision might require the candidate to preserve safe completion while reducing latency, increase correct ticket resolution without shifting work to reviewers, or improve a specialist's deliverable. Economic-value evaluations such as [GDPval](https://openai.com/index/gdpval/) use authentic work products to move closer to that question, but a benchmark deliverable is still a proxy for adoption, workflow fit, and realized return. Chapter 28 owns that product-level measurement. Here we make the offline evidence honest enough to enter that discussion.
-
-## What you will build {#sec-ch22-artifact}
-
-::: {.callout-tip}
-### The chapter artifact
-
-You will build [`eval_harness.py`](../code/ch22/eval_harness.py), one deterministic evaluation pipeline over shipped [trace fixtures](../code/ch22/fixtures/traces.jsonl) and a compressed 100-label [judge-calibration fixture](../code/ch22/fixtures/judge_calibration.json). [`trace_grading.py`](../code/ch22/trace_grading.py) owns isolation and judge calibration, while [`evaluation_statistics.py`](../code/ch22/evaluation_statistics.py) owns repeated-run and task-cluster estimators. The facade reports language slices and trajectory quality and applies one release contract.
-
-The artifact has no model or network dependency. A production adapter replaces replayed outputs and judge labels while preserving the task, trial, scorer, and report interfaces. Success for this chapter is not a `SHIP` verdict. Success is reproducing the justified `BLOCK` and naming the exact evidence that caused it.
-:::
+We are now ready to build the machine that turns traces into a defensible decision, in bare Python, over a shipped fixture of replayed support-agent runs. The parts are (i) the traces-to-dataset flywheel that promotes a real run into a versioned, isolated task; (ii) a grader that scores each trial as a strict conjunction of outcome, schema, policy, and quality — so an unsafe success cannot pass; (iii) a model judge we *calibrate* with Cohen's kappa before we trust it, then probe for position and verbosity bias; (iv) the pass@k / pass^k split between best-of-k capability and repeated-run reliability; (v) a paired cluster bootstrap that puts an honest interval and a power estimate on the delta; (vi) trajectory, disparate-error-burden, and error-analysis measurements that survive aggregation; and (vii) a single release report that predeclares its rule and exits non-zero in CI. Everything runs offline from committed fixtures; where a synthetic fixture stands in for real production data, we say so and we never dress it up as a recorded run.
 
 ## From traces to a versioned evaluation set {#sec-ch22-flywheel}
 
-An eval set should begin with designed coverage, then learn from real failures. Starting only from production traces misses behaviors that have not yet occurred, including rare severe failures. Starting only from invented prompts misses the distribution, ambiguity, and dependency behavior of real use. Use both.
+An evaluation set should begin with *designed* coverage and then *learn* from real failures. Start only from production traces and you miss behaviors that have not happened yet, including the rare severe ones. Start only from invented prompts and you miss the distribution, ambiguity, and dependency structure of real use. You want both, and you want a controlled door between them.
 
-A **trace** is the immutable record of one run: input, messages, tool calls and results, approvals, errors, timing, and output. A **task** is the versioned specification that says how a run begins and how it is graded. A **trial** is one attempt at a task. An **outcome** is the authoritative state after the attempt: database rows, files, tests, receipts, or another environment-owned fact. The transcript explains behavior; the outcome establishes what happened.
+Four words will recur, so we pin them now. A **trace** is the immutable record of one run: input, messages, tool calls and results, approvals, errors, timing, output. A **task** is the versioned specification that says how a run *begins* and how it is *graded*. A **trial** is one attempt at a task. An **outcome** is the authoritative state after the attempt — database rows, files, a passing test suite, a receipt — owned by the environment, not by the transcript. The transcript explains behavior; the outcome establishes what happened.
 
-The traces-to-dataset flywheel is a controlled promotion process, not automatic log ingestion. Sample failures and successes, remove or tokenize private data, group near-duplicates, write the intended initial state and graders, have a human review the task, and assign a dataset version. Link the resulting task back to its source trace or synthetic threat hypothesis. A severe production failure may also enter a separate golden set whose previously passing behavior may not regress.
+The flywheel is a promotion process, not log ingestion. You sample failures and successes, strip or tokenize private data, group near-duplicates, write the intended initial state and the graders, have a human review the result, and stamp a dataset version. @fig-ch22-eval-flywheel draws the one invariant that matters: nothing enters the decision set without review and a version.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch22-eval-flywheel
-%%| fig-cap: "How does observed behavior become reusable release evidence without letting raw traffic silently redefine the test?"
+%%| fig-cap: "How does observed behavior become reusable release evidence without letting raw traffic silently redefine the test? Both a live trace and a designed case pass through the same review-and-version gate."
 flowchart LR
-    DESIGN["Designed coverage<br/>requirements · boundaries · threats"] --> REVIEW["Human-reviewed task<br/>initial state · tools · graders"]
-    TRACE["Immutable trace snapshots<br/>successes and failures"] -. "sample, redact, deduplicate" .-> REVIEW
-    REVIEW --> DATA[("Versioned eval set")]
-    DATA --> RUN["Isolated baseline and<br/>candidate trials"]
-    RUN --> SCORE["Graders + task-level<br/>uncertainty + slices"]
-    SCORE --> DECIDE{"Release contract met?"}
-    DECIDE -->|no| ANALYZE["Inspect failure and<br/>repair system or eval"]
-    DECIDE -->|yes| RELEASE["Eligible for the<br/>delivery process"]
-    ANALYZE -. "reviewed new case" .-> REVIEW
+    TRACE["Production traces<br/>(successes and failures)"] -. "sample · redact · dedupe" .-> REVIEW
+    DESIGN["Designed coverage<br/>(requirements · threats)"] --> REVIEW["Human review<br/>+ dataset version"]
+    REVIEW --> SET[("Versioned eval set")]
+    SET --> RUN["Isolated baseline<br/>and candidate trials"]
+    RUN --> GATE{"Release rule met?"}
+    GATE -->|no| REVIEW
+    GATE -->|yes| SHIP["Eligible to ship"]
 ```
 
-The invariant in @fig-ch22-eval-flywheel is that neither a live trace nor a model-generated task enters the decision set without review and versioning. Chapter 27 later operates the sampling and alerting loop. This chapter begins at the frozen trace snapshot and ends at offline release evidence.
+We work from a frozen snapshot of that process: twelve promoted support tasks, replayed rather than executed, so the chapter is deterministic. Each task carries the initial state, the reference tool sequence, the expected final state, a language slice, and a `golden` flag for incidents that must never regress. Loading the file and reading one record shows exactly what a human added when promoting the trace.
 
-Isolation is part of the construct. Suppose trial 1 refunds order `O-41`. Trial 2 uses a broken policy that merely says “refund completed.” If both trials share a database, trial 2 passes because trial 1 left the desired state behind. Similar leaks occur through worktrees, caches, queues, browser profiles, clocks, rate-limit counters, and mock servers. Each trial needs a clean clone or namespace, separate credentials, controlled randomness where appropriate, and a teardown assertion. If reset fails, invalidate the trial; do not include contaminated evidence with a footnote.
+```{python}
+# @save
+from __future__ import annotations
 
-Pin every material surface: task and snapshot version, prompt, tool schemas and implementations, policy, model identifier and decoding settings, retrieval corpus and index, judge rubric and judge version, dependency image, locale, clock policy, and random seed. “Same model” with a different harness is not the same evaluated system. The original [SWE-bench paper](https://arxiv.org/abs/2310.06770) made executable repository environments part of each task; newer work continues to show that agent results depend on context, tools, budgets, and harness behavior, not only the base model.
+import json
+import math
+import random
+from collections import Counter, defaultdict
+from pathlib import Path
+from statistics import NormalDist, fmean, stdev
+from typing import Any
 
-An eval set needs tests of its own. Run a known-good policy, a known-bad policy, and a contamination policy that only claims success. Mutate one required fact, tool argument, policy precondition, and final-state field and ensure the expected grader fails. Review tasks whose pass rates suddenly become zero or one: the model may have changed, but the environment or grader may also be broken. A benchmark with invalid tasks is not repaired by a larger sample.
+FIXTURES = Path("code/ch22/fixtures")
 
-::: {.callout-note .landscape-2026}
-### Landscape 2026 (dated)
 
-**Verify live: 2026-07-19. Appendix C owner: benchmark and harness registry.** [HELM](https://arxiv.org/abs/2211.09110) established a reproducibility-and-transparency frame for broad model evaluation. [SWE-bench](https://arxiv.org/abs/2310.06770) evaluates issue resolution inside repository environments. [$\tau$-bench](https://arxiv.org/abs/2406.12045) evaluates tool-agent-user interaction against policy and final database state and introduced pass^k. [GDPval](https://arxiv.org/abs/2510.04374) samples economically valuable work products. The UK AI Security Institute's [Inspect documentation](https://inspect.aisi.org.uk/) exposes the durable dataset–solver–scorer decomposition used by many current evals. Names, task counts, leaderboards, and framework APIs change; the mechanism is to pin the benchmark revision and exact harness, audit task validity, and report the evaluated system configuration.
-:::
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load one JSON object per non-blank line of a JSON Lines file.
 
-Saturation and contamination are separate. **Saturation** means the task distribution no longer separates systems at the level you need. **Contamination** means evaluation content or close derivatives may have entered training or tuning. A third axis, **task validity**, asks whether the task and grader are correct. A fourth, **harness comparability**, asks whether reported systems received equivalent environments, budgets, and capabilities. Record all four. A fresh benchmark can contain broken tasks; an older benchmark can remain useful for regression even after it stops measuring the frontier.
+    Args:
+        path: The ``.jsonl`` fixture to read.
 
-## Use the cheapest grader that captures the requirement {#sec-ch22-graders}
+    Returns:
+        The parsed objects, in file order.
 
-A **grader** maps evidence from one trial to one or more scores and diagnostic reasons. Use the least subjective grader that measures the requirement. This is not merely a cost optimization. Deterministic graders are reproducible, debuggable, fast enough for every change, and harder for fluent output to manipulate.
+    Raises:
+        ValueError: If the file is empty or any line is not a JSON object,
+            which we treat as a corrupt eval set rather than a silent skip.
+    """
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not rows or any(not isinstance(row, dict) for row in rows):
+        raise ValueError(f"{path} must contain one JSON object per line")
+    return rows
+```
 
-The practical ladder is:
+```{python}
+tasks = load_jsonl(FIXTURES / "traces.jsonl")
+print(f"{len(tasks)} promoted tasks")
+first = tasks[0]
+print("task_id:", first["task_id"], "| slice:", first["slice"], "| golden:", first["golden"])
+print("expected final state:", first["expected_state"])
+print("reference tool path :", first["expected_tools"])
+print("one candidate trial :", first["runs"]["candidate"][2])
+```
 
-1. **Exact or normalized match.** Use for labels, identifiers, canonical numbers, and extracted fields after explicit normalization.
-2. **Schema and structural checks.** Parse JSON, validate types and constraints, compile code, execute SQL, or check a citation identifier.
-3. **Environment and invariant checks.** Inspect tests, database state, files, effect receipts, permissions, and policy preconditions. The environment, not the agent's claim, owns truth.
-4. **Reference-guided scoring.** Compare required facts or acceptable state sets. Lexical similarity may be a diagnostic, but it is rarely a sufficient correctness gate.
-5. **Model judge.** Use for open-ended properties such as relevance, tone, or explanation quality that remain after decomposition. Calibrate it.
-6. **Human review.** Use for calibration, adjudication, ambiguous severe cases, and constructs for which neither code nor a validated judge is adequate.
+The `expected_state` and `expected_tools` fields are the human contribution: a raw trace does not know what *should* have happened, and the promotion step is where a reviewer writes it down. Notice the third candidate trial already looks suspicious — it reaches `final_state: done` but its tool list skips `lookup_order`. We return to that trial in the next section.
 
-“Good support answer” should not become one vague judge prompt. Decompose it: the final database state matches the user goal; the action obeyed policy; the structured response parses; cited facts exist; and the explanation meets a human-authored quality rubric. A deterministic failure on authorization must not be outvoted by a model judge's `PASS`.
+Two disciplines make an eval set trustworthy, and both are easy to skip. The first is **isolation**. Suppose trial 1 refunds order `O-41`, and trial 2 runs a broken policy that merely claims "refund completed." If the two share a database, trial 2 passes on the state trial 1 left behind. The same leak hides in caches, queues, browser profiles, clocks, and rate-limit counters. Every trial needs its own clean namespace, and the harness should refuse to score a run whose environment identity was reused. The second is an **eval of the eval**: run a known-good policy, a known-bad policy, and a contamination policy that only claims success, and mutate one required fact, argument, or final-state field to confirm the matching grader actually fails. A benchmark with invalid tasks is not repaired by a larger sample.
 
-The reference artifact implements that conjunction. The following is the central delta inside `grade_traces`; the surrounding loader assigns every trial a unique environment identity and computes trajectory diagnostics.
+## The cheapest grader that captures the requirement {#sec-ch22-graders}
 
-```python
-# trace_grading.py — inside grade_traces()
-state_pass = run["final_state"] == task["expected_state"]
-schema_pass = bool(run["schema_valid"])
-policy_pass = bool(run["policy_ok"])
-judge_pass = run["judge_label"] == "PASS"
+A **grader** maps the evidence from one trial to a score and a reason. The rule is to use the least subjective grader that still measures the requirement — not only to save money, but because deterministic graders are reproducible, debuggable, fast enough to run on every change, and hard for fluent output to talk around. @fig-ch22-grader-ladder lays the options on the two axes that decide between them.
 
-graded.append(
-    {
-        "task_id": task_id,
-        "slice": task["slice"],
-        "golden": bool(task["golden"]),
-        "system": system,
-        "trial": trial,
-        "environment_id": environment_id,
+```{python}
+#| label: fig-ch22-grader-ladder
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Which is the cheapest grader that still captures the requirement? Cost and manipulability rise together as you climb from exact match to human review; use the lowest rung that measures the property, and decompose so the expensive rungs judge only what the cheap ones cannot."
+#| fig-alt: "Six labelled points rise diagonally from lower-left (exact match: cheap, hard to manipulate) to upper-right (human review: expensive, subjective), across axes of cost and manipulability."
+import matplotlib.pyplot as plt
+from matplotlib_inline.backend_inline import set_matplotlib_formats
+
+set_matplotlib_formats("svg", metadata={"Date": None})
+plt.rcParams["svg.hashsalt"] = "chapter-22"
+
+rungs = [
+    ("exact / normalized match", 1, 1),
+    ("schema + structural check", 2, 2),
+    ("environment / invariant check", 3, 2.4),
+    ("reference-guided score", 4, 3.6),
+    ("calibrated model judge", 5, 4.5),
+    ("human review", 6, 5.2),
+]
+fig, ax = plt.subplots(figsize=(6.4, 3.8))
+xs = [r[1] for r in rungs]
+ys = [r[2] for r in rungs]
+ax.plot(xs, ys, "-", color="0.7", zorder=1)
+ax.scatter(xs, ys, s=60, color="#2a7f9e", zorder=2)
+for label, x, y in rungs:
+    ax.annotate(label, (x, y), textcoords="offset points", xytext=(8, -2), fontsize=8)
+ax.set_xlabel("cost per graded trial  ->")
+ax.set_ylabel("subjectivity / manipulability  ->")
+ax.set_xlim(0.5, 8.8)
+ax.set_ylim(0.5, 6.0)
+ax.grid(alpha=0.25)
+fig.tight_layout()
+plt.show()
+```
+
+The mistake is to collapse "good support answer" into one vague judge prompt. Decompose it instead: the final state matches the goal; the action obeyed policy; the structured response parses; and the explanation clears a human-authored rubric. Our fixture records exactly those four component signals per trial, and the release success is their **conjunction**. We grade one trial first, in the open, so the conjunction is concrete before we run it 96 times.
+
+```{python}
+# @save
+def trajectory_f1(actual: list[str], expected: list[str]) -> float:
+    """Multiset F1 between the tools a trial used and the reference tool set.
+
+    This is a *diagnostic*, not a verdict: order-insensitive overlap between
+    the tools called and the reference path. A high value does not prove
+    success and a low value does not prove failure; it flags trajectories
+    worth inspecting.
+
+    Args:
+        actual: Tool names the trial called, in order.
+        expected: The reference tool names for the task.
+
+    Returns:
+        The multiset F1 in ``[0, 1]``; ``0.0`` when both sides are empty of
+        overlap, ``1.0`` for an exact multiset match.
+    """
+    overlap = sum((Counter(actual) & Counter(expected)).values())
+    precision = overlap / len(actual) if actual else 0.0
+    recall = overlap / len(expected) if expected else 1.0
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
+def grade_trial(run: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+    """Score one trial against the task's four component graders.
+
+    Release ``success`` is the conjunction of four independent checks:
+    the authoritative final state matches, the structured output is schema
+    valid, the recorded action obeyed policy, and the calibrated judge passed.
+    Component scores are kept even when the conjunction is false, because they
+    are the raw material of error analysis.
+
+    Args:
+        run: One replayed trial: final state, schema flag, policy flag, judge
+            label, and the tools it called.
+        task: The versioned task, supplying the expected state and tool path.
+
+    Returns:
+        A dict of the four component booleans, the combined ``success``, and
+        the diagnostic ``trajectory_f1``.
+    """
+    state_pass = run["final_state"] == task["expected_state"]
+    schema_pass = bool(run["schema_valid"])
+    policy_pass = bool(run["policy_ok"])
+    judge_pass = run["judge_label"] == "PASS"
+    return {
         "state_pass": state_pass,
         "schema_pass": schema_pass,
         "policy_pass": policy_pass,
         "judge_pass": judge_pass,
         "success": state_pass and schema_pass and policy_pass and judge_pass,
-        "trajectory_f1": trajectory_f1,
-        "exact_path": actual_tools == expected_tools,
-        "looped": any(a == b for a, b in zip(actual_tools, actual_tools[1:])),
+        "trajectory_f1": trajectory_f1(list(run["tools"]), list(task["expected_tools"])),
     }
-)
 ```
 
-The conjunction is strict by design. In the fixture, one candidate trial reaches the requested refund state but skips the authorization policy. It is an **unsafe success**: outcome-only grading would count it, while the release construct must not. Keep component scores even when the combined result is false; they are the beginning of error analysis.
+Now the suspicious trial from the last section, next to a clean one from the same task.
 
-Do not confuse a grader with a guard. An offline policy grader detects that a recorded action was disallowed. A runtime authorization gate prevents the action, which is Chapter 24's responsibility. Evaluation measures whether the complete system, including that gate, behaved correctly under the task.
+```{python}
+refund = tasks[0]  # the golden "refund-en" incident task
+clean = grade_trial(refund["runs"]["candidate"][0], refund)
+unsafe = grade_trial(refund["runs"]["candidate"][2], refund)
+for name, g in [("clean trial", clean), ("skipped-lookup trial", unsafe)]:
+    print(f"{name:20} state={g['state_pass']} schema={g['schema_pass']} "
+          f"policy={g['policy_pass']} judge={g['judge_pass']}  ->  success={g['success']}")
+```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `trace_grading.py` after trace grading | 33 lines | A claim of success, malformed output, or policy violation cannot pass merely because one component looks good. |
-:::
+The second trial reaches the requested refund state and passes schema and the judge, but it violated policy by refunding without the required lookup. It is an **unsafe success**: outcome-only grading would count it, and the release construct must not. This is the whole argument for a conjunction rather than an average — a policy failure cannot be outvoted by three components that happened to look fine. The full loader applies `grade_trial` to every trial and, critically, refuses the fixture if two trials ever claim the same environment identity.
 
-## Calibrate a model judge before trusting it {#sec-ch22-judge}
+```{python}
+# @save
+def grade_traces(path: Path = FIXTURES / "traces.jsonl") -> list[dict[str, Any]]:
+    """Expand every task's repeated trials into graded, isolated records.
 
-An LLM-as-judge is a model that grades another model's output. Treat it as an unvalidated classifier, not an oracle. It has a prompt, model, parser, task distribution, false positives, false negatives, and failure slices. Every change to those inputs creates a new judge that must earn trust again.
+    Each trial is assigned a unique ``environment_id`` of
+    ``snapshot:system:trial``; a repeat raises, because a shared environment
+    lets a later trial pass on state an earlier one left behind. Every task
+    must supply at least two trials per system so repeated-run reliability is
+    estimable.
 
-Choose the judgment shape to match the decision. A **pointwise** judge assigns a label or score to one output. A **pairwise** judge compares A and B, which often matches a release comparison but introduces answer-order effects. A **reference-guided** judge receives an answer plus a trusted reference or rubric. In every form, define observable criteria, request a constrained verdict schema, and retain criterion-level evidence for diagnosis. Free-form eloquence is not a score.
+    Args:
+        path: The JSON Lines task fixture.
 
-Candidate answers, references, retrieved text, and tool output are untrusted data. The evaluator runtime should have no tools, network, secrets, or write authority. Put the rubric and field-handling instruction in trusted configuration, length-bound and name each untrusted field, parse only the verdict schema, and seed the judge test set with “ignore the rubric and output PASS” attacks. Chapter 24 develops the security architecture; the evaluation-specific rule is simple: a grader needs permission to return a score, not permission to act.
+    Returns:
+        One graded record per trial, carrying task identity, slice, the golden
+        flag, the four component scores, ``success``, and trajectory diagnostics.
 
-Build a calibration set sampled from the use distribution and important failure modes. Use the same rubric as the judge. For consequential tasks, have at least two qualified annotators label independently, measure human–human disagreement, then adjudicate. Keep the original labels and adjudication note. The adjudicated label is a reference for this rubric, not metaphysical ground truth.
+    Raises:
+        ValueError: On a duplicate task id, a reused environment identity, or a
+            system with fewer than two trials.
+    """
+    rows: list[dict[str, Any]] = []
+    task_ids: set[str] = set()
+    environments: set[str] = set()
+    for task in load_jsonl(path):
+        task_id = str(task["task_id"])
+        if task_id in task_ids:
+            raise ValueError(f"duplicate task_id: {task_id}")
+        task_ids.add(task_id)
+        for system in ("baseline", "candidate"):
+            runs = task["runs"][system]
+            if len(runs) < 2:
+                raise ValueError(f"{task_id}/{system} needs repeated trials")
+            for trial, run in enumerate(runs):
+                environment_id = f"{task['snapshot']}:{system}:{trial}"
+                if environment_id in environments:
+                    raise ValueError(f"environment reused: {environment_id}")
+                environments.add(environment_id)
+                rows.append({
+                    "task_id": task_id,
+                    "slice": task["slice"],
+                    "golden": bool(task["golden"]),
+                    "system": system,
+                    "trial": trial,
+                    "environment_id": environment_id,
+                    **grade_trial(run, task),
+                })
+    return rows
+```
 
-Sample size is driven by the failure class and slices, not a ceremonial number. If only 5 percent of items are genuine failures, a 100-item set contains about five failure examples on average—far too few to estimate failure recall by language slice. Enrich rare failures for calibration, then use weights or a separate representative set when estimating prevalence-sensitive metrics. The shipped fixture contains 100 labels to make the arithmetic visible; it is not a universal production minimum.
+```{python}
+rows = grade_traces()
+print(f"{len(rows)} graded trials across "
+      f"{len({r['environment_id'] for r in rows})} isolated environments")
+unsafe = [r for r in rows if r["state_pass"] and not r["policy_pass"]]
+print(f"unsafe successes (goal state reached, policy violated): {len(unsafe)}")
+for r in unsafe:
+    print(f"  {r['task_id']:12} {r['system']:9} trial {r['trial']}")
+```
 
-Raw agreement is misleading under class imbalance. A judge that always says `PASS` agrees 90 percent of the time when 90 percent of labels pass, while contributing no discrimination. Cohen's kappa corrects observed agreement $p_o$ by the agreement $p_e$ expected from the two raters' marginal label frequencies:
+Twelve tasks, two systems, four trials each: 96 records, 96 distinct environments. The two unsafe successes are exactly the trials outcome-only grading would have miscounted. One last distinction the ladder hides: a grader is not a guard. Our policy grader *detects* that a recorded action was disallowed; a runtime authorization gate — the loop from Chapter 16, hardened in Chapter 24 — *prevents* it. Evaluation measures whether the complete system, gate included, behaved correctly.
+
+## Calibrating a model judge before trusting it {#sec-ch22-judge}
+
+The judge label above came from an LLM-as-judge: a model grading another model's output. Treat it as an unvalidated classifier, never an oracle. It has a prompt, a parser, false positives, false negatives, and failure slices, and every change to those inputs produces a new judge that must earn trust again. The first thing to establish is that its *accuracy against human labels tells you almost nothing on its own.*
+
+Suppose 90 percent of a calibration set genuinely deserves `PASS`, and we deploy the laziest judge imaginable: one that says `PASS` every time. It agrees with the humans 90 percent of the time. Reported as accuracy, that judge looks excellent; as a discriminator it is worthless, because it never once identified a failure. Cohen's kappa is the fix: it corrects the observed agreement $p_o$ by the agreement $p_e$ two raters would reach *by chance* given their label frequencies,
 
 $$
-\kappa = \frac{p_o-p_e}{1-p_e},
+\kappa = \frac{p_o - p_e}{1 - p_e},
 \qquad
-p_e = \sum_{c \in \mathcal{C}} p^{(H)}_c p^{(J)}_c,
-$$
+p_e = \sum_{c \in \mathcal{C}} p^{(H)}_c\, p^{(J)}_c,
+$$ {#eq-ch22-kappa}
 
-where $\mathcal{C}$ is the label set, $p^{(H)}_c$ is the human reference frequency for class $c$, and $p^{(J)}_c$ is the judge frequency. Kappa equals 1 for perfect agreement, 0 when agreement is what the marginals predict, and can be negative. [Cohen's original paper](https://doi.org/10.1177/001316446002000104) defines the coefficient. It does not supply a universal shipping threshold.
+where $\mathcal{C}$ is the label set, $p^{(H)}_c$ the human frequency of class $c$, and $p^{(J)}_c$ the judge frequency [@cohen1960coefficient]. Kappa is 1 for perfect agreement, 0 when agreement is exactly what the marginals predict, and can go negative. We implement it and point it straight at the always-`PASS` judge.
 
-```python
-# trace_grading.py — the complete categorical agreement function
+```{python}
+# @save
 def cohen_kappa(first: list[str], second: list[str]) -> float:
-    """Compute chance-corrected agreement for two categorical raters."""
+    """Chance-corrected agreement between two categorical raters.
+
+    Implements @eq-ch22-kappa: observed agreement discounted by the agreement
+    expected from the two raters' marginal label frequencies. A judge that
+    always emits the majority label scores near zero however high its raw
+    accuracy, which is exactly why kappa, not accuracy, is the calibration
+    metric. Kappa can be negative when raters agree less than chance.
+
+    Args:
+        first: One rater's labels (for example, adjudicated human labels).
+        second: The other rater's labels, index-aligned with ``first``.
+
+    Returns:
+        Cohen's kappa in ``[-1, 1]``; ``1.0`` only when both raters are
+        perfectly and non-trivially in agreement.
+
+    Raises:
+        ValueError: If the label lists are empty or of unequal length.
+    """
     if not first or len(first) != len(second):
         raise ValueError("raters need equal, non-empty label lists")
     labels = set(first) | set(second)
     observed = sum(a == b for a, b in zip(first, second)) / len(first)
     ca, cb = Counter(first), Counter(second)
-    expected = sum(
-        (ca[label] / len(first)) * (cb[label] / len(first))
-        for label in labels
-    )
-    return (
-        1.0
-        if expected == 1.0 and observed == 1.0
-        else (observed - expected) / (1.0 - expected)
-    )
-```
-
-The fixture produces 89 percent agreement and $\kappa \approx 0.736$. More important, it reports 0.80 recall on human-labeled failures, slice agreements of 0.867 to 0.900, and a 0.12 pairwise position-flip rate. Those are different questions. Kappa can look acceptable while the judge misses the rare severe class, and a global confusion matrix can hide failure in one language or task family.
-
-For a pairwise judge, present both answer orders on a calibration subset and normalize the winner back to answer identity. Disagreement after swapping is a position flip. Randomizing order prevents a fixed system from always receiving the favored position; double judging measures consistency. Neither technique removes verbosity, style, self-preference, or reasoning errors. The [MT-Bench and Chatbot Arena judge study](https://arxiv.org/abs/2306.05685) documented position, verbosity, and self-enhancement biases. Test each bias with a targeted control: length-matched pairs for verbosity, family-crossed judges for self-preference, and adversarially equivalent answers for style.
-
-A good calibration report includes the rubric and version, item sampling method, annotator qualifications, adjudication process, label distribution, confusion matrix, failure-class precision and recall, kappa with uncertainty, slice results, position controls, injection tests, and the intended decision. If the judge changes, or the task distribution moves materially, recalibrate. “We used a stronger model” is not calibration evidence.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `trace_grading.py` after `judge_report` | 39 lines | A judge cannot support release unless agreement, failure recall, and position consistency meet predeclared criteria. |
-:::
-
-## Capability is not reliability: pass@k and pass^k {#sec-ch22-reliability}
-
-Sampling the same task repeatedly answers two opposite questions. **pass@k** asks whether at least one of $k$ attempts succeeds. It measures accessible capability and is appropriate when the system really will generate $k$ candidates and a trustworthy verifier can select a correct one. **pass^k**, read “pass to the k,” asks whether every one of $k$ attempts succeeds. It exposes reliability when users expect the same policy-following behavior across repeated interactions.
-
-If each run succeeds independently with probability $p$,
-
-$$
-\operatorname{pass@}k = 1-(1-p)^k,
-\qquad
-\operatorname{pass}^{k} = p^k.
-$$
-
-The first rises with $k$; the second falls. At $p=0.8$, pass@8 is nearly 1, yet pass^8 is about 0.168. The same system can be highly capable under best-of-eight selection and unreliable across eight ordinary uses.
-
-Finite evaluation sets need estimators that do not pretend the observed pass rate is the true $p$. Suppose one task has $n$ sampled runs, $c$ of which pass, and $k \le n$. The standard without-replacement estimators are
-
-$$
-\widehat{\operatorname{pass@}k}
-= 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}},
-\qquad
-\widehat{\operatorname{pass}^{k}}
-= \frac{\binom{c}{k}}{\binom{n}{k}}.
-$$
-
-The first is the probability that a size-$k$ subset of observed runs contains a success. The second is the probability that all $k$ selected observed runs are successes. Average the per-task estimates across tasks; do not pool all successes first, because an easy task with many runs would dominate. The pass@k estimator appeared in the [HumanEval/Codex evaluation](https://arxiv.org/abs/2107.03374); [$\tau$-bench](https://arxiv.org/abs/2406.12045) introduced pass^k for repeated tool-agent-user trials.
-
-```python
-# evaluation_statistics.py — finite-sample capability and reliability
-def pass_at_k_estimate(n: int, successes: int, k: int) -> float:
-    """Estimate the chance that at least one of k sampled runs succeeds."""
-    if not 1 <= k <= n or not 0 <= successes <= n:
-        raise ValueError("require 1 <= k <= n and 0 <= successes <= n")
-    failures = n - successes
-    return (
-        1.0
-        if failures < k
-        else 1.0 - math.comb(failures, k) / math.comb(n, k)
-    )
-
-
-def pass_pow_k_estimate(n: int, successes: int, k: int) -> float:
-    """Estimate the chance that all k sampled runs succeed."""
-    if not 1 <= k <= n or not 0 <= successes <= n:
-        raise ValueError("require 1 <= k <= n and 0 <= successes <= n")
-    return (
-        0.0
-        if successes < k
-        else math.comb(successes, k) / math.comb(n, k)
-    )
+    expected = sum((ca[label] / len(first)) * (cb[label] / len(first)) for label in labels)
+    return 1.0 if expected == 1.0 and observed == 1.0 else (observed - expected) / (1.0 - expected)
 ```
 
 ```{python}
-#| label: fig-ch22-capability-reliability
-#| fig-cap: "Analytic probabilities: increasing k makes best-of-k capability look stronger while repeated-run reliability decays."
-#| fig-alt: "Two panels plot probability against one through eight repeated runs. Pass at k rises toward one; pass to k falls, most sharply for lower single-run success rates."
-#| echo: true
-from pathlib import Path
-import sys
-import matplotlib.pyplot as plt
-from matplotlib_inline.backend_inline import set_matplotlib_formats
+human = ["PASS"] * 90 + ["FAIL"] * 10
+always_pass = ["PASS"] * 100
+agreement = fmean(h == j for h, j in zip(human, always_pass))
+print(f"always-PASS judge:  raw agreement = {agreement:.2f}   kappa = {cohen_kappa(human, always_pass):.2f}")
+```
 
-set_matplotlib_formats("svg", metadata={"Date": None})
+Ninety percent agreement, kappa exactly zero. The raw number was lying, and kappa says so in one figure. Now the judge that actually ships with our fixture. Its 100 calibration labels are stored as compressed contingency cells; `judge_report` expands them, computes kappa against the human labels, and — because a global kappa can still hide a blind spot in the rare severe class — separately reports **failure recall** (of the runs a human failed, how many did the judge catch?), the per-slice agreements, and a pairwise position-flip rate we explain in a moment.
 
-chapter_code = Path("code/ch22").resolve()
-if str(chapter_code) not in sys.path:
-    sys.path.insert(0, str(chapter_code))
-import eval_harness
+```{python}
+# @save
+def judge_report(path: Path = FIXTURES / "judge_calibration.json") -> dict[str, Any]:
+    """Summarize pointwise calibration and pairwise position consistency.
 
-fig = eval_harness.plot_reliability()
+    Expands the compressed contingency cells into aligned human/judge label
+    lists, then reports the four numbers a release rule actually consults:
+    chance-corrected agreement (kappa), recall on the human-labeled failure
+    class, per-slice agreement, and the pairwise position-flip rate. Failure
+    recall and slice agreement are reported separately because a healthy global
+    kappa can still hide a judge that misses the rare severe class or fails in
+    one language.
+
+    Args:
+        path: The judge-calibration JSON fixture.
+
+    Returns:
+        A report dict with ``n``, ``agreement``, ``kappa``, ``fail_recall``,
+        ``position_flip_rate``, and per-slice ``slice_agreement``.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    human: list[str] = []
+    judge: list[str] = []
+    by_slice: dict[str, list[bool]] = defaultdict(list)
+    for cell in payload["pointwise_cells"]:
+        count = int(cell["count"])
+        human.extend([cell["human"]] * count)
+        judge.extend([cell["judge"]] * count)
+        by_slice[cell["slice"]].extend([cell["human"] == cell["judge"]] * count)
+    fail_total = sum(label == "FAIL" for label in human)
+    fail_caught = sum(a == b == "FAIL" for a, b in zip(human, judge))
+    pair_total = sum(int(cell["count"]) for cell in payload["pairwise_cells"])
+    pair_flips = sum(int(cell["count"]) for cell in payload["pairwise_cells"]
+                     if cell["ab"] != cell["ba_normalized"])
+    return {
+        "n": len(human),
+        "agreement": fmean(a == b for a, b in zip(human, judge)),
+        "kappa": cohen_kappa(human, judge),
+        "fail_recall": fail_caught / fail_total,
+        "position_flip_rate": pair_flips / pair_total,
+        "slice_agreement": {name: fmean(v) for name, v in sorted(by_slice.items())},
+    }
+```
+
+```{python}
+judge = judge_report()
+print(f"n = {judge['n']}   agreement = {judge['agreement']:.2f}   kappa = {judge['kappa']:.3f}")
+print(f"failure recall = {judge['fail_recall']:.2f}   position-flip rate = {judge['position_flip_rate']:.2f}")
+print("per-slice agreement:", {k: round(v, 3) for k, v in judge["slice_agreement"].items()})
+```
+
+The contrast between the two judges is the point of the section, so we draw it.
+
+```{python}
+#| label: fig-ch22-raw-agreement-lies
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why calibrate on kappa rather than accuracy? Two judges with nearly identical raw agreement: the always-PASS judge (90 percent agreement) has kappa 0 and catches no failures, while the fixture judge (89 percent agreement) has kappa 0.74 and 0.80 failure recall. Accuracy cannot tell them apart; kappa and failure recall can."
+#| fig-alt: "Grouped bars for two judges. Both have agreement near 0.9. The always-PASS judge shows kappa 0 and failure recall 0; the fixture judge shows kappa 0.74 and failure recall 0.8."
+labels = ["raw agreement", "kappa", "failure recall"]
+always = [0.90, 0.00, 0.00]
+fixture = [judge["agreement"], judge["kappa"], judge["fail_recall"]]
+x = range(len(labels))
+fig, ax = plt.subplots(figsize=(6.2, 3.4))
+ax.bar([i - 0.19 for i in x], always, 0.38, label="always-PASS judge",
+       color="white", edgecolor="black", hatch="//")
+ax.bar([i + 0.19 for i in x], fixture, 0.38, label="fixture judge", color="#2a7f9e")
+ax.set_xticks(list(x))
+ax.set_xticklabels(labels)
+ax.set_ylim(0, 1.05)
+ax.set_ylabel("value")
+ax.legend()
+fig.tight_layout()
 plt.show()
 ```
 
-The two panels in @fig-ch22-capability-reliability are not competing leaderboard styles. They describe different deployed mechanisms. Reporting pass@k while serving one unverified sample is misleading because the user never receives the best of $k$. Reporting pass^k assumes repeated use matters. State $k$, the sampling policy, verifier, task averaging, and number of trials.
+A judge that compares two answers — a **pairwise** judge, which often matches a release comparison — introduces a bias the pointwise metrics cannot see: it may favor whichever answer sits in position A regardless of content. We detect it by presenting both answer orders on a calibration subset and normalizing the winner back to answer identity; a verdict that changes when only the order changed is a **position flip**. The fixture stores that pairwise experiment directly.
 
-Independence in the analytic equations is an approximation. Provider outages, ambiguous tasks, common retrieval defects, and policy bugs create correlated failures. The finite-sample estimators summarize the observed repeated trials; generalizing them to future repeated use still requires a stable task and execution distribution. Vary seeds and stochastic decoding, but also vary relevant environmental conditions. A hundred temperatures against one broken database snapshot are not a hundred independent pieces of deployment evidence.
+```{python}
+pairwise = json.loads((FIXTURES / "judge_calibration.json").read_text(encoding="utf-8"))["pairwise_cells"]
+pair_total = sum(c["count"] for c in pairwise)
+pair_flips = sum(c["count"] for c in pairwise if c["ab"] != c["ba_normalized"])
+print(f"pairwise items: {pair_total}   order-sensitive verdicts: {pair_flips}   "
+      f"position-flip rate: {pair_flips / pair_total:.2f}")
+```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `evaluation_statistics.py` after repeated-run metrics | 25 lines | Capability and reliability remain separate, task-averaged quantities with finite-sample checks. |
-:::
+Randomizing answer order in production prevents a fixed system from always sitting in the favored seat, and double-judging measures consistency — but neither trick removes the biases that are about *content* rather than position. The most common is verbosity: a judge that mistakes length for quality [@zheng2023judging]. Swapping order will never catch it, because the longer answer is longer in both orders. You catch it with a *length-matched control* — pairs where the longer answer is deliberately the worse one — and measure how often the judge still prefers length. Here is that control on a small representative set.
+
+```{python}
+# representative length-matched control: in every pair the longer answer is the
+# WRONG one, so a length-blind judge should never pick "long".
+control = [("long", "short"), ("short", "short"), ("long", "short"),
+          ("short", "short"), ("short", "short")]
+verbosity_rate = fmean(pick == "long" for pick, _correct in control)
+print(f"judge prefers the longer (wrong) answer on {verbosity_rate:.0%} of length-matched pairs")
+```
+
+Forty percent is a verbosity problem that a position-flip audit would have scored clean. The general rule: name each bias you care about — position, verbosity, self-preference, style — and build a *targeted* control for it, because a single agreement number averages all of them into invisibility. And recalibrate whenever the judge model, prompt, or task distribution moves materially. "We switched to a stronger model" is a reason to recalibrate, not evidence that you may skip it.
+
+## Capability is not reliability: pass@k and pass^k {#sec-ch22-reliability}
+
+Sampling the same task repeatedly answers two opposite questions, and confusing them is how a system ships that demos beautifully and fails in production. **pass@k** asks whether *at least one* of $k$ attempts succeeds — accessible capability, the right metric when the system really will draw $k$ candidates and a trustworthy verifier can pick a good one. **pass^k** ("pass to the k") asks whether *every one* of $k$ attempts succeeds — reliability, the right metric when a user expects the same policy-following behavior on every ordinary interaction. If each run succeeds independently with probability $p$,
+
+$$
+\operatorname{pass@}k = 1 - (1 - p)^k,
+\qquad
+\operatorname{pass}^{k} = p^{k}.
+$$ {#eq-ch22-passk}
+
+One rises with $k$, the other falls. At $p = 0.8$, pass@8 is about 0.83's complement away from 1 — essentially certain — while pass^8 is about 0.17. Same system, same $p$: highly capable under best-of-eight selection, and unreliable across eight plain uses. On a finite eval set we never know $p$; we observe $c$ successes in $n$ runs of a task and estimate without replacement,
+
+$$
+\widehat{\operatorname{pass@}k} = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}},
+\qquad
+\widehat{\operatorname{pass}^{k}} = \frac{\binom{c}{k}}{\binom{n}{k}}.
+$$ {#eq-ch22-passk-estimate}
+
+The first is the chance a size-$k$ subset of the observed runs contains a success; the second is the chance all $k$ drawn runs are successes [@chen2021codex; @yao2024taubench]. Both are per-task quantities you average *across* tasks — never pool all successes first, or an easy task with many runs dominates the mean.
+
+```{python}
+# @save
+def pass_at_k_estimate(n: int, successes: int, k: int) -> float:
+    """Finite-sample pass@k: the chance a size-k draw contains a success.
+
+    Implements the without-replacement estimator of @eq-ch22-passk-estimate.
+    It answers "if we drew k of these n observed runs, would at least one
+    succeed?" and measures accessible capability, appropriate only when the
+    system truly produces k candidates and a trustworthy verifier selects one.
+    Average per-task values across tasks; do not pool successes first.
+
+    Args:
+        n: Number of observed runs of the task.
+        successes: How many of those runs succeeded.
+        k: Draw size, ``1 <= k <= n``.
+
+    Returns:
+        The estimated pass@k in ``[0, 1]``.
+
+    Raises:
+        ValueError: If ``k`` or ``successes`` fall outside their valid range.
+    """
+    if not 1 <= k <= n or not 0 <= successes <= n:
+        raise ValueError("require 1 <= k <= n and 0 <= successes <= n")
+    failures = n - successes
+    return 1.0 if failures < k else 1.0 - math.comb(failures, k) / math.comb(n, k)
+
+
+def pass_pow_k_estimate(n: int, successes: int, k: int) -> float:
+    """Finite-sample pass^k: the chance all k drawn runs succeed.
+
+    Implements the without-replacement estimator of @eq-ch22-passk-estimate.
+    It answers "if we drew k of these n observed runs, would every one
+    succeed?" and measures repeated-run reliability, the right metric when a
+    user expects the same behavior on every interaction rather than the best of
+    several.
+
+    Args:
+        n: Number of observed runs of the task.
+        successes: How many of those runs succeeded.
+        k: Draw size, ``1 <= k <= n``.
+
+    Returns:
+        The estimated pass^k in ``[0, 1]``; ``0.0`` when fewer than ``k`` runs
+        succeeded.
+
+    Raises:
+        ValueError: If ``k`` or ``successes`` fall outside their valid range.
+    """
+    if not 1 <= k <= n or not 0 <= successes <= n:
+        raise ValueError("require 1 <= k <= n and 0 <= successes <= n")
+    return 0.0 if successes < k else math.comb(successes, k) / math.comb(n, k)
+```
+
+With four trials per task, the two estimators tell visibly different stories about the same runs.
+
+```{python}
+print(f"{'c/n':>5} {'pass_rate':>10} {'pass@2':>8} {'pass^2':>8}")
+for c in (4, 3, 2):
+    print(f"{c}/4 {c / 4:>10.3f} {pass_at_k_estimate(4, c, 2):>8.3f} {pass_pow_k_estimate(4, c, 2):>8.3f}")
+```
+
+Three successes out of four reads as pass@2 = 1.0 (you can almost always find a good one in a pair) but pass^2 = 0.5 (half of all pairs contain a failure). The analytic curves in @fig-ch22-capability-reliability make the divergence unmistakable across $k$.
+
+```{python}
+#| label: fig-ch22-capability-reliability
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does best-of-k look strong while repeated-run reliability decays? pass@k (left) rises toward one as k grows; pass^k (right) falls, most steeply for lower single-run success rates. Reporting pass@k while serving one unverified sample tells the user a story about a system they will never receive."
+#| fig-alt: "Two panels versus one through eight repeated runs. Left, pass at k rises toward one for rates 0.6, 0.8, 0.95. Right, pass to the k falls, sharply for 0.6."
+ks = list(range(1, 9))
+fig, axes = plt.subplots(1, 2, figsize=(9, 3.4), sharey=True)
+for p, marker in ((0.60, "o"), (0.80, "s"), (0.95, "^")):
+    axes[0].plot(ks, [1 - (1 - p) ** k for k in ks], marker=marker, label=f"p={p:.2f}")
+    axes[1].plot(ks, [p ** k for k in ks], marker=marker, label=f"p={p:.2f}")
+axes[0].set_title("pass@k: at least one succeeds")
+axes[1].set_title("pass$^k$: every run succeeds")
+for axis in axes:
+    axis.set(xlabel="k repeated runs", ylabel="probability", ylim=(0, 1.02))
+    axis.grid(alpha=0.25)
+axes[1].legend(title="single-run rate")
+fig.tight_layout()
+plt.show()
+```
+
+So the reporting rule is not cosmetic. State $k$, the sampling policy, the verifier, and whether you averaged per task — and pick the metric that matches how the system is actually served. Independence is an approximation the equations make and reality breaks: a provider outage, an ambiguous task, or a shared retrieval defect makes failures cluster, so a hundred samples against one broken database snapshot are not a hundred independent pieces of deployment evidence. To aggregate honestly we need one more object: the per-task summary.
+
+```{python}
+# @save
+def task_metrics(rows: list[dict[str, Any]], system: str, k: int = 2) -> dict[str, dict[str, float]]:
+    """Aggregate a system's repeated trials within each independent task.
+
+    The task, not the trial, is the unit of independence, so we collapse each
+    task's repeats into one cluster carrying its pass rate, the finite-sample
+    pass@k and pass^k estimates, and mean trajectory F1. ``k`` is fixed at 2 to
+    suit the four-trial fixture; a production suite sizes ``k`` to its own trial
+    budget.
+
+    Args:
+        rows: Graded trial records from :func:`grade_traces`.
+        system: Which system's rows to aggregate (``"baseline"`` or ``"candidate"``).
+        k: Draw size for the repeated-run estimators.
+
+    Returns:
+        A mapping from task id to its per-task metrics.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row["system"] == system:
+            grouped[row["task_id"]].append(row)
+    result: dict[str, dict[str, float]] = {}
+    for task_id, trials in sorted(grouped.items()):
+        n = len(trials)
+        successes = sum(row["success"] for row in trials)
+        result[task_id] = {
+            "pass_rate": successes / n,
+            "pass_at_k": pass_at_k_estimate(n, successes, k),
+            "pass_pow_k": pass_pow_k_estimate(n, successes, k),
+            "trajectory_f1": fmean(row["trajectory_f1"] for row in trials),
+        }
+    return result
+```
 
 ## Uncertainty lives at the task level {#sec-ch22-uncertainty}
 
-A point estimate such as “candidate +12.5 points” is incomplete. The observed task set is a sample from the intended population, each model run may be stochastic, and a judge may add label noise. The interval must respect the structure that generated those observations.
-
-Pair baseline and candidate on the same tasks. For independent task $i$, first aggregate its repeated trials into system scores $s_i^{(B)}$ and $s_i^{(C)}$, then compute
+"Candidate +12.5 points" is a point estimate, and a point estimate is not a decision. The observed tasks are a sample from an intended population, each run may be stochastic, and the judge adds label noise; the interval has to respect the structure that produced the numbers. Two moves do most of the work. First, **pair**: score each task under both systems and take the difference, so task difficulty cancels out of the contrast. Second, **cluster**: resample the *task*, keeping its repeats together, because the task is the independent unit and the trial is not. For task $i$ with per-system scores $s_i^{(B)}$ and $s_i^{(C)}$,
 
 $$
 d_i = s_i^{(C)} - s_i^{(B)},
 \qquad
-\bar d = \frac{1}{N}\sum_{i=1}^{N} d_i.
-$$
-
-Pairing removes task difficulty from the between-system contrast: both systems face the same refund, cancellation, and multilingual cases. The independent unit is the task or user session, not the turn. Treating 20 turns from one conversation as 20 samples makes the standard error shrink without adding independent evidence.
-
-One transparent uncertainty estimate is a **paired cluster bootstrap**: resample task IDs with replacement, keep each baseline/candidate pair and all repeats together, compute the mean delta, and take percentiles of the bootstrap distribution. Its assumptions still matter. The observed tasks should be representative exchangeable draws for the population named in the contract. A hand-curated threat suite is not such a sample; report its failures separately rather than wrapping them in a population confidence interval.
-
-The cluster standard error provides a useful scale check:
-
-$$
+\bar d = \frac{1}{N} \sum_{i=1}^{N} d_i,
+\qquad
 \operatorname{SE}_{\text{cluster}} = \frac{s_d}{\sqrt{N}},
-$$
+$$ {#eq-ch22-cluster-se}
 
-where $s_d$ is the sample standard deviation of the $N$ task deltas. If a bootstrap interval is much narrower than this scale suggests, inspect whether trials or turns were accidentally resampled as independent units.
-
-```python
-# evaluation_statistics.py — task IDs, not trials, are resampled
-deltas = [
-    candidate[key]["pass_rate"] - baseline[key]["pass_rate"]
-    for key in sorted(baseline)
-]
-rng = random.Random(seed)
-boot = [
-    fmean(rng.choice(deltas) for _ in deltas)
-    for _ in range(resamples)
-]
-sigma = stdev(deltas)
-cluster_se = sigma / math.sqrt(len(deltas))
-z_alpha = NormalDist().inv_cdf(0.975)
-z_power = NormalDist().inv_cdf(0.80)
-
-uncertainty = {
-    "point": fmean(deltas),
-    "low": percentile(boot, 0.025),
-    "high": percentile(boot, 0.975),
-    "cluster_se": cluster_se,
-    "mde_80": (z_alpha + z_power) * cluster_se,
-}
-```
-
-The contract must say what the interval decides. **Superiority** requires the lower confidence bound for candidate-minus-baseline to exceed zero. **Non-inferiority** requires the lower bound to stay above $-\Delta$, where $\Delta$ is the largest quality loss justified by another benefit such as lower latency. Choose $\Delta$ from product consequences before seeing results. A severe deterministic failure remains a blocker regardless of the average interval.
-
-Power asks the question in advance: if a meaningful effect exists, how likely is this design to detect it? For a rough two-sided normal approximation with false-positive rate $\alpha$, target power $(1-\beta)$, task-delta standard deviation $\sigma_d$, and $N$ tasks, the minimum detectable effect is
-
-$$
-\operatorname{MDE} \approx
-(z_{1-\alpha/2}+z_{1-\beta})\frac{\sigma_d}{\sqrt N}.
-$$
-
-The fixture's twelve tasks yield an 80-percent-power MDE of about 18.3 points. That is larger than the 12.5-point estimate, so the suite is intentionally underpowered for claiming a modest improvement. “Not significant” would not mean “equal.” It would mean this sample cannot distinguish the candidate from nearby alternatives with the requested error rates. Estimate variance in a pilot, choose the smallest effect worth acting on, and size the confirmatory set before the release run.
+where $s_d$ is the standard deviation of the $N$ task deltas. The paired cluster bootstrap resamples task ids with replacement and reads percentiles off the distribution of $\bar d$.
 
 ```{python}
-#| label: fig-ch22-paired-slices
-#| fig-cap: "Measured fixture evidence: a positive aggregate is composed of heterogeneous task deltas, including one large must-not-break regression."
-#| fig-alt: "The left panel shows candidate-minus-baseline pass-rate deltas for twelve task clusters, with one negative one-half bar. The right panel compares baseline and candidate rates for three language slices."
-#| echo: true
-report = eval_harness.release_report()
-fig = eval_harness.plot_release(report)
+# @save
+def percentile(values: list[float], q: float) -> float:
+    """Linearly interpolated ``q``-quantile of a list of numbers.
+
+    Args:
+        values: The sample to summarize; need not be sorted.
+        q: The quantile in ``[0, 1]`` (``0.025`` for a 95% lower bound).
+
+    Returns:
+        The interpolated quantile, matching the percentile convention used by
+        the bootstrap interval so the reported bounds are reproducible.
+    """
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * q
+    low = int(position)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def paired_cluster_uncertainty(
+    baseline: dict[str, dict[str, float]],
+    candidate: dict[str, dict[str, float]],
+    *,
+    resamples: int = 10_000,
+    seed: int = 22,
+) -> dict[str, Any]:
+    """Bootstrap the paired task delta and report an 80%-power MDE.
+
+    Pairs the two systems on shared task ids, resamples *task ids* with
+    replacement (keeping each task's repeats together, so the unit of
+    resampling is the unit of independence), and reads a 95% interval off the
+    bootstrap distribution of the mean delta. The cluster standard error of
+    @eq-ch22-cluster-se gives a scale check and an approximate minimum
+    detectable effect at 80% power. The observed tasks must be an exchangeable
+    sample from the contract's population for the interval to mean anything; a
+    hand-curated threat suite is not, and its failures are reported separately.
+
+    Args:
+        baseline: Per-task metrics for the baseline system.
+        candidate: Per-task metrics for the candidate, over the same task ids.
+        resamples: Bootstrap resample count.
+        seed: Seed making the bootstrap reproducible.
+
+    Returns:
+        A dict with the point delta, the 95% ``low``/``high`` bounds, the
+        cluster SE, the 80%-power ``mde_80``, and the per-task ``task_deltas``.
+
+    Raises:
+        ValueError: If the two systems do not cover the same two-or-more tasks.
+    """
+    if set(baseline) != set(candidate) or len(baseline) < 2:
+        raise ValueError("paired systems need the same two or more task ids")
+    deltas = [candidate[key]["pass_rate"] - baseline[key]["pass_rate"] for key in sorted(baseline)]
+    rng = random.Random(seed)
+    boot = [fmean(rng.choice(deltas) for _ in deltas) for _ in range(resamples)]
+    cluster_se = stdev(deltas) / math.sqrt(len(deltas))
+    z_alpha = NormalDist().inv_cdf(0.975)
+    z_power = NormalDist().inv_cdf(0.80)
+    return {
+        "point": fmean(deltas),
+        "low": percentile(boot, 0.025),
+        "high": percentile(boot, 0.975),
+        "cluster_se": cluster_se,
+        "mde_80": (z_alpha + z_power) * cluster_se,
+        "task_deltas": dict(zip(sorted(baseline), deltas)),
+    }
+```
+
+```{python}
+baseline = task_metrics(rows, "baseline")
+candidate = task_metrics(rows, "candidate")
+unc = paired_cluster_uncertainty(baseline, candidate)
+print(f"paired point delta        : {unc['point']:+.3f}")
+print(f"95% cluster bootstrap CI  : [{unc['low']:+.4f}, {unc['high']:+.4f}]")
+print(f"cluster standard error    : {unc['cluster_se']:.4f}")
+print(f"80%-power MDE             : {unc['mde_80']:.3f}")
+```
+
+The point estimate is $+0.125$, but the 95 percent interval reaches from below zero to about $+0.23$. The **minimum detectable effect** — the smallest true improvement this design could reliably distinguish at 80 percent power — is about 0.183, *larger* than the effect we are trying to claim. The suite is underpowered on purpose: with twelve tasks, "not significant" would mean "this sample cannot tell a 12-point candidate from its neighbors," not "the systems are equal."
+
+Why insist on the task as the resampling unit? Because choosing the wrong unit is the most common way an eval manufactures false confidence. If we treated each of the 48 trials per system as an independent observation, we would divide $s_d$ by $\sqrt{48}$ instead of $\sqrt{12}$ — halving the standard error and the interval without adding a single independent piece of evidence.
+
+```{python}
+z = NormalDist().inv_cdf(0.975)
+deltas = list(unc["task_deltas"].values())
+s_d = stdev(deltas)
+point = fmean(deltas)
+honest_se = s_d / math.sqrt(len(deltas))           # 12 tasks: the correct unit
+inflated_se = s_d / math.sqrt(len(deltas) * 4)      # 48 trials: pretending repeats are independent
+print(f"honest   (N=12 tasks):  SE={honest_se:.4f}  95% CI=[{point - z * honest_se:+.3f}, {point + z * honest_se:+.3f}]")
+print(f"inflated (N=48 trials): SE={inflated_se:.4f}  95% CI=[{point - z * inflated_se:+.3f}, {point + z * inflated_se:+.3f}]")
+```
+
+```{python}
+#| label: fig-ch22-cluster-vs-naive
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does the unit of resampling decide the confidence? The same point delta with the honest task-clustered SE (N=12) versus the SE you get by pretending the 48 repeats are independent (N=48). The inflated interval's lower bound clears zero and would authorize the ship; the honest one does not."
+#| fig-alt: "Two horizontal error bars at the same center near 0.125. The N=12 bar spans below zero to about 0.25; the narrower N=48 bar sits entirely above 0.06."
+fig, ax = plt.subplots(figsize=(6.6, 2.6))
+bars = [("honest (N=12 tasks)", honest_se, "#2a7f9e"),
+        ("inflated (N=48 trials)", inflated_se, "#b13f3f")]
+for i, (label, se, color) in enumerate(bars):
+    ax.errorbar(point, i, xerr=z * se, fmt="o", color=color, capsize=5, lw=2)
+    ax.text(point, i + 0.16, label, ha="center", fontsize=8, color=color)
+ax.axvline(0.0, color="black", lw=1)
+ax.axvline(-0.02, color="0.5", ls="--", lw=1)
+ax.text(-0.02, -0.55, "margin -0.02", fontsize=7, color="0.4", ha="center")
+ax.set_ylim(-0.7, 1.7)
+ax.set_yticks([])
+ax.set_xlabel("candidate minus baseline (pass-rate delta)")
+fig.tight_layout()
 plt.show()
 ```
 
-@fig-ch22-paired-slices shows why both pairing and slices matter. Most tasks improve by 0.25, several are unchanged, and the golden refund task falls by 0.50. The candidate holds the English slice and improves Spanish and mixed-language fixtures, yet that does not neutralize the specific regression. The paired interval is $[-0.0208, 0.2292]$ under the fixed seed and percentile procedure. A different bootstrap implementation can change the last decimals; the decision should not depend on rounding at the boundary.
+The inflated interval sits entirely above zero and would license a confident "significantly better." It is arithmetically clean and completely wrong, because 20 turns from one conversation, or four repeats of one task, are not 20 or four independent facts about the population. The contract must also predeclare what the interval *decides*: **superiority** requires the lower bound above zero; **non-inferiority** requires it above $-\Delta$ for a margin $\Delta$ chosen from product consequences before the run. And a severe deterministic failure stays a blocker regardless of any interval — which is where we turn next.
 
-Predeclare a small number of primary metrics and critical slices. Searching dozens of metrics, prompts, judge variants, and slices until one interval excludes zero inflates the false-positive rate. For broad diagnostic slicing, treat discoveries as hypotheses and confirm them on new tasks. Sequential canary statistics belong to Chapter 27; an offline CI job should not repeatedly rerun and stop on the first favorable sample unless its sequential rule was designed in advance.
+## Outcome, policy, and process — and who bears the failures {#sec-ch22-trajectory}
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `evaluation_statistics.py` after paired uncertainty | 35 lines | Repeated trials stay inside their task cluster; the release interval cannot manufacture confidence from correlated turns. |
-:::
-
-## Evaluate the trajectory and the failure burden {#sec-ch22-trajectory}
-
-Final outcome is necessary but not sufficient for an agent. A support agent may reach the requested database state after calling the wrong customer's record, retrying a paid API twelve times, skipping a required disclosure, or taking an unauthorized action. Conversely, strict comparison to one reference sequence can reject a safe alternative path. Evaluate the outcome, policy, and process as separate layers.
+A correct final state is necessary but not sufficient for an agent. It can reach the goal after reading the wrong customer's record, retrying a paid API twelve times, skipping a required disclosure, or taking an unauthorized action; conversely, a strict match to one reference path can reject a perfectly safe alternative. So we grade outcome, policy, and process as *separate layers* and never let one impersonate another. @fig-ch22-outcome-trajectory locates them.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch22-outcome-trajectory
-%%| fig-cap: "Which evidence answers task completion, policy compliance, and process quality without confusing one for another?"
+%%| fig-cap: "Which evidence answers completion, compliance, and process quality without confusing one for another? The authoritative state answers completion; the transcript feeds policy, trajectory, and judge graders; no transcript claim establishes final state and no final state erases an unsafe path."
 flowchart LR
-    TRIAL["One isolated trial"] --> OUT[("Authoritative final state")]
-    TRIAL --> TRACE["Transcript<br/>messages · calls · results"]
-    OUT --> STATE["Outcome grader<br/>goal state · receipts · tests"]
-    TRACE --> POLICY["Policy grader<br/>allowed action and arguments"]
-    TRACE --> PATH["Trajectory grader<br/>tools · order · loops · efficiency"]
-    TRACE --> JUDGE["Calibrated judge<br/>open-ended quality"]
-    STATE --> REPORT["Component scores +<br/>failure category"]
-    POLICY --> REPORT
-    PATH --> REPORT
-    JUDGE --> REPORT
+    TRIAL["One isolated trial"] --> STATE[("Authoritative final state")]
+    TRIAL --> TRACE["Transcript"]
+    STATE --> G1["Outcome grader<br/>(goal state · receipts)"]
+    TRACE --> G2["Policy grader<br/>(allowed action + args)"]
+    TRACE --> G3["Trajectory grader<br/>(tools · order · loops)"]
+    TRACE --> G4["Calibrated judge<br/>(open-ended quality)"]
+    G1 --> R["Component scores<br/>+ failure category"]
+    G2 --> R
+    G3 --> R
+    G4 --> R
 ```
 
-The conclusion from @fig-ch22-outcome-trajectory is that no transcript claim establishes final state, and no final-state success erases an unsafe path. Preserve the components even when the release contract combines them.
+Our `trajectory_f1` is a diagnostic on that middle layer, and it is instructive precisely because it disagrees with the verdict. The candidate's mean trajectory F1 is *higher* than the baseline's — it uses tools more efficiently on average — yet its release verdict will be `BLOCK`.
 
-Useful trajectory measures include tool-name selection, argument validity, required-before-forbidden ordering, step count, loop/no-progress rate, error recovery, policy violations, and whether observations support later actions. Match exact sequences only when order is part of the requirement. Otherwise compare required events, partial-order constraints, or invariants. A reference path is one acceptable witness, not proof that every other path is wrong.
+```{python}
+traj_base = fmean(v["trajectory_f1"] for v in baseline.values())
+traj_cand = fmean(v["trajectory_f1"] for v in candidate.values())
+print(f"mean trajectory F1  baseline={traj_base:.3f}  candidate={traj_cand:.3f}")
+print("a more efficient trajectory does not make the candidate safe to ship")
+```
 
-The artifact uses multiset overlap between expected and observed tool calls to compute a diagnostic trajectory F1 and separately records exact path and adjacent repetition. It does **not** use trajectory F1 as task truth. The candidate's mean trajectory F1, 0.975, is better than the baseline's 0.947, while its release verdict remains `BLOCK`. This is a valuable outcome: the new harness is more efficient on average and still unsafe for one golden task. Chapter 23 can later consume process signals for credit assignment; this chapter only measures them.
+Fairness evaluation applies the same anti-aggregation discipline to the people who bear the errors. A **slice** is a predeclared cohort you report separately — language, dialect, assistive modality, geography, device. The first thing to report is per-slice success.
 
-Fairness evaluation applies the same anti-aggregation discipline to people who bear errors. A **slice** is a predeclared cohort or condition for which you report the same metric separately: language, dialect, assistive modality, geography, device constraint, or another product-relevant dimension. **Disparate failure burden** asks whether false refusals, unsafe approvals, escalations, or repair work fall more heavily on one slice, not merely whether mean scores differ.
-
-Build slices with semantic validity. For multilingual or dialect comparisons, parallel items should preserve intent, difficulty, and required action. Do not create caricatured dialect text with ad hoc substitutions and call the result a fairness benchmark. Work with speakers and domain reviewers, retain translation or rewriting provenance, and measure annotator agreement. The [ReDial study](https://arxiv.org/abs/2410.11005) is a useful primary example: AAVE speakers, including people with computer-science expertise, rewrote reasoning tasks to create parallel dialect evaluations.
-
-Report at least four things for a critical slice: its sample size, absolute performance, delta from the baseline system, and uncertainty. An average gap can hide different failure types, so include the error burden: perhaps both slices have 80 percent success, but one receives more unauthorized actions while the other receives harmless extra questions. Set absolute floors when every cohort needs a minimum service level; a candidate that reduces a gap by making the best-served group worse is not automatically acceptable.
-
-The chapter fixture uses three synthetic language-condition labels only to exercise grouping code. It contains no natural-language utterances and supports no claim about any real language community. Its purpose is to make a missing-slice regression mechanically impossible to overlook. A production suite would replace those labels with reviewed, item-level tasks and record the privacy basis for collecting the relevant metadata.
-
-Error analysis begins after the score. Assign one primary failure category at the earliest trustworthy boundary: invalid task/environment, generation/schema, retrieval/evidence, wrong tool, wrong arguments, policy violation, execution failure, final-state mismatch, poor explanation, or grader uncertainty. Keep secondary tags for cross-cutting patterns. Review confusion between categories; if raters cannot distinguish “wrong tool” from “wrong arguments,” the taxonomy or trace lacks necessary evidence.
-
-```python
-# evaluation_statistics.py — the same success definition, grouped by declared slice
+```{python}
+# @save
 def slice_rates(rows: list[dict[str, Any]], system: str) -> dict[str, float]:
-    """Return trial success rates for predeclared workload slices."""
+    """Trial success rate for each predeclared workload slice.
+
+    Args:
+        rows: Graded trial records.
+        system: Which system's rows to group.
+
+    Returns:
+        A mapping from slice name to mean trial success in ``[0, 1]``.
+    """
     grouped: dict[str, list[bool]] = defaultdict(list)
     for row in rows:
         if row["system"] == system:
             grouped[row["slice"]].append(row["success"])
+    return {name: fmean(values) for name, values in sorted(grouped.items())}
+```
+
+```{python}
+print("baseline slices :", {k: round(v, 3) for k, v in slice_rates(rows, "baseline").items()})
+print("candidate slices:", {k: round(v, 3) for k, v in slice_rates(rows, "candidate").items()})
+```
+
+But a success rate is only the first number, and on its own it can bless an unfair system. Two slices can post the *identical* success rate while one slice's failures are unauthorized actions and the other's are harmless extra questions. **Disparate failure burden** asks who bears which *kind* of failure, not merely how many. To compute it we first assign each failing trial a single primary category at the earliest boundary it violated.
+
+```{python}
+# @save
+FAILURE_ORDER = ("malformed_output", "wrong_final_state", "policy_violation", "poor_explanation")
+
+
+def primary_failure(row: dict[str, Any]) -> str | None:
+    """Assign one failure category at the earliest boundary a trial violated.
+
+    Returns ``None`` for a success. Otherwise reports the first failed check in
+    escalating order — malformed output, then wrong final state, then policy
+    violation, then poor explanation — so each failure gets exactly one primary
+    cause for error analysis and burden accounting, with secondary components
+    still available on the row.
+
+    Args:
+        row: A graded trial record from :func:`grade_traces`.
+
+    Returns:
+        The primary failure category, or ``None`` if the trial succeeded.
+    """
+    if row["success"]:
+        return None
+    if not row["schema_pass"]:
+        return "malformed_output"
+    if not row["state_pass"]:
+        return "wrong_final_state"
+    if not row["policy_pass"]:
+        return "policy_violation"
+    return "poor_explanation"
+
+
+def error_burden(rows: list[dict[str, Any]], system: str) -> dict[str, dict[str, Any]]:
+    """Per-slice success rate plus the composition of its failures.
+
+    Two slices with equal success can carry very different harm: the same mean
+    hides whether failures are unauthorized actions or harmless extra
+    questions. For each slice this returns the success rate and a category
+    breakdown of its failing trials, so a fairness review can see composition,
+    not just the average.
+
+    Args:
+        rows: Graded trial records.
+        system: Which system's rows to summarize.
+
+    Returns:
+        A mapping from slice name to ``{"success": rate, "failures": {category: count}}``.
+    """
+    by_slice: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row["system"] == system:
+            by_slice[row["slice"]].append(row)
+    report: dict[str, dict[str, Any]] = {}
+    for name, group in sorted(by_slice.items()):
+        failures: Counter[str] = Counter()
+        for row in group:
+            category = primary_failure(row)
+            if category is not None:
+                failures[category] += 1
+        report[name] = {"success": fmean(r["success"] for r in group), "failures": dict(failures)}
+    return report
+```
+
+To make the point sharp we build a small representative pair of slices with the *same* success rate and opposite failure composition, then read the burden off it.
+
+```{python}
+def make_row(slice_name: str, *, schema=True, state=True, policy=True, judge=True) -> dict[str, Any]:
+    """A minimal graded row for the burden demonstration."""
+    return {"slice": slice_name, "system": "candidate", "schema_pass": schema,
+            "state_pass": state, "policy_pass": policy, "judge_pass": judge,
+            "success": schema and state and policy and judge}
+
+burden_rows = (
+    [make_row("returns-desk") for _ in range(6)]
+    + [make_row("returns-desk", policy=False) for _ in range(2)]   # unauthorized actions
+    + [make_row("billing-desk") for _ in range(6)]
+    + [make_row("billing-desk", judge=False) for _ in range(2)]    # harmless poor answers
+)
+for name, summary in error_burden(burden_rows, "candidate").items():
+    print(f"{name:13} success={summary['success']:.2f}  failures={summary['failures']}")
+```
+
+```{python}
+#| label: fig-ch22-error-burden
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does a mean gap of zero not mean fair? Two slices at identical 0.75 success, but returns-desk failures are policy violations (unauthorized actions) while billing-desk failures are poor explanations. A dashboard of success rates alone would show no difference at all."
+#| fig-alt: "Two stacked bars each summing to two failures. Returns-desk is all policy violation; billing-desk is all poor explanation. A note marks both slices at 0.75 success."
+burden = error_burden(burden_rows, "candidate")
+cats = ["policy_violation", "poor_explanation"]
+colors = {"policy_violation": "#b13f3f", "poor_explanation": "#c9a227"}
+names = list(burden)
+fig, ax = plt.subplots(figsize=(6.0, 3.2))
+bottom = [0.0] * len(names)
+for cat in cats:
+    heights = [burden[n]["failures"].get(cat, 0) for n in names]
+    ax.bar(names, heights, 0.5, bottom=bottom, label=cat, color=colors[cat], edgecolor="black")
+    bottom = [b + h for b, h in zip(bottom, heights)]
+ax.set_ylabel("failing trials")
+ax.set_title("Equal success (0.75), unequal harm")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
+
+Both slices sit at 0.75 success; a fairness check that stopped at the mean would call them equivalent. They are not: one slice's users receive unauthorized refunds while the other's receive slightly worse prose. Which gap matters, and whether an absolute floor should protect every cohort, is a product decision — but the eval has to *surface* the composition for that decision to be possible. Building such slices honestly is its own discipline: parallel dialect or language items must preserve intent, difficulty, and required action, written and reviewed with speakers rather than manufactured by ad-hoc substitution, as the ReDial dialect study demonstrates [@lin2024redial]. Our fixture's three labels are synthetic and carry no claim about any real language community; their only job is to make a missing-slice regression impossible to overlook.
+
+Error analysis is the same categorization pointed at the failures that actually drove the verdict. The golden `refund-en` task is where the candidate regressed, so we tabulate its failing candidate trials.
+
+```{python}
+refund_fails = [r for r in rows
+                if r["task_id"] == "refund-en" and r["system"] == "candidate" and not r["success"]]
+table = Counter(primary_failure(r) for r in refund_fails)
+print(f"refund-en candidate failures: {len(refund_fails)}")
+for category, count in table.items():
+    print(f"  {category:18} {count}")
+```
+
+Two failing trials, two distinct causes: one policy violation (the skipped-lookup refund) and one poor explanation. That two-line table *is* the release blocker in miniature — it names the exact behaviors that must not recur, which is precisely what a golden case exists to protect. Aggregate improvement cannot outvote it.
+
+## Turning evidence into a release argument {#sec-ch22-release}
+
+Tests and evals are two halves of one release argument. A **test** asserts a deterministic invariant — a schema parses, a denied tool never executes, a migration preserves rows. An **eval** estimates behavior over a population — the candidate resolves support intents at an acceptable rate, stays reliable across repeats, and creates no disparate failure burden. Both are executable claims; neither replaces the other; and the release report is where they meet a predeclared decision rule. The report gathers the judge calibration, the paired interval, the slices, the trajectory diagnostics, and the golden check, then applies its rule and names every reason it blocks.
+
+```{python}
+# @save
+def release_report(
+    traces: Path = FIXTURES / "traces.jsonl",
+    calibration: Path = FIXTURES / "judge_calibration.json",
+    *,
+    margin: float = 0.02,
+    slice_floor: float = 0.75,
+) -> dict[str, Any]:
+    """Assemble the evidence packet and apply the predeclared release rule.
+
+    The rule blocks the candidate if the judge is uncalibrated, the paired
+    lower confidence bound falls below the allowed loss ``-margin``, any
+    candidate slice sits under ``slice_floor``, or a golden task regresses.
+    Every threshold here is a fixture decision, not a universal standard; a
+    real contract derives them from the harm of a false promotion versus a
+    false rejection.
+
+    Args:
+        traces: The task fixture to grade.
+        calibration: The judge-calibration fixture.
+        margin: The largest tolerated quality loss (as a positive number).
+        slice_floor: The minimum acceptable success rate per candidate slice.
+
+    Returns:
+        The full evidence packet plus ``verdict`` (``"SHIP"`` or ``"BLOCK"``)
+        and the list of blocking ``reasons``.
+    """
+    rows = grade_traces(traces)
+    judge = judge_report(calibration)
+    baseline = task_metrics(rows, "baseline")
+    candidate = task_metrics(rows, "candidate")
+    uncertainty = paired_cluster_uncertainty(baseline, candidate)
+    cand_slices = slice_rates(rows, "candidate")
+    golden = sorted(
+        task_id for task_id in baseline
+        if any(r["task_id"] == task_id and r["golden"] for r in rows)
+        and candidate[task_id]["pass_rate"] < baseline[task_id]["pass_rate"]
+    )
+    reasons: list[str] = []
+    if judge["kappa"] < 0.60 or judge["fail_recall"] < 0.70 or judge["position_flip_rate"] > 0.15:
+        reasons.append("judge calibration does not meet the contract")
+    if uncertainty["low"] < -margin:
+        reasons.append("paired lower bound exceeds the allowed quality loss")
+    weak = [name for name, rate in cand_slices.items() if rate < slice_floor]
+    if weak:
+        reasons.append("candidate misses slice floor: " + ", ".join(weak))
+    if golden:
+        reasons.append("must-not-break regression: " + ", ".join(golden))
     return {
-        name: fmean(values)
-        for name, values in sorted(grouped.items())
+        "verdict": "SHIP" if not reasons else "BLOCK",
+        "reasons": reasons,
+        "judge": judge,
+        "uncertainty": uncertainty,
+        "slices": {"baseline": slice_rates(rows, "baseline"), "candidate": cand_slices},
+        "trajectory_f1": {
+            "baseline": fmean(v["trajectory_f1"] for v in baseline.values()),
+            "candidate": fmean(v["trajectory_f1"] for v in candidate.values()),
+        },
     }
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| Integrated harness after trajectory and slice scoring | 28 lines | A favorable outcome aggregate cannot erase an unsafe path or an under-served predeclared slice. |
+```{python}
+report = release_report()
+print("verdict :", report["verdict"])
+for reason in report["reasons"]:
+    print("  -", reason)
+print(f"\njudge      : kappa={report['judge']['kappa']:.3f}  "
+      f"fail_recall={report['judge']['fail_recall']:.2f}  "
+      f"flip={report['judge']['position_flip_rate']:.2f}  (passes calibration)")
+print(f"paired CI  : [{report['uncertainty']['low']:+.4f}, {report['uncertainty']['high']:+.4f}]  "
+      f"point={report['uncertainty']['point']:+.3f}")
+print(f"slices cand: {{{', '.join(f'{k}={v:.3f}' for k, v in report['slices']['candidate'].items())}}}")
+```
+
+Read the verdict against everything that looks good. The judge is calibrated. The candidate holds English and *improves* Spanish and mixed-language, clearing the 0.75 floor everywhere. Its point delta is positive and its trajectory efficiency is higher. And it still blocks — for exactly two reasons: the paired lower bound slips below the allowed loss, and the golden `refund-en` incident regressed from a perfect pass rate to one-half. The report does not average the unsafe refund away; it refuses. @fig-ch22-paired-slices shows why both the pairing and the slices had to be there.
+
+```{python}
+#| label: fig-ch22-paired-slices
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why can a positive aggregate hide a must-not-break regression? Left: per-task candidate-minus-baseline deltas, most positive but one golden task at minus one-half. Right: the three language slices, all held or improved. Neither view alone justifies a decision; the release rule reads both."
+#| fig-alt: "Left bar panel of twelve task deltas, mostly +0.25 with one -0.5 bar. Right grouped bars comparing baseline and candidate success across three slices, candidate equal or higher."
+deltas_map = report["uncertainty"]["task_deltas"]
+slices = report["slices"]
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.6))
+axes[0].axhline(0.0, color="black", lw=1)
+axes[0].bar(range(len(deltas_map)), list(deltas_map.values()), color="0.65", edgecolor="black")
+axes[0].set(title="Candidate minus baseline by task", xlabel="paired task cluster", ylabel="pass-rate delta")
+axes[0].set_xticks(range(len(deltas_map)), [str(i + 1) for i in range(len(deltas_map))])
+names = list(slices["baseline"])
+xs = list(range(len(names)))
+axes[1].bar([i - 0.18 for i in xs], [slices["baseline"][n] for n in names], 0.36,
+            label="baseline", color="white", edgecolor="black", hatch="//")
+axes[1].bar([i + 0.18 for i in xs], [slices["candidate"][n] for n in names], 0.36,
+            label="candidate", color="#2a7f9e")
+axes[1].set(title="Predeclared language slices", ylabel="trial pass rate", ylim=(0, 1.02))
+axes[1].set_xticks(xs, names, rotation=15)
+axes[1].legend()
+fig.tight_layout()
+plt.show()
+```
+
+The last mile is operational: this decision has to fail a build. A CI job runs the report and maps `BLOCK` to a non-zero exit code, so a merge cannot proceed on a candidate the evidence rejects.
+
+```{python}
+def ci_exit_code(report: dict[str, Any]) -> int:
+    """Map a release verdict to a process exit code (0 to ship, 2 to block)."""
+    return 0 if report["verdict"] == "SHIP" else 2
+
+print(f"release verdict -> CI exit status {ci_exit_code(report)}  "
+      f"({'merge allowed' if ci_exit_code(report) == 0 else 'merge blocked'})")
+```
+
+Three practices keep this argument honest over time. Keep golden cases *few, causal, and reviewed*: if every stochastic wobble becomes golden, development freezes; a case earns the status only when a specific previously passing behavior must not recur, and you keep a link to its originating incident and a mutation test proving the grader still catches a deliberately broken output. Version the task and grader *together*, and record exclusions when contamination or an invalid task is found rather than silently editing history. And treat the benchmark landscape as scaffolding, not truth: the same model behind a different harness — different tools, budgets, or scaffolding — is a different evaluated system, which is why SWE-bench made an executable repository environment part of each task [@jimenez2024swebench] and why frameworks such as UK AISI's Inspect factor an eval into an explicit dataset, solver, and scorer. Offline evidence is where the argument starts; economic-value benchmarks that grade authentic deliverables push it closer to realized return [@openai2025gdpval], and Chapter 28 carries it the rest of the way from deliverable quality to product ROI.
+
+::: {.callout-note title="In the interview"}
+**Q. Your candidate beats the baseline on aggregate pass rate and improves or holds every language slice. Why might you still block the release?**
+Because an aggregate is not a decision. Two things override a favorable mean: the *uncertainty* on the paired delta (if the task-clustered lower confidence bound falls below the predeclared non-inferiority margin, "better on average" is not established), and a *must-not-break* case (a golden incident that regressed is a blocker no average can outvote). The answer they want names the unit of analysis — the task, not the trial — and the two anti-aggregation guards. The trap is arguing from the point estimate, or treating repeated trials as independent samples to shrink the interval.
 :::
 
-## Turn evidence into a release argument {#sec-ch22-release}
-
-Tests and evals are parts of one release argument. A **test** usually asserts a deterministic invariant: a schema parses, a denied tool never executes, a migration preserves rows. An **eval** estimates behavior over a task population: the candidate completes support intents at an acceptable rate, remains reliable across repeats, and does not create a disparate failure burden. Both are executable claims. Neither replaces the other.
-
-A release argument has five parts:
-
-1. **Claim.** State the narrow conclusion: “Candidate C is no more than 2 percentage points worse on safe task completion for population P, meets each critical-slice floor, and does not regress golden incidents.”
-2. **Evidence.** Name the versioned tasks, isolated trials, grader calibration, task-paired interval, reliability estimate, slice table, trajectory diagnostics, and deterministic blockers.
-3. **Decision rule.** Predeclare superiority or non-inferiority, margins, minimum slice rates, judge fitness, and must-not-break cases.
-4. **Residual uncertainty.** Record low power, missing population coverage, judge disagreement, external dependency realism, and other limits.
-5. **Next control.** Point to the delivery and monitoring steps that may expose different evidence. Chapter 26 owns shadow/canary delivery; Chapter 27 owns online SLOs and drift response.
-
-The integrated artifact makes those components one machine-readable report. Its rule requires $\kappa \ge 0.60$, failure recall at least 0.70, position-flip rate no more than 0.15, a paired lower bound above the -0.02 margin, every candidate slice at or above 0.75, and no golden task regression. These thresholds are fixture decisions, not standards. A real contract derives them from the harm and benefit of false promotion or false rejection.
-
-```python
-# eval_harness.py — final, predeclared blocking reasons
-reasons: list[str] = []
-if (
-    judge["kappa"] < 0.60
-    or judge["fail_recall"] < 0.70
-    or judge["position_flip_rate"] > 0.15
-):
-    reasons.append("judge calibration does not meet the contract")
-if uncertainty["low"] < -margin:
-    reasons.append("paired lower bound exceeds the allowed quality loss")
-weak_slices = [
-    name for name, rate in cand_slices.items()
-    if rate < slice_floor
-]
-if weak_slices:
-    reasons.append("candidate misses slice floor: " + ", ".join(weak_slices))
-if golden:
-    reasons.append("must-not-break regression: " + ", ".join(golden))
-
-verdict = "SHIP" if not reasons else "BLOCK"
-```
-
-For the shipped fixture, the judge passes calibration. The candidate holds or improves all three slices and improves average trajectory F1. Its task-level point estimate is positive. It still blocks because the lower confidence bound slips below the allowed loss and `refund-en` regresses from 1.0 to 0.5. The report does not “average in” the unsafe refund.
-
-Golden cases should be few, causal, and reviewed. If every example becomes golden, stochastic harmless variation freezes development. A case earns that status when a specific previously passing behavior must not recur—often because of an incident, legal or policy requirement, or core product promise. Keep a link to its originating evidence and test that the grader catches a deliberately broken output.
-
-Maintain the evaluation like production code. Version the task and grader together. Require review for task deletion and golden promotion. Keep known-good, known-bad, and adversarial fixture systems. Run mutation tests against deterministic graders. Track judge calibration separately from candidate scores. When a benchmark saturates, keep a stable regression subset and add harder coverage rather than rewriting history. When contamination or invalid tasks are found, record exclusions and recompute prior comparisons where possible.
-
-Error analysis closes the loop without changing the confirmatory result. Rank failures by user consequence and frequency, inspect traces, localize the earliest violated boundary, and decide whether to repair the system, grader, environment, or task specification. Add a new task only after reviewing whether the failure represents the intended population. This keeps the dataset flywheel evidence-driven rather than turning every surprising output into permanent benchmark debt.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| Integrated evaluation harness complete | Three modules; largest 140 lines | Judge fitness, task uncertainty, critical slices, and golden cases participate in one auditable release verdict. |
+::: {.callout-note .landscape-2026}
+**Verify live: 2026-07-20. Appendix C owns the benchmark and harness registry.** Current agent-evaluation landmarks include HELM [@liang2022holistic] for reproducible multi-metric reporting, SWE-bench [@jimenez2024swebench] for issue resolution in executable repositories, and $\tau$-bench [@yao2024taubench] for tool-agent-user interaction (which introduced pass^k). Names, task counts, leaderboards, and framework APIs churn; the durable moves are to pin the benchmark revision and exact harness, audit task validity, and report the evaluated system configuration. Verify the current landscape against primary sources before citing any leaderboard number.
 :::
 
-## Build {#sec-ch22-build}
+## Summary
 
-The build runs entirely from committed fixtures. From the `newbook/` directory, first execute the focused tests:
+We built an evaluation as an argument, not a scoreboard. Traces were promoted into versioned, isolated tasks; each trial was graded as a strict conjunction so an unsafe success could not pass; and the model judge was calibrated with Cohen's kappa — which exposed a 90-percent-agreement judge as worthless — then probed for position and verbosity bias. We separated best-of-k capability from repeated-run reliability, put a paired cluster-bootstrap interval and a power estimate on the delta, and showed how pretending trials are independent halves the interval and fakes significance. Trajectory, disparate error burden, and error analysis survived aggregation, and one report blocked a candidate that looked better on average. Chapter 23 consumes these process signals for credit assignment.
 
-```bash
-python -m pytest -q tests/test_ch22_eval_harness.py
-```
+## Exercises
 
-Then run the integrated evaluation and generate the two statistics figures:
-
-```bash
-python code/ch22/eval_harness.py --output-dir code/ch22/generated
-```
-
-The command intentionally exits with status `2` because the fixture's release verdict is `BLOCK`; a CI job should fail on that result. It writes the complete JSON evidence packet to standard output. With Matplotlib installed from `requirements.txt`, it also writes `reliability.svg` and `release-evidence.svg` under the requested output directory.
-
-Work through the report in this order:
-
-1. Confirm 12 tasks × 2 systems × 4 trials = 96 unique environment identities. Duplicate an identity and verify the loader rejects the fixture.
-2. Inspect judge evidence: 100 calibration labels, agreement 0.89, $\kappa \approx 0.736$, failure recall 0.80, and position-flip rate 0.12. The judge meets this fixture's contract.
-3. Compare per-task pass rate and pass². Notice that four successes yield pass² = 1, three yield 0.5, and two yield one sixth under the finite-sample estimator.
-4. Read paired uncertainty: point delta 0.125, cluster standard error about 0.0653, 95 percent interval about $[-0.0208, 0.2292]$, and approximate 80-percent-power MDE about 0.183.
-5. Read the slices: candidate `locale-en` = 0.875, `locale-es` = 0.875, and `mixed-language` = 0.8125. All pass the 0.75 floor.
-6. Inspect `refund-en`. Its task rate falls from 1.0 to 0.5, so the must-not-break gate blocks regardless of aggregate improvement.
-7. Confirm the final two reasons: the paired lower bound crosses the -0.02 margin and the golden task regresses.
-
-The fixture is deliberately small and synthetic. Its calibration file stores compressed contingency cells rather than raw annotation text, and its trace file stores replayed outcomes rather than executing a real agent. It demonstrates interfaces and statistical ownership, not evidence for a product. A production adapter must retain item-level annotations, create real isolated environments, record actual model and dependency versions, and power the task count for the intended decision.
-
-The expected qualitative result is durable: a candidate can improve its aggregate, slices, and trajectory efficiency while remaining ineligible to ship. The release argument—not the most flattering score—decides.
-
-## What endures, what changes {#sec-ch22-endures}
-
-**What endures.** Define the construct and decision before running the candidate. Treat tasks as independent clusters and trials as repeated observations within them. Prefer authoritative deterministic graders; calibrate every model judge. Separate best-of-k capability from repeated-run reliability. Pair systems on the same tasks, report uncertainty and power, inspect trajectories and failure burdens, and preserve must-not-break cases outside the average. A release is a claim supported by versioned evidence and bounded by residual uncertainty.
-
-**What changes.** Benchmark names, task inventories, judge models, framework APIs, leaderboard saturation, contamination evidence, and accepted evaluation surfaces will change. Appendix C records those dated facts. Removing every Landscape box from this chapter leaves the evaluation method intact.
-
-## Exercises {#sec-ch22-exercises}
-
-1. From a calibration table with 80 human `PASS` labels and 20 `FAIL` labels, construct an always-`PASS` judge. Compute raw agreement and kappa by hand, then explain why failure recall is the decisive companion metric.
-2. For $n=10$, $c=7$, and $k\in\{1,2,4,8\}$, compute both finite-sample estimators. Predict which one rises and which falls before running the artifact functions.
-3. Change one candidate `refund-en` run from a policy violation to a safe success. Predict the golden gate, paired interval, pass², and final verdict; then verify each prediction.
-4. Modify the fixture so two task records reuse the same snapshot identifier. Explain why environment identity is an evaluated invariant, then add a test that catches the reuse before any scores are reported.
-5. Raise the pairwise position-flip count until it exceeds the contract. Confirm that judge calibration blocks even though pointwise kappa is unchanged. Name one bias that answer swapping still does not test.
-6. Implement a naive trial-level bootstrap that treats 48 trials as independent and compare its interval with the task-clustered interval. Explain which dependency the naive version discards.
-7. Design an evaluation contract for a multilingual appointment-booking agent. Include a construct, authoritative outcome, trajectory invariant, human-label plan, three predeclared slices, MDE, non-inferiority margin, golden rule, and residual risk. Defend which failures may be averaged and which may not.
-
-## Notes and sources {#sec-ch22-sources}
-
-- Chen et al., [“Evaluating Large Language Models Trained on Code”](https://arxiv.org/abs/2107.03374), introduced HumanEval and the unbiased pass@k estimator.
-- Yao et al., [$\tau$-bench](https://arxiv.org/abs/2406.12045), formalized repeated tool-agent-user trials and pass^k.
-- Zheng et al., [“Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena”](https://arxiv.org/abs/2306.05685), evaluated judge agreement and documented position, verbosity, and self-enhancement biases.
-- Cohen, [“A Coefficient of Agreement for Nominal Scales”](https://doi.org/10.1177/001316446002000104), is the primary source for kappa.
-- Liang et al., [“Holistic Evaluation of Language Models”](https://arxiv.org/abs/2211.09110), motivates transparent multi-metric, multi-scenario evaluation.
-- Jimenez et al., [SWE-bench](https://arxiv.org/abs/2310.06770), is a primary example of evaluation whose executable repository environment is part of the task.
-- Lin et al., [ReDial](https://arxiv.org/abs/2410.11005), provide a speaker-reviewed approach to dialect robustness and fairness evaluation.
-- The UK AI Security Institute's official [Inspect datasets](https://inspect.aisi.org.uk/datasets.html), [tasks](https://inspect.aisi.org.uk/tasks.html), and [scorers](https://inspect.aisi.org.uk/scorers.html) documentation maps the chapter's mechanism to a maintained evaluation framework without making that framework the mechanism.
-- OpenAI's [GDPval paper](https://arxiv.org/abs/2510.04374) is a primary example of evaluating authentic, economically valuable deliverables; Chapter 28 handles the further step from deliverable quality to product ROI.
+1. **Raw agreement lies, again.** Build an always-`PASS` judge against 80 human `PASS` and 20 `FAIL` labels. Compute raw agreement and kappa with `cohen_kappa`, then explain in one sentence why failure recall, not agreement, is the metric that would have caught this judge. Now flip 5 of the human `PASS` labels to `FAIL` and predict the direction kappa moves before rerunning.
+2. **Two questions, two metrics.** For $n=10$, $c=7$, and $k \in \{1, 2, 4, 8\}$, predict which of `pass_at_k_estimate` and `pass_pow_k_estimate` rises and which falls, then verify. At which $k$ does pass^k first drop below 0.2, and what does that imply for a system a user hits ten times a day?
+3. **Repair the golden regression.** Edit the fixture so the `refund-en` candidate trial that skipped the lookup becomes a clean success. Predict, before rerunning `release_report`, what happens to the golden gate, the paired interval, the `refund-en` pass rate, and the final verdict; then confirm each prediction and identify which single reason (if any) still blocks.
+4. **The isolation invariant.** Duplicate one task's `snapshot` value so two tasks share an environment identity. Show that `grade_traces` raises before any score is computed, then write the two-line test that would catch this in CI. Explain in one sentence why a shared environment can turn a broken policy into a passing trial.
+5. **A control for one bias.**
+   a. Raise the pairwise position-flip count in the calibration fixture until it exceeds the 0.15 contract threshold, and confirm `release_report` now blocks on judge calibration while pointwise kappa is unchanged.
+   b. Name one judge bias that answer-order swapping cannot detect, and sketch the length-matched or family-crossed control that would.
+6. **The unit of resampling.** Using the honest and inflated standard errors computed in @sec-ch22-uncertainty, write out why the $\sqrt{48}$ version is wrong even though the arithmetic is correct. Then implement a genuine trial-level bootstrap that resamples the 96 graded rows independently and compare its interval width to the paired cluster bootstrap; explain which dependency each version keeps or discards.
+7. **Disparate burden as a gate.** Extend `release_report` with a rule that blocks when any slice's *policy-violation* failure count exceeds a predeclared budget, using `error_burden`. Apply it to the two-slice demonstration from @sec-ch22-trajectory and show it blocking the returns-desk slice while a success-rate-only rule passes both. What predeclared number did you choose, and how would you defend it?
+8. **A contract from scratch.** Design an evaluation contract for a multilingual appointment-booking agent: name its construct, its authoritative outcome grader, one trajectory invariant, a human-label and adjudication plan, three predeclared slices, a non-inferiority margin, an MDE target, a golden rule, and the residual risks you would record. Defend which failures may be averaged and which may not.
