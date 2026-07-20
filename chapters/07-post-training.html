@@ -841,7 +841,7 @@ window.Quarto = {
 <p>A prompt is not a behavior specification. A system prompt is one runtime input; a specification records the product’s intended behavior independently of any particular template, model, or provider. It must be readable by the people who own policy, precise enough for a data team to build examples, and testable enough for evaluators to catch a regression. At minimum it answers five questions: <strong>scope</strong> (which users, surfaces, languages, risk classes), <strong>priority</strong> (when instructions conflict, which source wins, and what must never be inferred from untrusted content), <strong>positive behavior</strong> (format, evidence, uncertainty, tone, clarification), <strong>boundaries</strong> (what to refuse, redirect, abstain from, or hand to deterministic software), and <strong>verification</strong> (which cases make each requirement observable).</p>
 <p>“Be helpful and safe” fails this test because two reasonable annotators apply it differently. “For an account-specific refund question without an authenticated order identifier, ask for the identifier and do not estimate eligibility” creates a case that can be demonstrated, compared, and evaluated. It also reveals what belongs <em>outside</em> the weights: authentication and refund authorization stay code-owned checks even if the model learns to talk about them correctly. Weight updates can improve proposal behavior; they cannot provide enforcement.</p>
 <p>The engineering discipline is to write requirements as stable identifiers rather than prose that silently drifts, and to keep a trace from every training or evaluation item back to one or more rule IDs. We encode the specification as data — a rule and the demonstrations it governs — so the trace is executable.</p>
-<div id="d7034d87" class="cell" data-execution_count="1">
+<div id="bde35d85" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -874,7 +874,7 @@ window.Quarto = {
 <span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The demonstrations we will fine-tune on are the spec encoded as behavior. Each is a user turn paired with the response the specification prescribes; tagging the response-shaping ones with rule IDs makes the lineage queryable.</p>
-<div id="b09fe472" class="cell" data-execution_count="2">
+<div id="10938ef8" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>DEMOS <span class="op">=</span> [</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"how do i reset my password"</span>, <span class="st">"open settings, then security, then reset password."</span>),</span>
@@ -907,7 +907,7 @@ window.Quarto = {
 <span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [i <span class="cf">for</span> i, rules <span class="kw">in</span> DEMO_RULES.items() <span class="cf">if</span> rule_id <span class="kw">in</span> rules]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the trace runs. Changing the refund-identity rule flags precisely the rows built from it, and no aggregate benchmark score can substitute for that link.</p>
-<div id="f4986c51" class="cell" data-execution_count="3">
+<div id="5308c65d" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>governed <span class="op">=</span> rows_for_rule(<span class="st">"refund.identity.v3"</span>)</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"rule </span><span class="sc">{</span>REFUND_ID_RULE<span class="sc">.</span>rule_id<span class="sc">}</span><span class="ss"> governs demonstrations </span><span class="sc">{</span>governed<span class="sc">}</span><span class="ss">"</span>)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> i <span class="kw">in</span> governed:</span>
@@ -948,7 +948,7 @@ Figure&nbsp;7.1: Which artifacts turn intended behavior into measurable model be
 <section id="sec-ch07-sft" class="level2" data-number="7.2">
 <h2 data-number="7.2" class="anchored" data-anchor-id="sec-ch07-sft"><span class="header-section-number">7.2</span> Supervised fine-tuning turns a base model into a chat model</h2>
 <p>Supervised fine-tuning (SFT) continues next-token training on curated prompt–response examples. The architecture does not change; what changes is the data distribution and, often, which tokens carry the loss. A base model sees undifferentiated text. A chat model must learn that a user turn requests action, an assistant turn is the response, and control tokens delimit the roles. We import the Chapter 2 model and train it once, so every mechanism here is real and runnable rather than a fixture.</p>
-<div id="6563633a" class="cell" data-execution_count="4">
+<div id="0d02af00" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
@@ -994,7 +994,7 @@ Figure&nbsp;7.1: Which artifacts turn intended behavior into measurable model be
 <span id="cb5-43"><a href="#cb5-43" aria-hidden="true" tabindex="-1"></a>torch.set_num_threads(<span class="dv">1</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A <strong>chat template</strong> serializes structured messages into the exact token stream used for training. Its control tokens, their placement, and their end-of-turn behavior form an application binary interface between the tokenizer, the training data, the inference server, and the client: train with one template and serve with another and you have created distribution shift out of configuration. We reserve four special IDs above the tokenizer’s vocabulary — one per role plus an end-of-turn marker — which means each needs its own embedding and a stable ID. We also lay out a small pool of candidate responses per prompt now, so the tokenizer sees their words; the preference sections (from <a href="#sec-ch07-preferences" class="quarto-xref"><span>Section 7.4</span></a>) rank them.</p>
-<div id="0b3d2081" class="cell" data-execution_count="5">
+<div id="b3362c61" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>CANDIDATES <span class="op">=</span> {</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"can i get a refund"</span>: [</span>
@@ -1031,7 +1031,7 @@ Figure&nbsp;7.1: Which artifacts turn intended behavior into measurable model be
 <span id="cb6-34"><a href="#cb6-34" aria-hidden="true" tabindex="-1"></a>VOCAB <span class="op">=</span> VOCAB_BASE <span class="op">+</span> <span class="dv">4</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The template renderer walks the messages, wrapping each in its role token and an end token; asking for a <em>generation prompt</em> appends a bare assistant token so the model knows to speak next.</p>
-<div id="0949812f" class="cell" data-execution_count="6">
+<div id="999810a5" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> render_chat(messages: <span class="bu">list</span>[<span class="bu">dict</span>], add_generation_prompt: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">int</span>]:</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Serialize chat messages into the token stream the model trains and serves on.</span></span>
@@ -1059,7 +1059,7 @@ Figure&nbsp;7.1: Which artifacts turn intended behavior into measurable model be
 <span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ids</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A round trip makes the ABI concrete. The user turn ends with an end token, then the assistant token cues the reply; every special ID is stable and distinct from content IDs.</p>
-<div id="b550c02a" class="cell" data-execution_count="7">
+<div id="2c10d8d2" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>demo_ids <span class="op">=</span> render_chat([{<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: <span class="st">"can i get a refund"</span>}],</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>                       add_generation_prompt<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"token ids:"</span>, demo_ids)</span>
@@ -1077,7 +1077,7 @@ decoded content: 'can i get a refund'</code></pre>
 \mathcal{L}_{\text{SFT}}(\theta)=-\frac{1}{\sum_{t} m_t}\sum_{t=1}^{T} m_t \log \pi_\theta(z_t\mid z_{&lt;t}),
 \tag{7.1}</span></span></p>
 <p>where <span class="math inline">\pi_\theta</span> is the model and <span class="math inline">z_{&lt;t}</span> the prefix. The user and system tokens still <em>condition</em> the prediction; the mask only stops their next-token targets from contributing a gradient. We build the mask alongside the sequence.</p>
-<div id="3e2ee2f3" class="cell" data-execution_count="8">
+<div id="18759cdd" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> build_example(user: <span class="bu">str</span>, assistant: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">list</span>[<span class="bu">int</span>], <span class="bu">list</span>[<span class="bu">int</span>], <span class="bu">list</span>[<span class="bu">int</span>]]:</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Serialize one demonstration into (input, target, response-mask) lists.</span></span>
@@ -1101,7 +1101,7 @@ decoded content: 'can i get a refund'</code></pre>
 <span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> full[:<span class="op">-</span><span class="dv">1</span>], full[<span class="dv">1</span>:], [<span class="dv">1</span> <span class="cf">if</span> (i <span class="op">+</span> <span class="dv">1</span>) <span class="op">&gt;=</span> n_prompt <span class="cf">else</span> <span class="dv">0</span> <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="bu">len</span>(full) <span class="op">-</span> <span class="dv">1</span>)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The training loop is one full-batch gradient step per iteration; we pad the ten examples to a common length and let the mask zero out padding as well as prompt tokens.</p>
-<div id="e713af39" class="cell" data-execution_count="9">
+<div id="861ba36e" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_config():</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the tiny chat model's config: Chapter 2's TinyGPT over our vocab."""</span></span>
@@ -1154,7 +1154,7 @@ decoded content: 'can i get a refund'</code></pre>
 <span id="cb11-50"><a href="#cb11-50" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> history</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Generation is greedy decoding from a generation prompt, stopping at the end token — or, for the untrained base model, running a fixed number of steps so its output is visible.</p>
-<div id="e485370e" class="cell" data-execution_count="10">
+<div id="4094797d" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="at">@torch.inference_mode</span>()</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> chat(model, user: <span class="bu">str</span>, max_new: <span class="bu">int</span> <span class="op">=</span> <span class="dv">40</span>, stop: <span class="bu">bool</span> <span class="op">=</span> <span class="va">True</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">int</span>]:</span>
@@ -1182,7 +1182,7 @@ decoded content: 'can i get a refund'</code></pre>
 <span id="cb12-25"><a href="#cb12-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> tokenizer.decode([t <span class="cf">for</span> t <span class="kw">in</span> generated <span class="cf">if</span> t <span class="op">&lt;</span> VOCAB_BASE], errors<span class="op">=</span><span class="st">"replace"</span>), <span class="bu">len</span>(generated)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Before fine-tuning, the base model is a random-initialized <code>TinyGPT</code>: it has no notion of the protocol, and greedy decoding produces stray repetition or an empty turn. We keep this exact initialization and fine-tune <em>it</em>, so the before/after is a fair comparison.</p>
-<div id="bd8810bd" class="cell" data-execution_count="11">
+<div id="e99e3d5f" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">1</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>base <span class="op">=</span> ch02.TinyGPT(make_config())</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>sft <span class="op">=</span> ch02.TinyGPT(make_config())</span>
@@ -1195,7 +1195,7 @@ BASE  'can i get a refund' -&gt; 'my my my '</code></pre>
 </div>
 </div>
 <p>Now supervised fine-tuning. The masked loss falls from about 6 to under 0.03, and greedy decoding reproduces the demonstrated responses — the base predictor has become a chat model that respects the template and stops at the end token.</p>
-<div id="f7c719ed" class="cell" data-execution_count="12">
+<div id="827dfb8f" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>loss_history <span class="op">=</span> sft_train(sft, DEMOS, mask_prompt<span class="op">=</span><span class="va">True</span>, seed<span class="op">=</span><span class="dv">0</span>)</span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"SFT masked loss:"</span>, [<span class="bu">round</span>(x, <span class="dv">3</span>) <span class="cf">for</span> x <span class="kw">in</span> loss_history])</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>reproduced <span class="op">=</span> <span class="bu">sum</span>(chat(sft, u)[<span class="dv">0</span>].strip() <span class="op">==</span> a.strip() <span class="cf">for</span> u, a <span class="kw">in</span> DEMOS)</span>
@@ -1256,7 +1256,7 @@ Figure&nbsp;7.2: Which tokens carry the SFT gradient? The serialized user/assist
 </div>
 </div>
 <p>Does the choice matter? We train a second model from the same initialization with the mask turned off — every token, including the user’s, contributes. Both models learn the assistant tokens equally well; the difference is what <em>else</em> the unmasked model learns.</p>
-<div id="936830b1" class="cell" data-execution_count="14">
+<div id="e92a9271" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> span_loss(model, demos, which: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Mean cross-entropy on either the assistant or the user target positions.</span></span>
@@ -1285,7 +1285,7 @@ Figure&nbsp;7.2: Which tokens carry the SFT gradient? The serialized user/assist
 <span id="cb18-26"><a href="#cb18-26" aria-hidden="true" tabindex="-1"></a>                    count <span class="op">+=</span> <span class="dv">1</span></span>
 <span id="cb18-27"><a href="#cb18-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> total <span class="op">/</span> count</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="fa4e2469" class="cell" data-execution_count="15">
+<div id="7e80fb94" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>unmasked <span class="op">=</span> ch02.TinyGPT(make_config())</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>unmasked.load_state_dict(base.state_dict())</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>sft_train(unmasked, DEMOS, mask_prompt<span class="op">=</span><span class="va">False</span>, seed<span class="op">=</span><span class="dv">0</span>)</span>
@@ -1299,7 +1299,7 @@ user-token loss        masked 6.375   unmasked 0.194</code></pre>
 </div>
 </div>
 <p>The two models are indistinguishable on assistant tokens and worlds apart on user tokens: the unmasked model learned to <em>generate the user’s side</em> of the conversation, spending capacity modeling text it will never be asked to produce. Prompt each model to open a user turn and the difference is behavioral, not just numeric.</p>
-<div id="a0e15938" class="cell" data-execution_count="16">
+<div id="c58ad0b4" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="at">@torch.inference_mode</span>()</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> open_user_turn(model, max_new: <span class="bu">int</span> <span class="op">=</span> <span class="dv">16</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    out <span class="op">=</span> [SPECIAL[<span class="st">"user"</span>]]</span>
@@ -1320,7 +1320,7 @@ unmasked model, asked to speak as the user: 'how do i reset my password'</code><
 </div>
 <p>The unmasked model cleanly reproduces a memorized user question; the masked model falls back to assistant-flavored text, because we never taught it the user distribution at all. Training on every token is a legitimate choice for some mixtures, but it must be a recorded decision, not a silent collator default.</p>
 <p><strong>Packing</strong> is the other collator decision. Most instruction examples are far shorter than the context window, so training stacks concatenate several into one fixed-length row to avoid wasting compute on padding. The hazard is attention: under ordinary causal attention, tokens in a later example can attend to an earlier one in the same row, contaminating the gradient. A block-diagonal mask keeps examples isolated. We build two packed examples and check the boundary directly.</p>
-<div id="cd8028e1" class="cell" data-execution_count="17">
+<div id="7e05e639" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> block_diagonal_mask(segments: <span class="bu">list</span>[<span class="bu">int</span>]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">list</span>[<span class="bu">bool</span>]]:</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the attention mask for packed examples: True where attention is blocked.</span></span>
@@ -1339,7 +1339,7 @@ unmasked model, asked to speak as the user: 'how do i reset my password'</code><
 <span id="cb23-16"><a href="#cb23-16" aria-hidden="true" tabindex="-1"></a>    n <span class="op">=</span> <span class="bu">len</span>(segments)</span>
 <span id="cb23-17"><a href="#cb23-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [[segments[q] <span class="op">!=</span> segments[k] <span class="kw">or</span> k <span class="op">&gt;</span> q <span class="cf">for</span> k <span class="kw">in</span> <span class="bu">range</span>(n)] <span class="cf">for</span> q <span class="kw">in</span> <span class="bu">range</span>(n)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="47ee53c4" class="cell" data-execution_count="18">
+<div id="2b7f2a98" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>ex_a <span class="op">=</span> render_chat([{<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: <span class="st">"thank you"</span>}])</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>ex_b <span class="op">=</span> render_chat([{<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: <span class="st">"can you help me"</span>}])</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>segments <span class="op">=</span> [<span class="dv">0</span>] <span class="op">*</span> <span class="bu">len</span>(ex_a) <span class="op">+</span> [<span class="dv">1</span>] <span class="op">*</span> <span class="bu">len</span>(ex_b)</span>
@@ -1360,7 +1360,7 @@ under block-diagonal packing it can attend to 0 of example 1's 7 tokens (naive c
 <h2 data-number="7.4" class="anchored" data-anchor-id="sec-ch07-preferences"><span class="header-section-number">7.4</span> Preference data is a measurement instrument</h2>
 <p>Some requirements are easy to recognize but hard to demonstrate uniquely. Two answers may both be correct while one is more direct, better calibrated, or more appropriate. Pairwise preference collection presents a prompt <span class="math inline">x</span> and two completions and records a chosen <span class="math inline">y_w</span> and a rejected <span class="math inline">y_l</span> — “winner” and “loser,” not objective truth. The interface, candidate generator, rubric, and annotator population are all part of the instrument, and a robust pipeline samples prompts from the product distribution, randomizes left/right presentation, allows ties and escalation, splits by prompt so paraphrases do not leak across train and test, and <em>audits</em> choices by position, length, language, and source.</p>
 <p>Two biases matter most and neither is hypothetical. <strong>Position bias</strong> appears when the first-shown answer wins for reasons unrelated to content. <strong>Length bias</strong> appears when verbosity is mistaken for quality. Our synthetic annotator makes both visible on purpose: it scores a candidate as a weighted sum of task success, safety, and normalized length, but its length weight (1.5) is far above what the product actually wants (the spec weight is −0.3), and it carries a left-position offset. Each row keeps whether the chosen candidate was shown on the left, so position can be measured separately from content.</p>
-<div id="d295e828" class="cell" data-execution_count="19">
+<div id="3c879ace" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> random</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1404,7 +1404,7 @@ under block-diagonal packing it can attend to 0 of example 1's 7 tokens (naive c
 <span id="cb26-41"><a href="#cb26-41" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The audit reads the biases straight out of the collected rows: the chosen answer sits on the left more than half the time, and it is the longer answer well over half the time.</p>
-<div id="856bc987" class="cell" data-execution_count="20">
+<div id="b49d8c43" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>rows <span class="op">=</span> collect_preferences()</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>left_rate <span class="op">=</span> <span class="bu">sum</span>(row[<span class="dv">3</span>] <span class="cf">for</span> row <span class="kw">in</span> rows) <span class="op">/</span> <span class="bu">len</span>(rows)</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>longer_rate <span class="op">=</span> <span class="bu">sum</span>(features(p, c)[<span class="dv">2</span>] <span class="op">&gt;</span> features(p, r)[<span class="dv">2</span>] <span class="cf">for</span> p, c, r, _ <span class="kw">in</span> rows) <span class="op">/</span> <span class="bu">len</span>(rows)</span>
@@ -1478,7 +1478,7 @@ Figure&nbsp;7.4: How does a reward gap become a preference probability? The Brad
 </div>
 </div>
 <p>Our reward model is linear in the same three features, <span class="math inline">r_\phi(y)=\phi^\top f(y)</span>, so its learned weights are legible. The gradient of the Bradley–Terry loss for one pair is the feature difference scaled by <span class="math inline">(\sigma-1)</span> — the familiar logistic form.</p>
-<div id="7760fbd8" class="cell" data-execution_count="23">
+<div id="01e8e8a4" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> train_reward_model(rows, steps: <span class="bu">int</span> <span class="op">=</span> <span class="dv">300</span>, lr: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.2</span>):</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Fit a linear Bradley-Terry reward model by gradient descent on @eq-ch07-bt.</span></span>
@@ -1514,7 +1514,7 @@ Figure&nbsp;7.4: How does a reward gap become a preference probability? The Brad
 <span id="cb31-33"><a href="#cb31-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> weights, history</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The model fits the comparisons well, and held-out ranking accuracy confirms it generalizes to fresh pairs from the same instrument. But look at the weights.</p>
-<div id="0ff96071" class="cell" data-execution_count="24">
+<div id="3b34e51d" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>weights, rm_history <span class="op">=</span> train_reward_model(rows)</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>task, safety, length <span class="op">=</span> weights</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"RM loss: </span><span class="sc">{</span>[<span class="bu">round</span>(x, <span class="dv">3</span>) <span class="cf">for</span> x <span class="kw">in</span> rm_history]<span class="sc">}</span><span class="ss">"</span>)</span>
@@ -1530,7 +1530,7 @@ held-out ranking accuracy: 0.855</code></pre>
 </div>
 </div>
 <p>The length weight is strongly positive even though the product’s specification assigns length a <em>negative</em> weight. That is not a bug in gradient descent; it is an accurate fit to a biased annotator. The controlled version of the audit makes it sharp: give the reward model two answers that are equally correct and equally safe and differ only in length, and it prefers the longer one with probability <span class="math inline">\sigma(\hat{w}_{\text{length}}\cdot\Delta\text{length})</span>.</p>
-<div id="4ce477a2" class="cell" data-execution_count="25">
+<div id="312bdcd2" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>delta_length <span class="op">=</span> CANDIDATES[PROMPTS[<span class="dv">0</span>]][<span class="dv">1</span>][<span class="dv">3</span>] <span class="op">-</span> CANDIDATES[PROMPTS[<span class="dv">0</span>]][<span class="dv">0</span>][<span class="dv">3</span>]</span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"P(reward model prefers the longer of two equally good answers) = "</span></span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span><span class="dv">1</span> <span class="op">/</span> (<span class="dv">1</span> <span class="op">+</span> math.exp(<span class="op">-</span>length <span class="op">*</span> delta_length))<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1580,7 +1580,7 @@ Figure&nbsp;7.5: Where do online RLHF and offline DPO get their next training ex
 \mathcal{L}_{\text{DPO}}(\theta)=-\mathbb{E}_{(x,y_w,y_l)}\log\sigma\!\left(\beta\left[\log\frac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)}-\log\frac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)}\right]\right).
 \tag{7.4}</span></span></p>
 <p>Every term is operational. The policy log-probability of a response is the sum of its completion-token log-probabilities under the same chat template and response mask we built for SFT — so we already have the machinery. The inner difference asks whether the policy raised the chosen response relative to the reference <em>more</em> than it raised the rejected one; the outer log-sigmoid is binary preference likelihood; <span class="math inline">\beta</span> sets how far the policy may drift from the reference. We compute the sequence log-probability directly.</p>
-<div id="197f3eb9" class="cell" data-execution_count="26">
+<div id="a4f4ec59" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> seq_logp(model, prompt: <span class="bu">str</span>, response: <span class="bu">str</span>):</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Summed log-probability of a response's tokens under the chat template.</span></span>
@@ -1606,7 +1606,7 @@ Figure&nbsp;7.5: Where do online RLHF and offline DPO get their next training ex
 <span id="cb36-23"><a href="#cb36-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> logp[<span class="bu">range</span>(start, <span class="bu">len</span>(targets)), targets[start:]].<span class="bu">sum</span>()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The training pairs come from the annotator’s own choice. Its length bias makes the <em>longer</em> of two equally-correct answers the chosen one, so DPO on these pairs teaches the model to prefer length — exactly the residual we want to watch propagate. We hold the reference frozen and update a copy of the SFT policy.</p>
-<div id="a4d8e58d" class="cell" data-execution_count="27">
+<div id="171551c6" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> annotator_best(prompt: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Index of the candidate the biased annotator scores highest for a prompt."""</span></span>
@@ -1667,7 +1667,7 @@ Figure&nbsp;7.5: Where do online RLHF and offline DPO get their next training ex
 <span id="cb37-58"><a href="#cb37-58" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> history</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The preference win-rate is the fraction of pairs whose implicit-reward margin favors the chosen (longer) answer. Before training the policy equals the reference, so every margin is exactly zero and the DPO loss starts at <span class="math inline">\log 2\approx0.693</span>. After training the loss collapses and the policy prefers the longer answer in every pair.</p>
-<div id="70789bee" class="cell" data-execution_count="28">
+<div id="01e298eb" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> prefers_longer(policy, reference, pairs, beta: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.1</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>    policy.<span class="bu">eval</span>()<span class="op">;</span> reference.<span class="bu">eval</span>()</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> torch.no_grad():</span>
@@ -1695,7 +1695,7 @@ policy prefers the longer answer in 100% of pairs
 </div>
 </div>
 <p>DPO did exactly what its loss asked: the implicit reward now favors the longer answer everywhere, and at this gentle step size the greedy generations stay coherent. That gap between <em>preference</em> and <em>generation</em> is the senior-level catch — the win-rate can hit 100% while decoding still emits the shorter memorized reply, so preference accuracy and generation quality must be measured separately. Push the same loss harder and the tiny policy over-optimizes: the margin keeps climbing while free generation dissolves into repetition, reward over-optimization in miniature.</p>
-<div id="11bfa6a7" class="cell" data-execution_count="29">
+<div id="c16fd647" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>overtrained <span class="op">=</span> ch02.TinyGPT(make_config())<span class="op">;</span> overtrained.load_state_dict(sft.state_dict())</span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>train_dpo(overtrained, reference, pairs, lr<span class="op">=</span><span class="fl">1e-3</span>)</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"over-optimized (lr=1e-3):"</span>, <span class="bu">repr</span>(chat(overtrained, <span class="st">"can i get a refund"</span>, max_new<span class="op">=</span><span class="dv">18</span>)[<span class="dv">0</span>]))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>

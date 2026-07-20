@@ -877,7 +877,7 @@ Figure&nbsp;14.1: At which boundary did an evidence-grounded answer first become
 </div>
 <p>RAG is the right intervention when facts change faster than weights, when answers need source attribution, when knowledge is private or tenant-scoped, or when the corpus is too large to put in every request. It is not a default wrapper for every call: a closed-book transformation or a latency-critical classifier gains cost and failure modes without gaining information. Fine-tuning changes behavior; it is a poor database-update protocol. Retrieval exposes current facts; it does not teach a new algorithm.</p>
 <p>Everything downstream needs a concrete corpus, so we establish one now and carry it through the chapter. It is a synthetic support knowledge base of versioned sources — refund policies, error codes, billing, shipping, security — with the refund-policy trap built in. We start with the machinery every later section imports: a tokenizer, the record types, and a chunker that skips retired sources.</p>
-<div id="52f27ee3" class="cell" data-execution_count="1">
+<div id="3ee31eb0" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -911,7 +911,7 @@ Figure&nbsp;14.1: At which boundary did an evidence-grounded answer first become
 <span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [t <span class="cf">for</span> t <span class="kw">in</span> terms(text) <span class="cf">if</span> t <span class="kw">not</span> <span class="kw">in</span> STOP]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The record types keep provenance explicit. A <code>Document</code> is a versioned source with an <code>active</code> flag; a <code>Chunk</code> is a retrievable passage that remembers which source and version it came from; a <code>Hit</code> pairs an identity with a score. Carrying <code>source_id</code> on every chunk is what lets us count <em>sources</em> rather than adjacent passages when we score retrieval later.</p>
-<div id="7bae2019" class="cell" data-execution_count="2">
+<div id="6afabbea" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Document:</span>
@@ -957,7 +957,7 @@ Figure&nbsp;14.1: At which boundary did an evidence-grounded answer first become
 <span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [Document(<span class="op">**</span>row) <span class="cf">for</span> row <span class="kw">in</span> load_jsonl(path)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Chunking chooses the unit retrieval can return. We split each active document into overlapping word windows and derive a stable identity from source, ordinal, and a content digest, so an unchanged build produces byte-identical IDs and a citation stays addressable. The <code>active</code> filter is the whole point of the refund trap: the retired 30-day policy must never enter the index.</p>
-<div id="e70d9500" class="cell" data-execution_count="3">
+<div id="a3cea775" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> chunk_documents(</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    documents: Sequence[Document], size: <span class="bu">int</span> <span class="op">=</span> <span class="dv">48</span>, overlap: <span class="bu">int</span> <span class="op">=</span> <span class="dv">9</span></span>
@@ -1002,7 +1002,7 @@ Figure&nbsp;14.1: At which boundary did an evidence-grounded answer first become
 <span id="cb3-42"><a href="#cb3-42" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> chunks</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We load the corpus and chunk it. The counts and the absence of the retired refund policy are the first thing to verify.</p>
-<div id="0ff9608b" class="cell" data-execution_count="4">
+<div id="fd2f44c2" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>CORPUS <span class="op">=</span> Path(<span class="st">"data/ch14/corpus.jsonl"</span>)</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>GOLD <span class="op">=</span> Path(<span class="st">"data/ch14/gold.jsonl"</span>)</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>documents <span class="op">=</span> load_documents(CORPUS)</span>
@@ -1031,7 +1031,7 @@ retired policy in any chunk: False</code></pre>
 <h2 data-number="14.2" class="anchored" data-anchor-id="sec-ch14-embeddings"><span class="header-section-number">14.2</span> What an embedding is, and how it is learned</h2>
 <p>An <strong>embedding</strong> maps a variable-length text to a fixed-width vector so that similar meanings land near each other in a geometry we can search. The title of this chapter names the object, so we build a real one rather than assert its properties. We use latent semantic analysis: build a TF-IDF term–chunk matrix, then factor it with a truncated singular value decomposition so a handful of latent axes capture how terms co-occur <span class="citation" data-cites="deerwester1990lsa">(<a href="../references.html#ref-deerwester1990lsa" role="doc-biblioref">Deerwester et al. 1990</a>)</span>. It is small and classical, but it is a genuine trained bi-encoder — text in, a learned dense vector out — and its geometry is <em>emergent</em>, not hand-declared.</p>
 <p>The axes come out ordered by singular value, largest first, so a prefix of the vector is itself a usable lower-dimensional embedding. That ordering matters twice: it makes the geometry compressible (<a href="#sec-ch14-encoders" class="quarto-xref"><span>Section 14.5</span></a>) and it means the first two coordinates are the best 2-D view we can draw.</p>
-<div id="8a28764c" class="cell" data-execution_count="5">
+<div id="c03cc722" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> LsaEmbedder:</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A latent-semantic bi-encoder fit on the local corpus.</span></span>
@@ -1089,7 +1089,7 @@ retired policy in any chunk: False</code></pre>
 <span id="cb6-55"><a href="#cb6-55" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="bu">float</span>(<span class="va">self</span>.embed(a) <span class="op">@</span> <span class="va">self</span>.embed(b))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We L2-normalize every vector, which is not bookkeeping. A dot product on unnormalized vectors mixes in magnitude; after normalization the dot product <em>is</em> the cosine, a bounded similarity in <span class="math inline">[-1, 1]</span>. Now the claim the section is named for: fit the embedder on the corpus and embed five sentences drawn from three topics — subscription cancellation, payment errors, and shipping — then read off the cosine matrix.</p>
-<div id="0f1b5340" class="cell" data-execution_count="6">
+<div id="293aae76" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>embedder <span class="op">=</span> LsaEmbedder(chunks, dim<span class="op">=</span><span class="dv">32</span>)</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>probes <span class="op">=</span> [</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"cancel my annual subscription before it renews"</span>,</span>
@@ -1156,7 +1156,7 @@ Figure&nbsp;14.2: What does it mean for a dense retriever to learn a geometry? T
 {\sum_{j} \exp(q_i^\top d_j / \tau)}.
 \tag{14.2}</span></span></p>
 <p>We can watch it work at toy scale. We take six paraphrase pairs, featurize each side as a bag of content words, project through one learned matrix, and run a few gradient steps of <a href="#eq-ch14-infonce" class="quarto-xref">Equation&nbsp;<span>14.2</span></a> with in-batch negatives — a genuine, if tiny, contrastive trainer.</p>
-<div id="ae433d91" class="cell" data-execution_count="8">
+<div id="c749fdd9" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>pairs <span class="op">=</span> [</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"stop my yearly membership from renewing"</span>,</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>     <span class="st">"cancel the annual subscription before renewal to stop automatic renewal"</span>),</span>
@@ -1250,7 +1250,7 @@ Figure&nbsp;14.3: How is a retrieval geometry learned? Under an in-batch InfoNCE
 </div>
 </div>
 <p>This is why a real embedder can bridge synonyms our tiny LSA model cannot: it has seen “money” and “refund” pushed together across millions of pairs. Follow the chosen model’s training contract when you deploy one, including query and document prefixes such as <code>query:</code> and <code>passage:</code>; an asymmetric search model may encode the two sides differently even when it shares weights. To retrieve with our embedder we hold the corpus vectors and scan them exactly — the baseline any faster index must be measured against.</p>
-<div id="4dbad928" class="cell" data-execution_count="10">
+<div id="80bc4b7d" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> DenseIndex:</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Exact nearest-neighbor search over embeddings; the approximation oracle.</span></span>
@@ -1278,7 +1278,7 @@ Figure&nbsp;14.3: How is a retrieval geometry learned? Under an in-batch InfoNCE
 <span id="cb13-25"><a href="#cb13-25" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> [Hit(<span class="va">self</span>.chunks[i].chunk_id, <span class="va">self</span>.chunks[i].source_id,</span>
 <span id="cb13-26"><a href="#cb13-26" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">float</span>(scores[i])) <span class="cf">for</span> i <span class="kw">in</span> order[:k]]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="1272e6ee" class="cell" data-execution_count="11">
+<div id="62e60646" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>dense <span class="op">=</span> DenseIndex(chunks, embedder)</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> hit <span class="kw">in</span> dense.search(<span class="st">"stop my yearly membership from renewing"</span>, <span class="dv">3</span>):</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>hit<span class="sc">.</span>score<span class="sc">:5.2f}</span><span class="ss">  </span><span class="sc">{</span>hit<span class="sc">.</span>source_id<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1300,7 +1300,7 @@ Figure&nbsp;14.3: How is a retrieval geometry learned? Under an in-batch InfoNCE
 \operatorname{nDCG@k}=\frac{\operatorname{DCG@k}}{\operatorname{IDCG@k}}.
 \tag{14.3}</span></span></p>
 <p>We implement all four — recall, MRR, MAP, and the nDCG of <a href="#eq-ch14-ndcg" class="quarto-xref">Equation&nbsp;<span>14.3</span></a> — without a metrics package, because their disagreements are the lesson.</p>
-<div id="efab7ce6" class="cell" data-execution_count="12">
+<div id="d010c9fe" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> recall_at_k(ranked: Sequence[<span class="bu">str</span>], relevant: <span class="bu">set</span>[<span class="bu">str</span>], k: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Fraction of required sources found by rank k; the downstream ceiling."""</span></span>
@@ -1362,7 +1362,7 @@ Figure&nbsp;14.3: How is a retrieval geometry learned? Under an in-batch InfoNCE
 <span id="cb16-59"><a href="#cb16-59" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> dcg <span class="op">/</span> idcg <span class="cf">if</span> idcg <span class="cf">else</span> <span class="fl">1.0</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Take one ranking whose first relevant item is at rank 1 but whose second is at rank 3. MRR is perfect while recall@2 is only one half, and nDCG with graded gains lands in between. The metrics answer different questions; reporting only one hides the others.</p>
-<div id="5010105f" class="cell" data-execution_count="13">
+<div id="5ebb1206" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>ranked <span class="op">=</span> [<span class="st">"c1"</span>, <span class="st">"c2"</span>, <span class="st">"c3"</span>, <span class="st">"c4"</span>]</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>relevant <span class="op">=</span> {<span class="st">"c1"</span>, <span class="st">"c3"</span>}</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"recall@2 = </span><span class="sc">{</span>recall_at_k(ranked, relevant, <span class="dv">2</span>)<span class="sc">:.2f}</span><span class="ss">"</span></span>
@@ -1390,7 +1390,7 @@ nDCG@4   = 0.96</code></pre>
 {f(t,D)+k_1\left(1-b+b\frac{|D|}{\operatorname{avgdl}}\right)}.
 \tag{14.4}</span></span></p>
 <p><span class="math inline">N</span> is the number of chunks, <span class="math inline">n_t</span> the number containing term <span class="math inline">t</span>, and <span class="math inline">f(t,D)</span> its frequency in chunk <span class="math inline">D</span>. The saturation controlled by <span class="math inline">k_1</span> stops twenty repetitions from counting as twenty independent signals; <span class="math inline">b</span> controls length normalization. The index is small enough to keep fully visible.</p>
-<div id="d8d5b3a3" class="cell" data-execution_count="14">
+<div id="f73ccfe1" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> BM25:</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""An exact BM25 index over chunk title+text, with positive IDF.</span></span>
@@ -1431,7 +1431,7 @@ nDCG@4   = 0.96</code></pre>
 <span id="cb19-38"><a href="#cb19-38" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="bu">sorted</span>(out, key<span class="op">=</span><span class="kw">lambda</span> h: (<span class="op">-</span>h.score, h.chunk_id))[:k]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The corpus was built with a trap: error <code>E1492</code> (a payment timeout) and asset <code>A1492</code> (a conference-room display) share four digits but are distinct tokens. Watch both indexes answer “What does error E1492 mean?”</p>
-<div id="06f7537b" class="cell" data-execution_count="15">
+<div id="bf349827" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>bm25 <span class="op">=</span> BM25(chunks)</span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>query <span class="op">=</span> <span class="st">"What does error E1492 mean?"</span></span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"BM25 top 3:"</span>)</span>
@@ -1528,7 +1528,7 @@ Figure&nbsp;14.5: Why is a bi-encoder a retriever and a cross-encoder a reranker
 s(q,d)=\sum_i \max_j E_{q_i}^{\top}E_{d_j}.
 \tag{14.5}</span></span></p>
 <p>We can compute <a href="#eq-ch14-maxsim" class="quarto-xref">Equation&nbsp;<span>14.5</span></a> on a worked example with tiny hand-set token vectors so the “each query token finds its strongest match” idea is a number, not a claim.</p>
-<div id="4a5211ea" class="cell" data-execution_count="17">
+<div id="dcfbc49b" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>token_vec <span class="op">=</span> {</span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"refund"</span>: np.array([<span class="fl">1.0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>]), <span class="st">"window"</span>: np.array([<span class="fl">0.7</span>, <span class="fl">0.3</span>, <span class="dv">0</span>, <span class="dv">0</span>]),</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"days"</span>: np.array([<span class="fl">0.6</span>, <span class="fl">0.2</span>, <span class="fl">0.2</span>, <span class="dv">0</span>]), <span class="st">"payment"</span>: np.array([<span class="dv">0</span>, <span class="fl">1.0</span>, <span class="dv">0</span>, <span class="dv">0</span>]),</span>
@@ -1553,7 +1553,7 @@ MaxSim vs payment doc: 0.782</code></pre>
 </div>
 <p>The query scores 3.0 against a matching document (each token finds itself) and 0.78 against the payment document — finer than a single-vector comparison, at the cost of a larger index and a specialized search path.</p>
 <p>Dense vectors also cost memory before any index structure is added: for <span class="math inline">V</span> vectors of <span class="math inline">d</span> float32 coordinates, raw storage is <span class="math inline">S = 4Vd</span> bytes. Two techniques shrink it, and both must be measured against the exact baseline <code>DenseIndex</code> supplies. <strong>Matryoshka representation learning</strong> trains information into nested prefixes so one model serves several widths without retraining <span class="citation" data-cites="kusupati2022matryoshka">(<a href="../references.html#ref-kusupati2022matryoshka" role="doc-biblioref">Kusupati et al. 2022</a>)</span>; our SVD gives the same property for free, because its axes are already ordered by importance. We truncate the embedding and re-measure recall on the golden queries.</p>
-<div id="9480473c" class="cell" data-execution_count="18">
+<div id="4840a206" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> unique_sources(hits: Sequence[Hit], k: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">str</span>]:</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Collapse chunks from one source into k distinct source identities.</span></span>
@@ -1577,7 +1577,7 @@ MaxSim vs payment doc: 0.782</code></pre>
 <span id="cb25-21"><a href="#cb25-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> seen</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We load the golden query set once and truncate the embedding to each Matryoshka width, re-measuring recall.</p>
-<div id="f58d0993" class="cell" data-execution_count="19">
+<div id="94b3f8fd" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>gold <span class="op">=</span> load_jsonl(GOLD)</span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>answerable <span class="op">=</span> [g <span class="cf">for</span> g <span class="kw">in</span> gold <span class="cf">if</span> g[<span class="st">"answerable"</span>]]</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1595,7 +1595,7 @@ MaxSim vs payment doc: 0.782</code></pre>
 </div>
 </div>
 <p>Recall is unchanged at half the dimensions (32 and 16 both hit 0.952) and degrades gracefully after (8 → 0.905, 4 → 0.714): the leading axes really do carry the signal. <strong>Quantization</strong> attacks precision instead of width. Binary quantization keeps only the sign of each coordinate, a 32× shrink that enables Hamming-distance search — but it is lossy, so production funnels retrieve with the compressed vectors and re-score the shortlist with float. We measure that loss as ANN recall against the exact top-5.</p>
-<div id="9bb1432d" class="cell" data-execution_count="20">
+<div id="15a79428" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>signs <span class="op">=</span> np.sign(embedder.doc_vectors)</span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>overlaps <span class="op">=</span> []</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> g <span class="kw">in</span> answerable:</span>
@@ -1632,7 +1632,7 @@ storage: float32 128 B/vector  -&gt;  binary 4 B/vector  (32x)</code></pre>
 <p>The online retriever can only rank what the offline path made searchable. If a parser drops a table, a crawler misses an authenticated page, or a retired policy stays active, no embedding dimension repairs it. Treat ingestion as a versioned data product, not a preprocessing script: each source needs a stable identity, a version or effective interval, an active state, a digest, access metadata, and the parser version, because a parser upgrade can change every derived chunk. Access policy propagates to every derivative — no chunk is less restricted than its source, a rule <a href="24-agent-security.html" class="quarto-xref"><span>Chapter 24</span></a> develops into authorization depth.</p>
 <p>Chunking is the hyperparameter that sets the retrieval unit, and the strategies trade the same way: fixed windows are portable but cut semantic units; sentence or paragraph groups preserve prose but vary in length; heading-aware sections keep structure and a breadcrumb title; parser-native units protect tables and code. Overlap keeps a fact with its qualifier across a boundary but duplicates records and can crowd the top ranks with near-identical passages. A small child chunk may retrieve precisely while its larger parent gives the generator enough context — store both identities rather than reconstructing parents from text.</p>
 <p>Short chunks reduce irrelevant context per hit but can lose definitions and headers; long chunks preserve local context but dilute the signal, spend more prompt budget, and return fewer distinct sources. The correct range is empirical, so we sweep it against the harness rather than argue it. We rebuild the sparse and dense indexes at four chunk sizes and measure per-route recall and the token cost each size pushes into the prompt.</p>
-<div id="230300a0" class="cell" data-execution_count="21">
+<div id="8ed3e8fb" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sweep_row(size: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">int</span>, <span class="bu">float</span>, <span class="bu">float</span>, <span class="bu">float</span>]:</span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>    ov <span class="op">=</span> <span class="bu">max</span>(<span class="dv">4</span>, size <span class="op">//</span> <span class="dv">5</span>)</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>    cs <span class="op">=</span> chunk_documents(documents, size, ov)</span>
@@ -1698,7 +1698,7 @@ Figure&nbsp;14.6: Which chunk size is worth its footprint when recall is saturat
 <section id="sec-ch14-hybrid" class="level2" data-number="14.7">
 <h2 data-number="14.7" class="anchored" data-anchor-id="sec-ch14-hybrid"><span class="header-section-number">14.7</span> Hybrid retrieval is a funnel</h2>
 <p>BM25 and dense scores live on different scales — a sum of corpus-dependent term weights versus a bounded cosine — so adding them with a weight invents a calibration problem. <strong>Reciprocal rank fusion</strong> sidesteps it by combining <em>ranks</em>: candidate <span class="math inline">d</span> scores <span class="math inline">\sum_\ell 1/(c+r_\ell(d))</span>, where <span class="math inline">r_\ell(d)</span> is its rank in list <span class="math inline">\ell</span> and a missing item contributes nothing <span class="citation" data-cites="cormack2009rrf">(<a href="../references.html#ref-cormack2009rrf" role="doc-biblioref">Cormack et al. 2009</a>)</span>. It rewards agreement while letting an item that is strong in one list survive, and it needs no comparable scores.</p>
-<div id="1662e38f" class="cell" data-execution_count="23">
+<div id="337227a5" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> rrf_merge(rankings: Sequence[Sequence[Hit]], lookup: <span class="bu">dict</span>[<span class="bu">str</span>, Chunk],</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>              k: <span class="bu">int</span> <span class="op">=</span> <span class="dv">60</span>, limit: <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[Hit]:</span>
@@ -1725,7 +1725,7 @@ Figure&nbsp;14.6: Which chunk size is worth its footprint when recall is saturat
 <span id="cb33-24"><a href="#cb33-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sorted</span>(merged, key<span class="op">=</span><span class="kw">lambda</span> h: (<span class="op">-</span>h.score, h.chunk_id))[:limit]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Fusion by rank is genuinely scale-free: give one list an astronomical score and another a microscopic one, and two items that tie on rank still tie after fusion.</p>
-<div id="64b2ce2a" class="cell" data-execution_count="24">
+<div id="1ffa9350" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>one, two <span class="op">=</span> chunks[<span class="dv">0</span>], chunks[<span class="dv">1</span>]</span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>list_a <span class="op">=</span> [Hit(one.chunk_id, one.source_id, <span class="dv">1_000_000</span>), Hit(two.chunk_id, two.source_id, <span class="op">-</span><span class="dv">9</span>)]</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>list_b <span class="op">=</span> [Hit(two.chunk_id, two.source_id, <span class="fl">0.01</span>), Hit(one.chunk_id, one.source_id, <span class="fl">0.001</span>)]</span>
@@ -1736,7 +1736,7 @@ Figure&nbsp;14.6: Which chunk size is worth its footprint when recall is saturat
 </div>
 </div>
 <p>Before fusing, query understanding repairs observed mismatches — but only observed ones. Conversation condensation restores an elided subject; a small synonym map bridges the true-synonym gaps neither a 27-chunk embedder nor a lexical index can close on its own (“money back” never co-occurs with “refund” in this corpus). Every rewrite can drift, so we keep the original query as one route and cap the variants.</p>
-<div id="7e142f4b" class="cell" data-execution_count="25">
+<div id="1a59915e" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>EXPANSIONS <span class="op">=</span> {</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"money back"</span>: <span class="st">"refund"</span>, <span class="st">"money"</span>: <span class="st">"refund"</span>, <span class="st">"overseas"</span>: <span class="st">"international"</span>,</span>
@@ -1772,7 +1772,7 @@ Figure&nbsp;14.6: Which chunk size is worth its footprint when recall is saturat
 <span id="cb36-33"><a href="#cb36-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> variants</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>After fusion, a reranker spends more compute on the shortlist. Ours is an honest proxy, not a cross-encoder: it scores the pair by content-term overlap, a bonus for a shared literal code, and the embedder’s cosine — enough to reorder a shortlist and to prove the funnel invariant, that reranking can only reorder candidates the retriever supplied, never introduce new ones.</p>
-<div id="4714eb76" class="cell" data-execution_count="26">
+<div id="984162f6" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> pair_score(query: <span class="bu">str</span>, chunk: Chunk, embedder: LsaEmbedder) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A transparent reranking proxy for a cross-encoder over a shortlist.</span></span>
@@ -1843,7 +1843,7 @@ Figure&nbsp;14.7: Why does candidate recall bound everything downstream? Each st
 </div>
 </div>
 <p>We wire the stages into one retriever object and a factory that builds it from chunks.</p>
-<div id="ab2f5d69" class="cell" data-execution_count="27">
+<div id="8013088e" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span></span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> HybridRetriever:</span>
@@ -1880,7 +1880,7 @@ Figure&nbsp;14.7: Why does candidate recall bound everything downstream? Each st
 <span id="cb38-34"><a href="#cb38-34" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> HybridRetriever(BM25(chunks), DenseIndex(chunks, embedder), embedder, lookup)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the two hard cases become visible program traces. The rare-code query rides the sharp BM25 signal through fusion and the reranker keeps it first; the elided follow-up is condensed from its history before either index sees it.</p>
-<div id="4153766e" class="cell" data-execution_count="28">
+<div id="4bd11a6b" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>retriever <span class="op">=</span> build_retriever(chunks)</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>fused, final <span class="op">=</span> retriever.retrieve(<span class="st">"What does error E1492 mean?"</span>)</span>
@@ -1914,7 +1914,7 @@ ellipsis reranked #1: cancel-annual-v4</code></pre>
 <section id="sec-ch14-grounding" class="level2" data-number="14.8">
 <h2 data-number="14.8" class="anchored" data-anchor-id="sec-ch14-grounding"><span class="header-section-number">14.8</span> Ground, cite, abstain, and evaluate</h2>
 <p>Retrieval ends with ranked objects; generation begins with serialized evidence, and the boundary needs a contract. Evidence units retain source ID and version, retrieved text is labelled as data rather than instructions, chunks are admitted whole under a budget, and the generator is told what to do when support is absent. The assembler enforces the structure in code: it emits <code>&lt;source&gt;</code> blocks with provenance and never splits a chunk to fit a budget.</p>
-<div id="2cef8551" class="cell" data-execution_count="29">
+<div id="76c8b4b9" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> assemble_context(hits: Sequence[Hit], lookup: <span class="bu">dict</span>[<span class="bu">str</span>, Chunk],</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>                     budget: <span class="bu">int</span> <span class="op">=</span> <span class="dv">220</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
@@ -1945,7 +1945,7 @@ ellipsis reranked #1: cancel-annual-v4</code></pre>
 <span id="cb41-28"><a href="#cb41-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"</span><span class="ch">\n</span><span class="st">"</span>.join(blocks)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>That assembled context feeds a real generator under a short grounding contract — answer only from the sources, cite each claim, abstain when unsupported, and treat retrieved text as data, never instructions. The cell below issues exactly that request against any OpenAI-compatible endpoint. It needs a network and a served model, so it does not run in the book; the block after it shows a representative grounded response of the shape such an endpoint returns.</p>
-<div id="41a37b23" class="cell" data-execution_count="30">
+<div id="d11d1b09" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> httpx</span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>_, e1492_hits <span class="op">=</span> retriever.retrieve(<span class="st">"What does error E1492 mean?"</span>)</span>
@@ -1972,7 +1972,7 @@ Error E1492 means the payment gateway timed out before returning a final
 authorization result. Do not resubmit the charge; wait 60 seconds and check the
 payment activity once. [error-e1492-v5:0:6d23b936]</code></pre>
 <p>A grounded answer must be <em>supported</em>, and support is not the same as a valid-looking citation. We separate three checks: <strong>validity</strong> (does the cited ID exist?), <strong>support</strong> (does that source actually state the claim?), and <strong>completeness</strong> (are all material claims supported?). An answer can pass validity while failing support — “Refunds are instant and unlimited <code>[refund-us-v3]</code>” names a real source whose text says no such thing. Abstention closes the loop: when the retrieved evidence does not support an answer, the system returns <code>INSUFFICIENT_EVIDENCE</code> rather than inventing one. We gate on an IDF-weighted support score — how much distinctive query vocabulary the best chunk actually contains. To keep the harness deterministic and every metric reproducible, the offline answerer is extractive rather than a live model: it returns the retrieved sentence with the most query overlap, cited by chunk id, or takes the abstention path. It stands in for the real generator above; the grounding, support, and abstention contract around it is identical.</p>
-<div id="20fbf0f7" class="cell" data-execution_count="31">
+<div id="1d3432e7" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> support_score(query: <span class="bu">str</span>, hits: Sequence[Hit], lookup: <span class="bu">dict</span>[<span class="bu">str</span>, Chunk],</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>                  bm25: BM25) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
@@ -2056,7 +2056,7 @@ payment activity once. [error-e1492-v5:0:6d23b936]</code></pre>
 <span id="cb44-81"><a href="#cb44-81" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">float</span>(<span class="bu">any</span>(claim.rstrip(<span class="st">"."</span>) <span class="kw">in</span> lookup[c].text.lower().rstrip(<span class="st">"."</span>) <span class="cf">for</span> c <span class="kw">in</span> cited))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The hallucinating-citer case is worth seeing run. A truthfully-extracted answer supports its citation; a fabricated claim wearing the same valid ID does not.</p>
-<div id="6016b499" class="cell" data-execution_count="32">
+<div id="11f03330" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb45"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>_, final <span class="op">=</span> retriever.retrieve(<span class="st">"What does error E1492 mean?"</span>)</span>
 <span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a>answer <span class="op">=</span> answer_or_abstain(<span class="st">"What does error E1492 mean?"</span>, final, lookup, bm25)</span>
 <span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"answer:"</span>, answer[<span class="st">"answer"</span>][:<span class="dv">78</span>], <span class="st">"..."</span>)</span>
@@ -2070,7 +2070,7 @@ fake citation support: 0.0</code></pre>
 </div>
 </div>
 <p>Abstention is where the fixture stops being flattering, and that is the lesson. Four negatives — a weekend phone number, the headquarters, a HIPAA certification, gift-card expiry — have no answer in the corpus and must abstain. But some genuine questions have low lexical overlap with their answer too: “money back” resolves to <code>refund</code> and shares one strong term with its policy, exactly like a spurious one-word match. No single threshold separates them. We sweep it and watch the risk–coverage trade directly.</p>
-<div id="ea4749ce" class="cell" data-execution_count="33">
+<div id="117bf04c" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>negatives <span class="op">=</span> [g <span class="cf">for</span> g <span class="kw">in</span> gold <span class="cf">if</span> <span class="kw">not</span> g[<span class="st">"answerable"</span>]]</span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"thr   coverage   false-abstain   false-answer(neg)"</span>)</span>
 <span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> threshold <span class="kw">in</span> (<span class="fl">2.5</span>, <span class="fl">3.5</span>, <span class="fl">4.5</span>):</span>
@@ -2096,7 +2096,7 @@ fake citation support: 0.0</code></pre>
 </div>
 <p>At a low threshold every real question is answered but three of the four negatives slip through; raise it to catch all four and two genuine answers (“money back” → refund, “single sign-on” → SSO) are sacrificed. There is no threshold that gets all twenty-five right, because a low-overlap true match and a spurious one are indistinguishable to a lexical score. That is precisely why abstention belongs on a <em>calibrated</em> confidence signal and an explicit risk–coverage curve chosen from business costs, the machinery <a href="09-inference-behavior.html" class="quarto-xref"><span>Chapter 9</span></a> develops — not a hand-tuned constant. We operate at 3.5, catching every negative.</p>
 <p>With the answer path built, we evaluate retrieval and generation <em>separately</em>, because an end-to-end score cannot localize a failure. RAGAS-class evaluation decomposes an answer into claims and checks each against the retrieved context; a basic <strong>faithfulness</strong> rate is the supported fraction <span class="citation" data-cites="es2024ragas">(<a href="../references.html#ref-es2024ragas" role="doc-biblioref">Es et al. 2023</a>)</span>.</p>
-<div id="628e8468" class="cell" data-execution_count="34">
+<div id="02c0b294" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> decompose_claims(answer: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">str</span>]:</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Split an answer into checkable claim sentences, dropping the citation."""</span></span>
@@ -2132,7 +2132,7 @@ fake citation support: 0.0</code></pre>
 <span id="cb49-33"><a href="#cb49-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(claim_supported(c, context_text) <span class="cf">for</span> c <span class="kw">in</span> claims) <span class="op">/</span> <span class="bu">len</span>(claims)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The decomposition earns its keep when an answer is partly wrong: a fully-supported answer scores 1.0, and appending one unsupported sentence drops it to 0.5 — the metric points at the sentence, not just the answer.</p>
-<div id="c37ca9b1" class="cell" data-execution_count="35">
+<div id="56f74e22" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>context <span class="op">=</span> assemble_context(final, lookup)</span>
 <span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a>grounded <span class="op">=</span> <span class="st">"Error code E1492 means the payment gateway timed out before returning a result."</span></span>
 <span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"faithfulness (grounded):"</span>, <span class="bu">round</span>(faithfulness(grounded, context), <span class="dv">2</span>))</span>
@@ -2144,7 +2144,7 @@ faithfulness (+1 false claim): 0.5</code></pre>
 </div>
 </div>
 <p>Now the whole harness. <code>evaluate_pipeline</code> runs every answerable query through the funnel, records each route’s ranking, and computes the stage-local metrics; the diagnostic order in <a href="#fig-ch14-diagnostic-eval" class="quarto-xref">Figure&nbsp;<span>14.8</span></a> says which controlled substitution localizes a failure with the fewest guesses.</p>
-<div id="3ca0b41c" class="cell" data-execution_count="36">
+<div id="451e92cc" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb52"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> token_f1(answer: <span class="bu">str</span>, reference: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A transparent lexical answer-similarity proxy for the offline harness.</span></span>
@@ -2234,7 +2234,7 @@ faithfulness (+1 false claim): 0.5</code></pre>
 <span id="cb52-87"><a href="#cb52-87" aria-hidden="true" tabindex="-1"></a>        },</span>
 <span id="cb52-88"><a href="#cb52-88" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="5b38748c" class="cell" data-execution_count="37">
+<div id="6d873079" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a>report <span class="op">=</span> evaluate_pipeline(documents, gold)</span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"Route      recall@5   MRR   MAP@5  nDCG@5"</span>)</span>
 <span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name <span class="kw">in</span> (<span class="st">"bm25"</span>, <span class="st">"dense"</span>, <span class="st">"hybrid"</span>, <span class="st">"reranked"</span>):</span>
@@ -2285,7 +2285,7 @@ Figure&nbsp;14.8: Which controlled substitution localizes a failed RAG answer wi
 </div>
 <p>These numbers validate code invariants, not product quality: the corpus is synthetic, the dense and reranking mechanisms are deterministic proxies, each positive has one relevant source, and support is literal containment. The report is valuable because those limits are explicit and because the stages disagree in interpretable ways. A failure taxonomy should end in an owner and an experiment — categories such as source missing, wrong version, parser loss, candidate miss, reranker drop, budget eviction, unsupported synthesis, incomplete synthesis, and false abstention — recording the <em>first</em> failed boundary rather than every downstream symptom <span class="citation" data-cites="barnett2024sevenfailures">(<a href="../references.html#ref-barnett2024sevenfailures" role="doc-biblioref">Barnett et al. 2024</a>)</span>.</p>
 <p>Finally, the report is reproducible: the same inputs produce the same numbers, which is what lets a regression be attributed to a change rather than to noise.</p>
-<div id="2e98f8a1" class="cell" data-execution_count="38">
+<div id="507e72b9" class="cell" data-execution_count="38">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb55"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"deterministic:"</span>, evaluate_pipeline(documents, gold) <span class="op">==</span> evaluate_pipeline(documents, gold))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>deterministic: True</code></pre>

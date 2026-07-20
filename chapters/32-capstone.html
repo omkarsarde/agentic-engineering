@@ -843,7 +843,7 @@ window.Quarto = {
 <section id="sec-ch32-contract" class="level2" data-number="32.1">
 <h2 data-number="32.1" class="anchored" data-anchor-id="sec-ch32-contract"><span class="header-section-number">32.1</span> The contract and the task suite</h2>
 <p>Measurement must begin before rung 0. If the definition of success changes while the system grows, every comparison is contaminated — each new capability changes both the system and the test. So we first freeze an <strong>evaluation contract</strong> in the sense of <a href="22-evaluation.html" class="quarto-xref"><span>Chapter 22</span></a>: a fixed population of tasks, a grader whose predicates are conjunctive, and the axes every configuration will be scored on. One deliberate choice deserves emphasis: the contract includes the write-back requirement <em>from the start</em>, even though no rung below 7 can satisfy it. Rungs are configurations of one system scored against one bar, not eight systems with eight bars.</p>
-<div id="c1e90a12" class="cell" data-execution_count="1">
+<div id="f8bc4464" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -884,7 +884,7 @@ window.Quarto = {
 <span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> module</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>That loader is the chapter’s thesis in code: the capstone assembles finished artifacts. Next, the unit of evaluation. One task is a support ticket, and the ground truth travels with it — the intent the reply must carry, the exact fact the draft must contain when one is required, whether the correct behavior is to answer or to escalate to a human, and whether success requires a durable note written back to the ticket system.</p>
-<div id="f0d290c2" class="cell" data-execution_count="2">
+<div id="81d72cf3" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Ticket:</span>
@@ -921,7 +921,7 @@ window.Quarto = {
 <span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>    write_required: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The suite itself is engineered so that each capability layer has a measurable job waiting for it. Six tickets phrase their problem so conversationally that a freeform reply buries the classification; twelve need a fact that lives in the knowledge base; three use internal codenames that only a glossary passage can resolve; three ask for information the requester is not cleared to see, so the correct behavior is escalation; one asks about a live outage; two ask about things the knowledge base never documented; nine require a durable note. The rest are plain. Nothing in the runner is allowed to read these ground-truth fields — they exist for the grader alone.</p>
-<div id="54d927d3" class="cell" data-execution_count="3">
+<div id="bcb43ccc" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> build_suite() <span class="op">-&gt;</span> <span class="bu">list</span>[Ticket]:</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Build the fixed 50-ticket evaluation suite the whole ladder is scored on.</span></span>
@@ -1039,7 +1039,7 @@ window.Quarto = {
 <span id="cb3-115"><a href="#cb3-115" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> tickets</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Fifty tickets, mixed on purpose:</p>
-<div id="43876b35" class="cell" data-execution_count="4">
+<div id="5b97406f" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>tickets <span class="op">=</span> build_suite()</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">len</span>(tickets), <span class="st">"tickets:"</span>, <span class="bu">dict</span>(Counter(t.kind <span class="cf">for</span> t <span class="kw">in</span> tickets)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1048,7 +1048,7 @@ window.Quarto = {
 </div>
 <p>Every configuration is scored on five axes, in the same units at every rung. <strong>Task success</strong> is the fraction of trials that pass every grader predicate — and the predicates are conjunctive, so a polite draft with the wrong classification fails, a correct answer that should have been an escalation fails, and a perfect reply whose required write never landed fails. One axis is never allowed to launder another. <strong>Latency</strong> is modeled p95 task time from the declared service-time table. <strong>Cost</strong> is modeled dollars per task: tokens at a declared price plus per-call tool charges — cost per <em>task</em>, not per API call, because retries and extra turns bill the same meter. <strong>Attack surface</strong> is a count of named trust edges, enumerated rather than scored, because every edge is a sentence a threat model must answer (<a href="24-agent-security.html" class="quarto-xref"><span>Chapter 24</span></a>). <strong>Operator burden</strong> is human actions per 100 tasks: approvals plus escalations plus stuck-run reviews. Two axes we consciously delegate: repeated-run reliability — the pass-to-the-<span class="math inline">k</span> discipline that τ-bench introduced <span class="citation" data-cites="yao2024taubench">(<a href="../references.html#ref-yao2024taubench" role="doc-biblioref"><span class="nocase">Yao et al.</span> 2024</a>)</span> — degenerates on a deterministic fixture, so it stays with <a href="22-evaluation.html" class="quarto-xref"><span>Chapter 22</span></a> where the statistics live; and the energy estimate a real review carries belongs to Chapter 28’s accounting. A real capstone reports both.</p>
 <p>Here is the grader. It is the contract made executable, and it is deliberately boring.</p>
-<div id="f5b21c54" class="cell" data-execution_count="5">
+<div id="9a59377a" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Trial:</span>
@@ -1104,7 +1104,7 @@ window.Quarto = {
 <section id="sec-ch32-stub" class="level2" data-number="32.2">
 <h2 data-number="32.2" class="anchored" data-anchor-id="sec-ch32-stub"><span class="header-section-number">32.2</span> A model that is a visible script</h2>
 <p>d2l-style chapters earn trust by showing the run, and a run is only honest if you can see what produced it. Our model is therefore a script: a deterministic function whose every rule is on the page. It classifies by keyword, resolves internal codenames only when the glossary passage is actually in front of it, includes a fact only when some retrieved chunk or status line actually contains it — and when it has no evidence for a fact-seeking ticket, it fabricates a confident, uncited figure. That last rule is the important one. A stub that never hallucinates would flatter every rung; ours misbehaves in exactly the way the surrounding architecture must catch.</p>
-<div id="c6fa0831" class="cell" data-execution_count="6">
+<div id="581ebbbf" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>INTENT_KEYWORDS <span class="op">=</span> {</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"billing"</span>: (<span class="st">"invoice"</span>, <span class="st">"charge"</span>, <span class="st">"billing"</span>, <span class="st">"refund"</span>, <span class="st">"credit"</span>, <span class="st">"card"</span>,</span>
@@ -1145,7 +1145,7 @@ window.Quarto = {
 <span id="cb7-38"><a href="#cb7-38" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"general"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The reply generator adds the two behaviors the ladder will fight with: fabrication when evidence is missing, and — for the six conversational tickets — a freeform reply that buries the classification mid-sentence unless a schema is demanded. A <code>strict</code> reformat request is honored only for even-numbered tickets, which models a model that complies with format reminders about half the time.</p>
-<div id="22214adc" class="cell" data-execution_count="7">
+<div id="e16bf807" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> stub_reply(ticket: Ticket, evidence: <span class="bu">list</span>, status_note: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span>,</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>               structured: <span class="bu">bool</span>, strict: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
@@ -1193,7 +1193,7 @@ window.Quarto = {
 <span id="cb8-45"><a href="#cb8-45" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="ss">f"intent: </span><span class="sc">{</span>intent<span class="sc">}</span><span class="ch">\n</span><span class="sc">{</span>draft<span class="sc">}</span><span class="ch">\n</span><span class="ss">sources: </span><span class="sc">{</span><span class="st">', '</span><span class="sc">.</span>join(sources) <span class="kw">or</span> <span class="st">'none'</span><span class="sc">}</span><span class="ss">"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The harness needs to turn raw output into a routable result, so we pair the script with a parser. The freeform path is brittle on purpose — it accepts only replies that lead with an <code>intent:</code> line, which is exactly what the burying tickets defeat.</p>
-<div id="9e56b5eb" class="cell" data-execution_count="8">
+<div id="72a57e7c" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> parse_reply(raw: <span class="bu">str</span>, structured: <span class="bu">bool</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">bool</span>, <span class="bu">str</span>, <span class="bu">str</span>, <span class="bu">list</span>[<span class="bu">str</span>]]:</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Parse the model output into ``(parsed, intent, draft, sources)``.</span></span>
@@ -1224,7 +1224,7 @@ window.Quarto = {
 <span id="cb9-28"><a href="#cb9-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">True</span>, match.group(<span class="dv">1</span>), match.group(<span class="dv">2</span>).strip(), sources</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Watch both behaviors once before we measure anything. A plain ticket parses; a burying ticket defeats the parser; a fact-seeking ticket with no evidence produces a confident fabrication with an empty source list.</p>
-<div id="86f81443" class="cell" data-execution_count="9">
+<div id="b20a5529" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>plain_reply <span class="op">=</span> stub_reply(tickets[<span class="dv">0</span>], [], <span class="va">None</span>, structured<span class="op">=</span><span class="va">False</span>)</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>buried_reply <span class="op">=</span> stub_reply(tickets[<span class="dv">16</span>], [], <span class="va">None</span>, structured<span class="op">=</span><span class="va">False</span>)</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(plain_reply.splitlines()[<span class="dv">0</span>], <span class="st">"| parsed:"</span>, parse_reply(plain_reply, <span class="va">False</span>)[<span class="dv">0</span>])</span>
@@ -1238,7 +1238,7 @@ Happy to dig in. I have flagged this on our side; reply with what you see  | par
 </div>
 <p>That last line is the one to remember: a typed, fluent, well-formed answer whose figure came from nowhere. Schema validity is not semantic correctness, and no later layer gets to forget it.</p>
 <p>Finally, the meter. Latency and cost are modeled from declared constants — a service-time table, a price per token, and per-call tool charges — with a deterministic per-ticket jitter so percentiles are not degenerate. These constants are illustrative, not vendor quotes; what matters is that every rung is billed by the same meter.</p>
-<div id="0d3fc30a" class="cell" data-execution_count="10">
+<div id="a7f5eae9" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>PRICE_IN <span class="op">=</span> <span class="fl">3.00</span> <span class="op">/</span> <span class="dv">1_000_000</span>    <span class="co"># USD per input token (illustrative constant)</span></span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>PRICE_OUT <span class="op">=</span> <span class="fl">15.00</span> <span class="op">/</span> <span class="dv">1_000_000</span>  <span class="co"># USD per output token</span></span>
@@ -1265,7 +1265,7 @@ Happy to dig in. I have flagged this on our side; reply with what you see  | par
 <section id="sec-ch32-rung0" class="level2" data-number="32.3">
 <h2 data-number="32.3" class="anchored" data-anchor-id="sec-ch32-rung0"><span class="header-section-number">32.3</span> Rung 0: one model call, measured</h2>
 <p>A rung is a configuration, so we make configurations first-class data. Seven boolean layers give us the whole ladder, and — later — every ablation, as values of one type.</p>
-<div id="26f15721" class="cell" data-execution_count="11">
+<div id="f3912e6c" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> LayerConfig:</span>
@@ -1297,7 +1297,7 @@ Happy to dig in. I have flagged this on our side; reply with what you see  | par
 <span id="cb13-29"><a href="#cb13-29" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The attack-surface axis needs a definition before the first measurement, and we refuse to make it a score. It is an enumeration of named trust edges — each one a sentence the threat model must answer. Two observations are baked into the function and worth saying in prose: schema validation and the deterministic workflow add <em>no</em> edges, because they constrain flows that already exist; every layer that adds reach — retrieval, tools, looping, persistence, writes — adds exactly the edges you would have to defend in review.</p>
-<div id="aea40eee" class="cell" data-execution_count="12">
+<div id="b3864c35" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> attack_edges(config: LayerConfig) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">str</span>]:</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Enumerate the named trust edges this configuration exposes.</span></span>
@@ -1333,7 +1333,7 @@ Happy to dig in. I have flagged this on our side; reply with what you see  | par
 <span id="cb14-33"><a href="#cb14-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> edges</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>One row of the ladder is a <code>RungReport</code>: the five axes in fixed units, validated on construction so malformed evidence cannot enter the review.</p>
-<div id="c4a0b2fe" class="cell" data-execution_count="13">
+<div id="1c4137cf" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> RungReport:</span>
@@ -1381,7 +1381,7 @@ Happy to dig in. I have flagged this on our side; reply with what you see  | par
 <span id="cb15-45"><a href="#cb15-45" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> <span class="va">self</span>.interventions_per_100)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the runner. It knows the whole ladder’s shape — retrieval, status lookup, loop, memory, gated write — but each layer’s implementation arrives in the section that teaches it; Python resolves the stage functions at call time, and a disabled layer costs nothing and adds nothing. That property is the whole method: it is what makes rung-to-rung deltas attributable to one change.</p>
-<div id="ca7cfd3d" class="cell" data-execution_count="14">
+<div id="e769212d" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> run_ticket(ticket: Ticket, config: LayerConfig, world: <span class="bu">dict</span>) <span class="op">-&gt;</span> Trial:</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Run one ticket through whichever layers the configuration wires in.</span></span>
@@ -1485,7 +1485,7 @@ Happy to dig in. I have flagged this on our side; reply with what you see  | par
 <span id="cb16-101"><a href="#cb16-101" aria-hidden="true" tabindex="-1"></a>                 escalated, approvals, interventions)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Two small pieces finish the harness: <code>make_world</code> builds only the shared state the active layers need, fresh for every run, and <code>run_suite</code> aggregates fifty trials into one report row.</p>
-<div id="aeef46ca" class="cell" data-execution_count="15">
+<div id="8585d3a0" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_world(config: LayerConfig) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Build the per-run shared state each enabled layer needs, fresh every run.</span></span>
@@ -1539,7 +1539,7 @@ Happy to dig in. I have flagged this on our side; reply with what you see  | par
 <span id="cb17-51"><a href="#cb17-51" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> report, trials</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Rung 0 needs none of the missing layers, so we can measure it now. One formatting helper keeps every row identical for the rest of the chapter.</p>
-<div id="fc695ff6" class="cell" data-execution_count="16">
+<div id="9c06503f" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> row(r: RungReport) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (<span class="ss">f"</span><span class="sc">{</span>r<span class="sc">.</span>rung<span class="sc">:15s}</span><span class="ss"> success </span><span class="sc">{</span>r<span class="sc">.</span>task_success<span class="sc">:.2f}</span><span class="ss">  p95 </span><span class="sc">{</span>r<span class="sc">.</span>p95_latency_ms<span class="sc">:6.0f}</span><span class="ss"> ms"</span></span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>            <span class="ss">f"  cost $</span><span class="sc">{</span>r<span class="sc">.</span>cost_per_task_usd<span class="sc">:.6f}</span><span class="ss">  edges </span><span class="sc">{</span>r<span class="sc">.</span>attack_edges<span class="sc">:2d}</span><span class="ss">"</span></span>
@@ -1562,7 +1562,7 @@ failures: {'unparseable-reply': 6, 'ungrounded-draft': 13, 'wrong-intent': 3, 's
 <h2 data-number="32.4" class="anchored" data-anchor-id="sec-ch32-lower"><span class="header-section-number">32.4</span> Constrain and ground: schema, retrieval, a read tool, a workflow</h2>
 <p>The lower half of the ladder answers a practical question: how far does constraining and grounding a model go before anything resembling agency is on the table?</p>
 <p><strong>Rung 1: structured output.</strong> One flag flips: the harness demands schema JSON and the parser validates it. The six burying tickets stop failing, because the enforceable boundary — not better prose — is what downstream code can rely on.</p>
-<div id="98ecc499" class="cell" data-execution_count="17">
+<div id="38ec2e5f" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>report1, trials1 <span class="op">=</span> run_suite(<span class="op">*</span>RUNGS[<span class="dv">1</span>], tickets)</span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>ladder.append(report1)<span class="op">;</span> trial_log[report1.rung] <span class="op">=</span> trials1</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(report1))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1572,7 +1572,7 @@ failures: {'unparseable-reply': 6, 'ungrounded-draft': 13, 'wrong-intent': 3, 's
 </div>
 <p>Twelve points, for a fraction of a cent of extra output tokens and no new attack edges. Remember the fabrication demo, though: schema-valid can still be semantically wrong, and thirteen drafts still fail grounding.</p>
 <p><strong>Rung 2: permission-aware retrieval.</strong> The knowledge base is seven small documents, two of them internal-only. We reuse the machinery of <a href="14-embeddings-rag.html" class="quarto-xref"><span>Chapter 14</span></a> as committed — <code>Document</code>, <code>chunk_documents</code>, <code>BM25</code> — and enforce authorization <em>before</em> ranking by building one index per clearance level, so an unauthorized chunk can never appear in a ranked list. Post-filtering results, <a href="24-agent-security.html" class="quarto-xref"><span>Chapter 24</span></a> taught, is how cross-tenant leaks happen.</p>
-<div id="dd807d20" class="cell" data-execution_count="18">
+<div id="5d117598" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>ch14 <span class="op">=</span> load_chapter_module(<span class="st">"ch14"</span>, <span class="st">"ch14_rag"</span>)</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1644,7 +1644,7 @@ failures: {'unparseable-reply': 6, 'ungrounded-draft': 13, 'wrong-intent': 3, 's
 <span id="cb22-69"><a href="#cb22-69" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [lookup[hit.chunk_id] <span class="cf">for</span> hit <span class="kw">in</span> index.search(ticket.text, k)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The filter is clearance-driven, not document-driven — the same query returns different worlds to different requesters:</p>
-<div id="536c9fac" class="cell" data-execution_count="19">
+<div id="bc326dab" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>indexes <span class="op">=</span> build_indexes()</span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>probe <span class="op">=</span> replace(tickets[<span class="dv">0</span>], text<span class="op">=</span><span class="st">"staging VPN key rotation schedule"</span>)</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"public  :"</span>, [c.source_id <span class="cf">for</span> c <span class="kw">in</span> acl_search(probe, indexes)])</span>
@@ -1655,14 +1655,14 @@ internal: ['kb-vpn', 'kb-sso']</code></pre>
 </div>
 </div>
 <p>And the fabrication from <a href="#sec-ch32-stub" class="quarto-xref"><span>Section 32.2</span></a> becomes a grounded, cited answer the moment the right chunk is in front of the script:</p>
-<div id="cb846d76" class="cell" data-execution_count="20">
+<div id="c317d073" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>doc_ticket <span class="op">=</span> <span class="bu">next</span>(t <span class="cf">for</span> t <span class="kw">in</span> tickets <span class="cf">if</span> t.kind <span class="op">==</span> <span class="st">"doc"</span>)</span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(stub_reply(doc_ticket, acl_search(doc_ticket, indexes), <span class="va">None</span>, structured<span class="op">=</span><span class="va">True</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>{"intent": "export", "urgency": "normal", "draft": "Per our documentation, 250 GB applies here [per kb-plans].", "sources": ["kb-plans"]}</code></pre>
 </div>
 </div>
-<div id="e3b3b043" class="cell" data-execution_count="21">
+<div id="5842a1a6" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>report2, trials2 <span class="op">=</span> run_suite(<span class="op">*</span>RUNGS[<span class="dv">2</span>], tickets)</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>ladder.append(report2)<span class="op">;</span> trial_log[report2.rung] <span class="op">=</span> trials2</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(report2))</span>
@@ -1674,13 +1674,13 @@ failures: {'ungrounded-draft': 3, 'should-have-escalated': 3, 'no-durable-write'
 </div>
 <p>Twenty-six more points — the largest single gain on the ladder — and the first security payment: the edge count doubles, because retrieved document text now reaches model instructions, the canonical indirect-injection channel <span class="citation" data-cites="greshake2023injection">(<a href="../references.html#ref-greshake2023injection" role="doc-biblioref">Greshake et al. 2023</a>)</span>, and the query now crosses a tenant boundary. Note also what retrieval did <em>not</em> fix: the two <code>gap</code> tickets still fail, because retrieval cannot ground what the corpus never contained, and the three <code>internal</code> tickets are still answered with fabrications instead of escalated. Grounding is not judgment.</p>
 <p><strong>Rung 3: one read-only tool.</strong> A status-page lookup, stubbed and visible, wired without any routing logic yet — at this rung there is no workflow to decide <em>when</em> to call it, so the harness calls it on every request. That naivety is measured, not hidden.</p>
-<div id="3f1b32bb" class="cell" data-execution_count="22">
+<div id="b052f99f" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> status_service(service: <span class="bu">str</span> <span class="op">=</span> <span class="st">"sync"</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The one read-only tool: a stub status page with a fixed answer."""</span></span>
 <span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="ss">f"status:</span><span class="sc">{</span>service<span class="sc">}</span><span class="ss"> operational since 14:20 UTC (incident INC-88 resolved)"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="74d12cca" class="cell" data-execution_count="23">
+<div id="35825253" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>report3, trials3 <span class="op">=</span> run_suite(<span class="op">*</span>RUNGS[<span class="dv">3</span>], tickets)</span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>ladder.append(report3)<span class="op">;</span> trial_log[report3.rung] <span class="op">=</span> trials3</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(report3))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1690,7 +1690,7 @@ failures: {'ungrounded-draft': 3, 'should-have-escalated': 3, 'no-durable-write'
 </div>
 <p>One ticket gained, two points — and p95 jumps 260 ms because all fifty tickets now wait on a status call that one of them needed, two more edges appear, and cost ticks up. Hold that thought; the tool’s fate is decided in <a href="#sec-ch32-ablation" class="quarto-xref"><span>Section 32.7</span></a>.</p>
 <p><strong>Rung 4: deterministic workflow.</strong> Application code now owns the sequence: the status lookup runs only when outage language is present (a code predicate, not a model choice), a failed parse triggers one strict-format retry, and — the load-bearing part — a policy gate checks every draft before delivery. The gate is two rules of plain code: an uncited figure does not ship, and a citation to a source the model was never shown does not ship. Refusal means escalation to a human, never silent delivery.</p>
-<div id="2c8a5e8a" class="cell" data-execution_count="24">
+<div id="125b907d" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> policy_check(draft: <span class="bu">str</span>, sources: <span class="bu">list</span>[<span class="bu">str</span>], evidence: <span class="bu">list</span>,</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>                 status_note: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">bool</span>, <span class="bu">str</span>]:</span>
@@ -1722,7 +1722,7 @@ failures: {'ungrounded-draft': 3, 'should-have-escalated': 3, 'no-durable-write'
 <span id="cb32-29"><a href="#cb32-29" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">False</span>, <span class="st">"uncited factual claim"</span></span>
 <span id="cb32-30"><a href="#cb32-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">True</span>, <span class="st">"ok"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="4e22bf3c" class="cell" data-execution_count="25">
+<div id="cb64bea0" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>report4, trials4 <span class="op">=</span> run_suite(<span class="op">*</span>RUNGS[<span class="dv">4</span>], tickets)</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>ladder.append(report4)<span class="op">;</span> trial_log[report4.rung] <span class="op">=</span> trials4</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(report4))</span>
@@ -1738,7 +1738,7 @@ failures: {'escalated-supported-task': 2, 'no-durable-write': 9}</code></pre>
 <h2 data-number="32.5" class="anchored" data-anchor-id="sec-ch32-upper"><span class="header-section-number">32.5</span> Adaptive loop and memory: where capability stops paying</h2>
 <p>Everything below rung 5 was code deciding the sequence. The next two rungs hand decisions to the model — first the <em>sequence</em> (an adaptive loop), then <em>state</em> (persistent memory). On open-ended work, <a href="16-agent-anatomy.html" class="quarto-xref"><span>Chapter 16</span></a> showed why model-directed sequencing wins. This workload is about to disagree, and the disagreement is the lesson.</p>
 <p><strong>Rung 5: the adaptive loop.</strong> We import Chapter 16’s loop exactly as committed — <code>run_agent</code>, <code>ToolSpec</code>, <code>ScriptedModel</code>, the typed stops — and give the model two read-only tools. Because every component here is deterministic, we can script the loop model’s turns precisely: search, optionally check status, answer. Two tickets are scripted to spin, re-issuing the same search until the turn ceiling fires, because a loop that cannot fail to terminate teaches nothing about why the ceiling exists.</p>
-<div id="7475f75b" class="cell" data-execution_count="26">
+<div id="39fa6101" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>ch16 <span class="op">=</span> load_chapter_module(<span class="st">"ch16"</span>, <span class="st">"ch16_loop"</span>)</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1811,7 +1811,7 @@ failures: {'escalated-supported-task': 2, 'no-durable-write': 9}</code></pre>
 <span id="cb35-70"><a href="#cb35-70" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ch16.ScriptedModel(turns)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The stage that runs a ticket under the loop reads its token spend off the loop’s own prompt log, so the cost of transcript growth is measured, not assumed. A run that hits the turn ceiling falls back to the deterministic path: the answer is preserved, the wasted spend is billed, and the stuck transcript is flagged for an operator.</p>
-<div id="52964c3a" class="cell" data-execution_count="27">
+<div id="454df633" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> stage_loop(ticket: Ticket, config: LayerConfig, world: <span class="bu">dict</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>:</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Run one ticket under the @sec-ch16 adaptive loop and measure what it spent.</span></span>
@@ -1853,7 +1853,7 @@ failures: {'escalated-supported-task': 2, 'no-durable-write': 9}</code></pre>
 <span id="cb36-39"><a href="#cb36-39" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> parsed, intent, draft, sources, latency, cost, <span class="va">False</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Here is one loop run in full — the outage ticket, which genuinely uses both tools:</p>
-<div id="5531cc91" class="cell" data-execution_count="28">
+<div id="a43ed960" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>status_ticket <span class="op">=</span> <span class="bu">next</span>(t <span class="cf">for</span> t <span class="kw">in</span> tickets <span class="cf">if</span> t.kind <span class="op">==</span> <span class="st">"status"</span>)</span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>result <span class="op">=</span> ch16.run_agent(status_ticket.text,</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>                        scripted_loop_model(status_ticket, indexes, <span class="va">True</span>, <span class="va">True</span>, <span class="va">True</span>),</span>
@@ -1874,7 +1874,7 @@ tool     | {"ok": true, "kind": "result", "content": "status:sync operational si
 assistant| {"intent": "outage", "urgency": "normal", "draft": "Live status: 14:20 UTC [per stat</code></pre>
 </div>
 </div>
-<div id="5a685da6" class="cell" data-execution_count="29">
+<div id="f78bf96f" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>report5, trials5 <span class="op">=</span> run_suite(<span class="op">*</span>RUNGS[<span class="dv">5</span>], tickets)</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a>ladder.append(report5)<span class="op">;</span> trial_log[report5.rung] <span class="op">=</span> trials5</span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(report5))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1884,7 +1884,7 @@ assistant| {"intent": "outage", "urgency": "normal", "draft": "Live status: 14:2
 </div>
 <p>Success does not move. Not one ticket. Meanwhile p95 latency rises by 882 ms (three model calls where one sufficed, each seeing a longer transcript than the last), cost jumps 2.5×, two attack edges appear — the denial-of-wallet budget and tool-output-steering channels — and burden climbs as the two spun runs land in an operator’s review queue. The negative result is <em>conditional</em>, and precision about the condition is what separates measurement from ideology: this workload’s decision paths were enumerable in advance, so code could own the sequence. Chapter 21’s coding agent lives at the other pole — the next action depends on compiler output no one can enumerate — and there the same loop is load-bearing. Capability value is a property of the task distribution, not of the capability.</p>
 <p><strong>Rung 6: persistent memory.</strong> Chapter 18’s governed store, imported as committed: scoped records, provenance, a write policy.</p>
-<div id="452b6604" class="cell" data-execution_count="30">
+<div id="406c9bf5" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>ch18 <span class="op">=</span> load_chapter_module(<span class="st">"ch18"</span>, <span class="st">"ch18_memory"</span>)</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1894,7 +1894,7 @@ assistant| {"intent": "outage", "urgency": "normal", "draft": "Live status: 14:2
 <span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ch18.MemoryStore()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Every ticket now pays for one scoped read before the model runs and one policied write after it answers. The fixture’s population makes the outcome predictable by construction — all fifty tickets arrive from distinct users — and we run the measurement anyway, because “we do not need this” is exactly the kind of claim that should be evidence, not intuition.</p>
-<div id="e9c1f13f" class="cell" data-execution_count="31">
+<div id="c395771e" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>report6, trials6 <span class="op">=</span> run_suite(<span class="op">*</span>RUNGS[<span class="dv">6</span>], tickets)</span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>ladder.append(report6)<span class="op">;</span> trial_log[report6.rung] <span class="op">=</span> trials6</span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(report6))</span>
@@ -1913,7 +1913,7 @@ memory: 0 hits on 50 reads; 50 records written</code></pre>
 <section id="sec-ch32-write" class="level2" data-number="32.6">
 <h2 data-number="32.6" class="anchored" data-anchor-id="sec-ch32-write"><span class="header-section-number">32.6</span> The human-gated write and the full ladder</h2>
 <p>Nine tickets require what no rung so far can deliver: a durable note on the ticket system — an external effect. This is the rung where mistakes stop being retractable, so the write path gets the full discipline of <a href="17-tool-harness-engineering.html" class="quarto-xref"><span>Chapter 17</span></a> and <a href="26-production-platform.html" class="quarto-xref"><span>Chapter 26</span></a> in about forty lines: a typed proposal whose hash is what the reviewer approves, execution-time revalidation, and an idempotent effect ledger.</p>
-<div id="1a198b18" class="cell" data-execution_count="32">
+<div id="f32af260" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ActionProposal:</span>
@@ -1947,7 +1947,7 @@ memory: 0 hits on 50 reads; 50 records written</code></pre>
 <span id="cb44-31"><a href="#cb44-31" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> hashlib.sha256(payload.encode()).hexdigest()[:<span class="dv">16</span>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The reviewer is a script too, and a deliberately narrow one — scope and size, the two checks a human reviewer is actually asked to make here. Even in a deterministic fixture, approval is not a rubber stamp: one of our nine notes will be rejected.</p>
-<div id="8c623d79" class="cell" data-execution_count="33">
+<div id="f3b08200" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb45"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> scripted_reviewer(proposal: ActionProposal) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">str</span> <span class="op">|</span> <span class="va">None</span>, <span class="bu">str</span>]:</span>
 <span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The fixture's reviewer: a visible script with a scope and a size rule.</span></span>
@@ -1971,7 +1971,7 @@ memory: 0 hits on 50 reads; 50 records written</code></pre>
 <span id="cb45-21"><a href="#cb45-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> proposal.action_hash(), <span class="st">"approved"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Between approval and execution the world can move, and queues can deliver twice. The executor therefore revalidates everything at the point of effect, and the ledger makes duplicates return the original receipt instead of a second effect.</p>
-<div id="d9173679" class="cell" data-execution_count="34">
+<div id="c6916a10" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> EffectLedger:</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""An append-only, idempotent record of external effects.</span></span>
@@ -2032,7 +2032,7 @@ memory: 0 hits on 50 reads; 50 records written</code></pre>
 <span id="cb46-58"><a href="#cb46-58" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> receipt, <span class="st">"recorded"</span> <span class="cf">if</span> fresh <span class="cf">else</span> <span class="st">"duplicate: original receipt returned"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Before measuring the rung, we play the two classic races against our own machinery — the same two injections the failure game in <a href="#sec-ch32-defense" class="quarto-xref"><span>Section 32.9</span></a> will demand. First, a stale approval: the reviewer approves version 1, the ticket moves to version 2 before delivery, and revalidation refuses the write. Then, a duplicate delivery: the same approved action arrives twice, and the ledger records one effect.</p>
-<div id="e91d50a6" class="cell" data-execution_count="35">
+<div id="85fabbef" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>versions, ledger <span class="op">=</span> {<span class="st">"write-00"</span>: <span class="dv">1</span>}, EffectLedger()</span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a>stale <span class="op">=</span> ActionProposal(<span class="st">"acme"</span>, <span class="st">"write-00"</span>, <span class="st">"[billing] note"</span>, <span class="st">"internal_note"</span>, <span class="dv">1</span>)</span>
 <span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>approval, _ <span class="op">=</span> scripted_reviewer(stale)</span>
@@ -2042,7 +2042,7 @@ memory: 0 hits on 50 reads; 50 records written</code></pre>
 <pre><code>(None, 'blocked: stale resource version')</code></pre>
 </div>
 </div>
-<div id="be589735" class="cell" data-execution_count="36">
+<div id="3bd367ad" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a>fresh <span class="op">=</span> ActionProposal(<span class="st">"acme"</span>, <span class="st">"write-00"</span>, <span class="st">"[billing] note"</span>, <span class="st">"internal_note"</span>, <span class="dv">2</span>)</span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>approval, _ <span class="op">=</span> scripted_reviewer(fresh)</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(execute_write(fresh, approval, versions, ledger))</span>
@@ -2055,7 +2055,7 @@ effects recorded: 1</code></pre>
 </div>
 </div>
 <p>Two different controls stopped two different races: version binding caught the stale approval, the idempotency key caught the duplicate. They are not interchangeable, and both are necessary. Now the rung itself — <code>run_ticket</code> has carried the write branch since <a href="#sec-ch32-rung0" class="quarto-xref"><span>Section 32.3</span></a>, waiting for these definitions:</p>
-<div id="f959f1a2" class="cell" data-execution_count="37">
+<div id="a34a46b4" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a>report7, trials7 <span class="op">=</span> run_suite(<span class="op">*</span>RUNGS[<span class="dv">7</span>], tickets)</span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>ladder.append(report7)<span class="op">;</span> trial_log[report7.rung] <span class="op">=</span> trials7</span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(report7))</span>
@@ -2066,7 +2066,7 @@ failures: {'escalated-supported-task': 3}</code></pre>
 </div>
 </div>
 <p>Sixteen points — eight of the nine write tickets now reach their required final state; the ninth proposed a note far over the reviewer’s 240-character bound and was rejected, exactly as scripted. The price is the steepest burden jump on the ladder: eighteen approvals per 100 tasks on top of the escalations, thirty-four human actions per 100 tasks in total. The approval queue, not the model, is now the scaling constraint — the launch-review conversation this number forces belongs to <a href="28-products-people-organizations.html" class="quarto-xref"><span>Chapter 28</span></a>. The full ladder, every row measured on this page:</p>
-<div id="4315848c" class="cell" data-execution_count="38">
+<div id="80a170c1" class="cell" data-execution_count="38">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> r <span class="kw">in</span> ladder:</span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(row(r))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -2156,7 +2156,7 @@ Figure&nbsp;32.2: Failure reasons at rungs 0, 4, and 7. Which layer fixed which 
 <section id="sec-ch32-ablation" class="level2" data-number="32.7">
 <h2 data-number="32.7" class="anchored" data-anchor-id="sec-ch32-ablation"><span class="header-section-number">32.7</span> Ablate, then keep only the load-bearing</h2>
 <p>The ladder measured each layer <em>on the way up</em>, against the stack that existed below it. But layers interact, so the finished system deserves a different question: with everything else present, what is each layer carrying <em>now</em>? An <strong>ablation</strong> removes one layer from the maximal stack, holds everything else fixed — same suite, same grader, same meter — and re-measures all five axes. On this page, live:</p>
-<div id="68186cf6" class="cell" data-execution_count="41">
+<div id="b68a78f5" class="cell" data-execution_count="41">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb57"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb57-2"><a href="#cb57-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> ablate(full_config: LayerConfig, tickets: <span class="bu">list</span>[Ticket]) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">float</span>]]:</span>
 <span id="cb57-3"><a href="#cb57-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Remove one layer at a time from the maximal stack and re-measure live.</span></span>
@@ -2189,7 +2189,7 @@ Figure&nbsp;32.2: Failure reasons at rungs 0, 4, and 7. Which layer fixed which 
 <span id="cb57-30"><a href="#cb57-30" aria-hidden="true" tabindex="-1"></a>        }</span>
 <span id="cb57-31"><a href="#cb57-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> deltas</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="ea63ed42" class="cell" data-execution_count="42">
+<div id="fb080dd8" class="cell" data-execution_count="42">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb58"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb58-1"><a href="#cb58-1" aria-hidden="true" tabindex="-1"></a>deltas <span class="op">=</span> ablate(RUNGS[<span class="dv">7</span>][<span class="dv">1</span>], tickets)</span>
 <span id="cb58-2"><a href="#cb58-2" aria-hidden="true" tabindex="-1"></a>header <span class="op">=</span> <span class="ss">f"</span><span class="sc">{</span><span class="st">'layer'</span><span class="sc">:12s}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'Δsuccess'</span><span class="sc">:&gt;9s}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'Δcost'</span><span class="sc">:&gt;10s}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'Δp95'</span><span class="sc">:&gt;8s}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'Δedges'</span><span class="sc">:&gt;7s}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'Δburden'</span><span class="sc">:&gt;8s}</span><span class="ss">"</span></span>
 <span id="cb58-3"><a href="#cb58-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(header)</span>
@@ -2209,7 +2209,7 @@ gated_write      16.0p  +0.000036     +0.0      +2    +20.0</code></pre>
 </div>
 <p>Three readings before any verdicts. First, the interaction the ladder could not see: schema’s ablation delta is 6 points, half its ladder-time gain of 12, because the workflow’s strict-format retry now rescues the even-numbered burying tickets — and its cost delta is <em>negative</em>, meaning removing the schema makes the system more expensive, since every rescue bills a second model call. This is why we ablate rather than trust the climb-time ledger. Second, removing the workflow leaves p95 and cost essentially unchanged <em>only because</em> the loop is still sequencing; its 6 success points are the escalation logic alone. Third, retrieval’s burden delta is negative twenty: removing it would <em>add</em> twenty human actions per 100 tasks, because every fact-seeking ticket would fabricate, fail the citation gate, and escalate. A layer can be load-bearing for the queue, not just for the score.</p>
 <p>Verdicts need a bar, and the bar must be declared before the runs, or the review becomes motivated reasoning with a spreadsheet. Ours was fixed at 2.5 success points — more than one ticket on a 50-ticket suite, so no layer survives on a single lucky fixture item.</p>
-<div id="719f4e51" class="cell" data-execution_count="43">
+<div id="0425c8b0" class="cell" data-execution_count="43">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb60"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb60-1"><a href="#cb60-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb60-2"><a href="#cb60-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> earn_decisions(deltas: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">float</span>]],</span>
 <span id="cb60-3"><a href="#cb60-3" aria-hidden="true" tabindex="-1"></a>                   min_gain_pts: <span class="bu">float</span> <span class="op">=</span> <span class="fl">2.5</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">str</span>]:</span>
@@ -2239,7 +2239,7 @@ gated_write      16.0p  +0.000036     +0.0      +2    +20.0</code></pre>
 <span id="cb60-27"><a href="#cb60-27" aria-hidden="true" tabindex="-1"></a>                                <span class="ss">f"edges and </span><span class="sc">{</span>delta[<span class="st">'cost_usd'</span>]<span class="sc">:.6f}</span><span class="ss"> USD/task"</span>)</span>
 <span id="cb60-28"><a href="#cb60-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> decisions</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="eee46b6f" class="cell" data-execution_count="44">
+<div id="599813a8" class="cell" data-execution_count="44">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb61"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> layer, verdict <span class="kw">in</span> earn_decisions(deltas).items():</span>
 <span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>layer<span class="sc">:12s}</span><span class="ss"> </span><span class="sc">{</span>verdict<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -2253,7 +2253,7 @@ gated_write  keep — removing it costs 16.0 success points</code></pre>
 </div>
 </div>
 <p>Four layers earned their place; three did not. The loop and memory are clean cuts — zero points carried, and between them they return four attack edges, a fifth of a cent per task, and the stuck-run review burden. The status tool is the honest judgment call: it carries a real ticket (2.0 points), just not enough of them, and the review should ask whether that one ticket represents a high-severity slice the aggregate understates. On this fixture it does not, so it goes — but a cut is a decision record with a reopening condition, not an amputation:</p>
-<div id="1edbfa21" class="cell" data-execution_count="45">
+<div id="82534711" class="cell" data-execution_count="45">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb63"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb63-2"><a href="#cb63-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> rejection_memo(layer: <span class="bu">str</span>, delta: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">float</span>], reopen: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb63-3"><a href="#cb63-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Render a justified-rejection memo from measured deltas.</span></span>
@@ -2271,7 +2271,7 @@ gated_write  keep — removing it costs 16.0 success points</code></pre>
 <span id="cb63-15"><a href="#cb63-15" aria-hidden="true" tabindex="-1"></a>            <span class="ss">f"</span><span class="sc">{</span>delta[<span class="st">'edges'</span>]<span class="sc">:+d}</span><span class="ss"> attack edges, </span><span class="sc">{</span>delta[<span class="st">'burden'</span>]<span class="sc">:+.1f}</span><span class="ss"> burden/100. "</span></span>
 <span id="cb63-16"><a href="#cb63-16" aria-hidden="true" tabindex="-1"></a>            <span class="ss">f"Reopen when: </span><span class="sc">{</span>reopen<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="c41221b5" class="cell" data-execution_count="46">
+<div id="6d469d8f" class="cell" data-execution_count="46">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb64"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(rejection_memo(<span class="st">"loop"</span>, deltas[<span class="st">"loop"</span>],</span>
 <span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a>                     <span class="st">"a task slice arrives whose next action cannot be enumerated in code"</span>))</span>
 <span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(rejection_memo(<span class="st">"status_tool"</span>, deltas[<span class="st">"status_tool"</span>],</span>
@@ -2282,7 +2282,7 @@ REJECTED: status_tool. Evidence: +2.0 success pts, +0.000041 USD/task, +345.0 ms
 </div>
 </div>
 <p>The selected system is what survives: schema, retrieval, workflow, gated write. We run it — same suite, same meter — beside the maximal stack it was distilled from:</p>
-<div id="7f9cb13b" class="cell" data-execution_count="47">
+<div id="6ce89ab5" class="cell" data-execution_count="47">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb66"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a>selected <span class="op">=</span> LayerConfig(schema<span class="op">=</span><span class="va">True</span>, retrieval<span class="op">=</span><span class="va">True</span>, workflow<span class="op">=</span><span class="va">True</span>, gated_write<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a>sel_report, _ <span class="op">=</span> run_suite(<span class="st">"selected"</span>, selected, tickets)</span>
 <span id="cb66-3"><a href="#cb66-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(row(sel_report))</span>

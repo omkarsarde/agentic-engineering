@@ -847,7 +847,7 @@ y=\sum_{i\in I(x)} g_i\,E_i(x),
 g_i=\frac{p_i}{\sum_{j\in I(x)}p_j}.
 \tag{4.1}</span></span></p>
 <p>The normalization runs over the <em>selected</em> experts, so the gates of the winners sum to one. Selection is discrete: gradients reach <span class="math inline">W_r</span> through the kept gate values and through the balancing terms we add next, never through the top-<span class="math inline">k</span> index operation itself. We write the router as a module that also exposes the diagnostics we will need to debug it.</p>
-<div id="2fec0be8" class="cell" data-execution_count="1">
+<div id="8c51e0b7" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -881,7 +881,7 @@ g_i=\frac{p_i}{\sum_{j\in I(x)}p_j}.
 <span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    z_loss: Tensor</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The forward pass is <a href="#eq-ch04-route" class="quarto-xref">Equation&nbsp;<span>4.1</span></a> plus the observables. <code>load</code> is the fraction of routed slots each expert won (it sums to one); <code>balance_loss</code> and <code>z_loss</code> are defined in the next section — we compute them here so every routing decision carries its own diagnostics.</p>
-<div id="1d0e72be" class="cell" data-execution_count="2">
+<div id="33042230" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TopKRouter(nn.Module):</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Score each token over ``experts`` experts and keep the top ``top_k``.</span></span>
@@ -938,7 +938,7 @@ g_i=\frac{p_i}{\sum_{j\in I(x)}p_j}.
 <span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.selection_bias.sub_(<span class="va">self</span>.selection_bias.mean())</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run it on a tiny batch. With four experts, top-2 routing, and six tokens, the router should return a score per expert, two indices and two gates per token, and a load vector that sums to one.</p>
-<div id="f0c116fa" class="cell" data-execution_count="3">
+<div id="46d04556" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">0</span>)</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>router <span class="op">=</span> TopKRouter(width<span class="op">=</span><span class="dv">8</span>, experts<span class="op">=</span><span class="dv">4</span>, top_k<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>tokens <span class="op">=</span> torch.randn(<span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">8</span>)  <span class="co"># batch 2, length 3, width 8</span></span>
@@ -999,7 +999,7 @@ P_{\text{stored}}=(E+S)\,P_e,
 P_{\text{active}}=(k+S)\,P_e.
 \tag{4.3}</span></span></p>
 <p>Take a concrete layer — width <span class="math inline">{4096}</span>, <span class="math inline">{64}</span> experts of intermediate width <span class="math inline">{1024}</span>, top-2, one shared expert — and compute both ledgers instead of trusting a ratio.</p>
-<div id="1cf83d8f" class="cell" data-execution_count="4">
+<div id="0941b9e1" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>d, E, k, S, h_e <span class="op">=</span> <span class="dv">4096</span>, <span class="dv">64</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="dv">1024</span>  <span class="co"># width, routed experts, selected, shared, expert width</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>P_e <span class="op">=</span> <span class="dv">3</span> <span class="op">*</span> d <span class="op">*</span> h_e</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>stored <span class="op">=</span> (E <span class="op">+</span> S) <span class="op">*</span> P_e</span>
@@ -1055,7 +1055,7 @@ f_i=\frac{1}{Nk}\sum_{n}\mathbf{1}[i\in I(x_n)],
 P_i=\frac{1}{N}\sum_{n}p_i(x_n),
 \tag{4.4}</span></span></p>
 <p>the hard routed fraction and the mean soft score. The Switch-style auxiliary loss multiplies them, <span class="math inline">L_{\text{balance}}=E\sum_i f_i P_i</span> <span class="citation" data-cites="fedus2022switch">(<a href="../references.html#ref-fedus2022switch" role="doc-biblioref">Fedus et al. 2022</a>)</span>; because <span class="math inline">f_i</span> is discrete it is detached, and the differentiable <span class="math inline">P_i</span> supplies the gradient that spreads tokens out. To see collapse and its cure, we wrap the router in a small MoE classifier and <em>deliberately</em> bias expert 0 at initialization.</p>
-<div id="14e4543f" class="cell" data-execution_count="6">
+<div id="78a3e5bd" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ToyMoE(nn.Module):</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A local top-1 MoE classifier used to demonstrate routing collapse.</span></span>
@@ -1094,7 +1094,7 @@ P_i=\frac{1}{N}\sum_{n}p_i(x_n),
 <span id="cb8-36"><a href="#cb8-36" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> out.view(<span class="op">*</span>tokens.shape[:<span class="op">-</span><span class="dv">1</span>], <span class="va">self</span>.classes), routing</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The training loop is ordinary supervised learning with one extra term: <code>balance_weight * balance_loss</code>. Setting that weight to zero lets collapse run its course; setting it to <code>0.5</code> fights back.</p>
-<div id="46438e37" class="cell" data-execution_count="7">
+<div id="60d2a6fc" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> train_router(balance_weight: <span class="bu">float</span>, steps: <span class="bu">int</span> <span class="op">=</span> <span class="dv">300</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">object</span>]:</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Train the toy MoE with a chosen load-balance weight and report the result.</span></span>
@@ -1138,7 +1138,7 @@ P_i=\frac{1}{N}\sum_{n}p_i(x_n),
 <span id="cb9-41"><a href="#cb9-41" aria-hidden="true" tabindex="-1"></a>            <span class="st">"balance_loss"</span>: routing.balance_loss.item(), <span class="st">"z_loss"</span>: routing.z_loss.item()}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run both conditions and print the held-out load and accuracy.</p>
-<div id="bd56b4c0" class="cell" data-execution_count="8">
+<div id="0a5363a1" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>unbalanced <span class="op">=</span> train_router(balance_weight<span class="op">=</span><span class="fl">0.0</span>)</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>balanced <span class="op">=</span> train_router(balance_weight<span class="op">=</span><span class="fl">0.5</span>)</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"unbalanced load:"</span>, [<span class="bu">round</span>(x, <span class="dv">4</span>) <span class="cf">for</span> x <span class="kw">in</span> unbalanced[<span class="st">"load"</span>]],</span>
@@ -1176,7 +1176,7 @@ Figure&nbsp;4.3: What does routing collapse look like, and does balancing fix it
 </div>
 </div>
 <p>A production run stacks two more controls on top of the auxiliary loss. Router logits can drift to unstable magnitudes, so ST-MoE added a <strong>z-loss</strong>, <span class="math inline">L_z=\frac1N\sum_n(\log\sum_i e^{r_i(x_n)})^2</span>, that keeps the log-partition small; it is a numerical-stability tool, not a balancer <span class="citation" data-cites="zoph2022stmoe">(<a href="../references.html#ref-zoph2022stmoe" role="doc-biblioref">Zoph et al. 2022</a>)</span>. And balancing need not live in the task loss at all. DeepSeek-V3 keeps a per-expert <strong>selection bias</strong> <span class="math inline">b_i</span>, routes on <span class="math inline">p_i+b_i</span>, and after each step lowers the bias of overloaded experts and raises it for underloaded ones — the <code>update_selection_bias</code> method above <span class="citation" data-cites="deepseekv3">(<a href="../references.html#ref-deepseekv3" role="doc-biblioref">DeepSeek-AI 2024</a>)</span>. One control step makes the direction visible.</p>
-<div id="2e14665e" class="cell" data-execution_count="10">
+<div id="cc88da31" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>controller <span class="op">=</span> TopKRouter(<span class="dv">4</span>, experts<span class="op">=</span><span class="dv">4</span>, top_k<span class="op">=</span><span class="dv">1</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>controller.update_selection_bias(torch.tensor([<span class="fl">0.70</span>, <span class="fl">0.10</span>, <span class="fl">0.10</span>, <span class="fl">0.10</span>]), rate<span class="op">=</span><span class="fl">0.02</span>)</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"bias after one step:"</span>, [<span class="bu">round</span>(x, <span class="dv">4</span>) <span class="cf">for</span> x <span class="kw">in</span> controller.selection_bias.tolist()])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1282,7 +1282,7 @@ Figure&nbsp;4.4: Where does expert parallelism turn compute into communication? 
 </div>
 </div>
 <p>Capacity planning inherits the same split. Communication kernels often cap each expert at <span class="math inline">C=\lceil c\,Nk/E\rceil</span> tokens for a capacity factor <span class="math inline">c\ge 1</span>; beyond <span class="math inline">C</span> the system drops tokens, reroutes them, or uses a dropless variable-size dispatch. A quick calculation shows why skew hurts even with generous capacity.</p>
-<div id="0deb8f56" class="cell" data-execution_count="11">
+<div id="9f85d6da" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>N, experts, k, c <span class="op">=</span> <span class="dv">8_192</span>, <span class="dv">32</span>, <span class="dv">2</span>, <span class="fl">1.25</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>capacity <span class="op">=</span> <span class="op">-</span>(<span class="op">-</span><span class="bu">int</span>(c <span class="op">*</span> N <span class="op">*</span> k) <span class="op">//</span> experts)  <span class="co"># ceil(c * N * k / E)</span></span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>hot_share <span class="op">=</span> <span class="fl">0.30</span>  <span class="co"># one expert grabs 30% of assignments</span></span>
@@ -1308,7 +1308,7 @@ z_t=\lambda_t\,z_{t-1}+\phi(k_t),
 y_t=\frac{\phi(q_t)^\top S_t}{\phi(q_t)^\top z_t+\epsilon}.
 \tag{4.5}</span></span></p>
 <p>Here <span class="math inline">S_t</span> has shape <span class="math inline">m\times d_v</span> (feature width by value width) and <span class="math inline">z_t</span> has width <span class="math inline">m</span> — both <strong>independent of <span class="math inline">t</span></strong>. The learned decay <span class="math inline">\lambda_t</span> lets the state forget. We build exactly this recurrence and, crucially, make one block serve two callers: a full parallel sweep over a sequence, and a token-at-a-time streaming mode that carries the state forward. The two must agree.</p>
-<div id="7d48481a" class="cell" data-execution_count="12">
+<div id="0c82d088" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> GatedLinearAttention(nn.Module):</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A linear-attention block whose recurrent state is fixed-size in context.</span></span>
@@ -1356,7 +1356,7 @@ y_t=\frac{\phi(q_t)^\top S_t}{\phi(q_t)^\top z_t+\epsilon}.
 <span id="cb17-45"><a href="#cb17-45" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> torch.stack(outputs, dim<span class="op">=</span><span class="dv">1</span>), (state, normalizer)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We feed a nine-token sequence through the block in one sweep, then again one token at a time, and check the outputs match and the state size is fixed.</p>
-<div id="d882c0f7" class="cell" data-execution_count="13">
+<div id="95a7bd62" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">7</span>)</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>gla <span class="op">=</span> GatedLinearAttention(width<span class="op">=</span><span class="dv">12</span>, state_width<span class="op">=</span><span class="dv">5</span>).<span class="bu">eval</span>()</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>sequence <span class="op">=</span> torch.randn(<span class="dv">2</span>, <span class="dv">9</span>, <span class="dv">12</span>)</span>
@@ -1420,7 +1420,7 @@ Figure&nbsp;4.5: Why does a fixed-state mixer bound long-context memory? Full-at
 </div>
 </div>
 <p>Where does the decay <span class="math inline">\lambda_t</span> come from, and how expressive can a fixed state be? That is the <strong>state-space model</strong> (SSM) lineage. A linear SSM writes <span class="math inline">h_t=A h_{t-1}+B x_t</span>, <span class="math inline">y_t=C h_t+D x_t</span>; the art is making the recurrence expressive, stable over long horizons, and parallelizable for training. S4 structured <span class="math inline">A</span> so the equivalent long convolution was cheap <span class="citation" data-cites="gu2022s4">(<a href="../references.html#ref-gu2022s4" role="doc-biblioref">Gu et al. 2022</a>)</span>; Mamba made <span class="math inline">A,B,C</span> <em>input-dependent</em> — the model <em>selects</em> what to keep or forget per token — and supplied a hardware-aware scan <span class="citation" data-cites="gu2023mamba">(<a href="../references.html#ref-gu2023mamba" role="doc-biblioref">Gu and Dao 2023</a>)</span>; Mamba-2 then showed SSMs and attention-like matrix transforms are two views of one object <span class="citation" data-cites="dao2024mamba2">(<a href="../references.html#ref-dao2024mamba2" role="doc-biblioref">Dao and Gu 2024</a>)</span>. The selective idea is easy to see in one dimension: give the recurrence an input-dependent decay and watch a single impulse either persist or vanish.</p>
-<div id="ac0ae42b" class="cell" data-execution_count="15">
+<div id="1ce48fba" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> selective_scan(inputs, decays):</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One-dimensional selective SSM: h_t = a_t * h_{t-1} + x_t."""</span></span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    h, history <span class="op">=</span> <span class="fl">0.0</span>, []</span>
@@ -1443,7 +1443,7 @@ fast decay a=0.2 (forgets):   [1.0, 0.2, 0.04, 0.008, 0.002]</code></pre>
 <section id="sec-ch04-fixed-state" class="level2" data-number="4.6">
 <h2 data-number="4.6" class="anchored" data-anchor-id="sec-ch04-fixed-state"><span class="header-section-number">4.6</span> Fixed state forces a recall tradeoff</h2>
 <p>Constant state is a lossy channel. Write <span class="math inline">n</span> arbitrary key-value pairs, then ask for any one of them. Full attention keeps a separate addressable slot per pair, so it answers exactly. A fixed state must eventually map distinct histories to overlapping representations — without assumptions about the data, exact recall of unbounded independent associations is impossible at fixed precision. The clean way to see this is to isolate the linear-attention memory itself: the same outer-product update <span class="math inline">S=\sum_i \phi(k_i)v_i^\top</span> from <a href="#eq-ch04-gla" class="quarto-xref">Equation&nbsp;<span>4.5</span></a>, then read <span class="math inline">v_j</span> back with its key. We measure exact recall (did the readout land nearest to the right stored value?) as the number of pairs grows, at two feature widths.</p>
-<div id="b23ed3f1" class="cell" data-execution_count="16">
+<div id="5493bd64" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> associative_recall_curve(pair_counts, feature_dim, value_dim<span class="op">=</span><span class="dv">8</span>, trials<span class="op">=</span><span class="dv">400</span>, seed<span class="op">=</span><span class="dv">3</span>):</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Measure exact recall of a linear-attention state as associations pile up.</span></span>
@@ -1481,7 +1481,7 @@ fast decay a=0.2 (forgets):   [1.0, 0.2, 0.04, 0.008, 0.002]</code></pre>
 <span id="cb23-35"><a href="#cb23-35" aria-hidden="true" tabindex="-1"></a>        rows.append({<span class="st">"pairs"</span>: pairs, <span class="st">"accuracy"</span>: hits <span class="op">/</span> trials})</span>
 <span id="cb23-36"><a href="#cb23-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="34b39800" class="cell" data-execution_count="17">
+<div id="780db7ca" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>pair_counts <span class="op">=</span> [<span class="dv">2</span>, <span class="dv">4</span>, <span class="dv">8</span>, <span class="dv">16</span>, <span class="dv">32</span>, <span class="dv">64</span>, <span class="dv">128</span>, <span class="dv">256</span>]</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>narrow <span class="op">=</span> associative_recall_curve(pair_counts, feature_dim<span class="op">=</span><span class="dv">16</span>)</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>wide <span class="op">=</span> associative_recall_curve(pair_counts, feature_dim<span class="op">=</span><span class="dv">64</span>)</span>
@@ -1534,7 +1534,7 @@ Figure&nbsp;4.6: What does a fixed state cost in exact recall? Full attention ke
 \tag{4.6}</span></span></p>
 <p>where the first term is the <a href="03-attention-position-long-context.html#sec-ch03-kv-equation" class="quarto-xref"><span>Section 3.1</span></a> cache counting <em>only</em> the full-attention layers, and the second is the flat recurrent state. Only the full-attention layers carry a context-proportional slope. A cadence of three recurrent layers to one full-attention layer — the roughly 3:1 ratio now common in production — keeps a periodic exact-retrieval path while cutting the KV slope to about a quarter of an all-attention stack. The trap the equation guards against is real: do not apply an all-attention cache formula to every layer of a hybrid, and do not call a stack constant-memory just because most of its layers recur.</p>
 <p>A third route keeps a full addressable history but <em>computes</em> only part of it. <strong>Sparse attention</strong> with fixed windows or blocks is cheap but encodes a predetermined visibility bias; <em>learned</em> selectors adapt to the query instead. Native Sparse Attention trains compression, selection, and a local branch end to end and co-designs the block structure for hardware <span class="citation" data-cites="yuan2025nsa">(<a href="../references.html#ref-yuan2025nsa" role="doc-biblioref"><span class="nocase">Yuan et al.</span> 2025</a>)</span>. Mixture of Block Attention applies the MoE idea to attention itself — a query routes to a selected set of key-value blocks — and can fall back to full attention <span class="citation" data-cites="lu2025moba">(<a href="../references.html#ref-lu2025moba" role="doc-biblioref"><span class="nocase">Lu et al.</span> 2025</a>)</span>. DeepSeek Sparse Attention uses a lightweight learned indexer to score past tokens and keep a fine-grained top-<span class="math inline">k</span> for the main computation <span class="citation" data-cites="deepseekv32">(<a href="../references.html#ref-deepseekv32" role="doc-biblioref">DeepSeek-AI 2025</a>)</span>. A one-line sketch of the MoBA idea — score blocks, keep the top few, attend only within them — shows the shape of the saving.</p>
-<div id="8d9b51e9" class="cell" data-execution_count="19">
+<div id="38787233" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">1</span>)</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>past <span class="op">=</span> torch.randn(<span class="dv">12</span>, <span class="dv">8</span>)              <span class="co"># 12 past tokens, width 8</span></span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>query <span class="op">=</span> torch.randn(<span class="dv">8</span>)</span>
@@ -1551,7 +1551,7 @@ Figure&nbsp;4.6: What does a fixed state cost in exact recall? Full attention ke
 <section id="sec-ch04-decoding" class="level2" data-number="4.8">
 <h2 data-number="4.8" class="anchored" data-anchor-id="sec-ch04-decoding"><span class="header-section-number">4.8</span> Diffusion LMs and multi-token prediction</h2>
 <p>Everything so far kept the autoregressive contract: factor the sequence left to right, <span class="math inline">p(x_{1:T})=\prod_t p(x_t\mid x_{&lt;t})</span>, and commit one token at a time. Two research lines relax different parts of it, and both change decoding rather than the parameter or state ledgers. A <strong>diffusion language model</strong> corrupts tokens and learns to reverse the corruption over a block, refining many positions across several denoising steps; because positions can change before they are committed, it can revise and infill. A toy denoiser that reveals the highest-confidence positions of a target first makes the block-refinement shape concrete.</p>
-<div id="37153ab3" class="cell" data-execution_count="20">
+<div id="b8582ec9" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> block_denoise(target, steps<span class="op">=</span><span class="dv">3</span>, seed<span class="op">=</span><span class="dv">1</span>):</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Toy diffusion decode: reveal highest-confidence positions over K steps."""</span></span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    torch.manual_seed(seed)</span>
@@ -1576,7 +1576,7 @@ denoise step 2: MODEL</code></pre>
 </div>
 </div>
 <p>The block fills in over three passes, several positions per step, rather than strictly left to right. “Multiple tokens in parallel” is not automatically faster: one step processes the whole block, and several steps may be needed, so latency depends on block size, step count, and kernel efficiency. <strong>Multi-token prediction</strong> (MTP) keeps the autoregressive trunk but adds heads that predict several future tokens during training, giving the shared representation denser supervision <span class="citation" data-cites="gloeckle2024mtp">(<a href="../references.html#ref-gloeckle2024mtp" role="doc-biblioref">Gloeckle et al. 2024</a>)</span>. After training those heads can be discarded, or reused to <em>propose</em> tokens that the main model verifies — accepting only what it would have generated anyway.</p>
-<div id="63c13609" class="cell" data-execution_count="21">
+<div id="059a6700" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> speculative_verify(draft, target_sequence):</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Accept draft tokens until the first that the target would not have chosen."""</span></span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    accepted <span class="op">=</span> []</span>
@@ -1601,7 +1601,7 @@ draft 'axc': ab (1 accepted, then corrected)</code></pre>
 <section id="sec-ch04-config" class="level2" data-number="4.9">
 <h2 data-number="4.9" class="anchored" data-anchor-id="sec-ch04-config"><span class="header-section-number">4.9</span> Read the economics from <code>config.json</code></h2>
 <p>Now the payoff: everything above lets us read a real model’s economics straight from its published <code>config.json</code>, without downloading weights. A config is not a full implementation, but it is usually enough to reject a bad capacity assumption. We embed three real configs — a dense model, an MoE, and a linear/full hybrid — as the exact field dicts a publisher ships.</p>
-<div id="f811ed04" class="cell" data-execution_count="22">
+<div id="f1c91124" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>REAL_CONFIGS <span class="op">=</span> {</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Llama 3.1 8B"</span>: {  <span class="co"># dense GQA -- https://huggingface.co/meta-llama/Llama-3.1-8B</span></span>
@@ -1629,7 +1629,7 @@ draft 'axc': ab (1 accepted, then corrected)</code></pre>
 <span id="cb33-25"><a href="#cb33-25" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The parser reads a config in leading-order matrix counts. It reuses one thing we refuse to reimplement: the canonical KV arithmetic from <a href="03-attention-position-long-context.html#sec-ch03-kv-equation" class="quarto-xref"><span>Section 3.1</span></a>, loaded from Chapter 3’s tangled module so the whole book keeps a single cache formula. The per-architecture helpers below stay private; the public entry point is <code>estimate_config</code>.</p>
-<div id="87b8be66" class="cell" data-execution_count="23">
+<div id="017c6ba0" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
@@ -1694,7 +1694,7 @@ draft 'axc': ab (1 accepted, then corrected)</code></pre>
 <span id="cb34-62"><a href="#cb34-62" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> params, fixed</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The three per-architecture estimators differ only in how they split the layers. The dense case counts GQA attention plus a SwiGLU MLP in every layer. The DeepSeek case counts MLA attention everywhere, a dense MLP in the first <code>first_k_dense_replace</code> layers, and <span class="math inline">E+S</span> experts stored versus <span class="math inline">k+S</span> active in the rest. The hybrid case counts full attention only every <code>full_attention_interval</code> layers and a linear mixer (with a flat recurrent state) in the others.</p>
-<div id="2a1b23f8" class="cell" data-execution_count="24">
+<div id="dce5560d" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ArchitectureEstimate:</span>
@@ -1785,7 +1785,7 @@ draft 'axc': ab (1 accepted, then corrected)</code></pre>
 <span id="cb35-88"><a href="#cb35-88" aria-hidden="true" tabindex="-1"></a>        kv_bytes(cache, <span class="dv">1</span>), (kv_bytes(cache, context_tokens) <span class="op">+</span> fixed) <span class="op">/</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span>, fixed)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run the parser over all three configs and print the reconstruction.</p>
-<div id="86423d35" class="cell" data-execution_count="25">
+<div id="4739b722" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, cfg <span class="kw">in</span> REAL_CONFIGS.items():</span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>    e <span class="op">=</span> estimate_config(name, cfg)</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>e<span class="sc">.</span>name<span class="sc">:20s}</span><span class="ss"> total=</span><span class="sc">{</span>e<span class="sc">.</span>total<span class="op">/</span><span class="fl">1e9</span><span class="sc">:8.3f}</span><span class="ss">B  active=</span><span class="sc">{</span>e<span class="sc">.</span>active<span class="op">/</span><span class="fl">1e9</span><span class="sc">:7.3f}</span><span class="ss">B  "</span></span>

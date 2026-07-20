@@ -886,7 +886,7 @@ window.Quarto = {
 P(A \mid B) = \frac{P(B \mid A)\,P(A)}{P(B)}.
 </span></p>
 <p>The single most useful consequence is that a positive test result rarely means the tested-for thing is present, because base rates dominate. Suppose two percent of requests contain abuse, and a detector has ninety percent sensitivity with a five percent false-positive rate. We compute the posterior directly rather than trusting intuition.</p>
-<div id="43a6a664" class="cell" data-execution_count="1">
+<div id="e576586c" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -920,7 +920,7 @@ P(A \mid B) = \frac{P(B \mid A)\,P(A)}{P(B)}.
 <span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> hit <span class="op">/</span> (hit <span class="op">+</span> false_positive <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> prior))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Running it on the abuse detector:</p>
-<div id="b0742a5c" class="cell" data-execution_count="2">
+<div id="3f363d1b" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"P(abuse | +) = </span><span class="sc">{</span>posterior(<span class="fl">0.02</span>, <span class="fl">0.90</span>, <span class="fl">0.05</span>)<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>P(abuse | +) = 0.269</code></pre>
@@ -962,7 +962,7 @@ Figure&nbsp;A.1: Why doesn’t a positive abuse detector mean abuse? A thousand 
 </div>
 </div>
 <p>Information theory measures uncertainty itself. For a discrete distribution <span class="math inline">p</span>, <strong>entropy</strong> <span class="math inline">H(p) = -\sum_x p(x)\log p(x)</span> is expected surprise: highest when mass is spread evenly, lowest when one outcome dominates. <strong>Cross-entropy</strong> <span class="math inline">H(p, q) = -\sum_x p(x)\log q(x)</span> scores a prediction <span class="math inline">q</span> against data <span class="math inline">p</span>, and <strong>Kullback–Leibler divergence</strong> <span class="math inline">D_{\mathrm{KL}}(p \Vert q) = \sum_x p(x)\log\frac{p(x)}{q(x)}</span> is the extra cost of using <span class="math inline">q</span> when the data follow <span class="math inline">p</span>. KL is nonnegative but not symmetric, which is why it is a divergence and not a distance.</p>
-<div id="953f15cd" class="cell" data-execution_count="4">
+<div id="9c88463c" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> entropy(dist: <span class="bu">list</span>[<span class="bu">float</span>]) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the Shannon entropy of a distribution, in bits.</span></span>
@@ -995,7 +995,7 @@ Figure&nbsp;A.1: Why doesn’t a positive abuse detector mean abuse? A thousand 
 <span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(pi <span class="op">*</span> math.log2(pi <span class="op">/</span> qi) <span class="cf">for</span> pi, qi <span class="kw">in</span> <span class="bu">zip</span>(p, q) <span class="cf">if</span> pi <span class="op">&gt;</span> <span class="dv">0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We show all three on a peaked and a uniform three-way distribution:</p>
-<div id="595ade52" class="cell" data-execution_count="5">
+<div id="e335fd42" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>peaked, uniform <span class="op">=</span> [<span class="fl">0.90</span>, <span class="fl">0.05</span>, <span class="fl">0.05</span>], [<span class="dv">1</span> <span class="op">/</span> <span class="dv">3</span>, <span class="dv">1</span> <span class="op">/</span> <span class="dv">3</span>, <span class="dv">1</span> <span class="op">/</span> <span class="dv">3</span>]</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"H(peaked)  = </span><span class="sc">{</span>entropy(peaked)<span class="sc">:.3f}</span><span class="ss"> bits"</span>)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"H(uniform) = </span><span class="sc">{</span>entropy(uniform)<span class="sc">:.3f}</span><span class="ss"> bits"</span>)</span>
@@ -1014,7 +1014,7 @@ D(uniform || peaked) = 1.347 bits</code></pre>
 <h2 data-number="A.2" class="anchored" data-anchor-id="app-a-decisions"><span class="header-section-number">A.2</span> Statistical decision theory</h2>
 <p>A probability describes belief; a decision combines belief with consequences. Given state <span class="math inline">s</span>, action <span class="math inline">a</span>, and loss <span class="math inline">L(a, s)</span>, the Bayes action minimizes expected loss, <span class="math inline">a^* = \arg\min_a \mathbb{E}_{s}[L(a, s)]</span>. This is why one confidence threshold cannot serve every action: the loss, not the probability, decides. Chapter 1 makes the same move when it turns an uncertain answer into an abstention; here we price it.</p>
 <p>Take the support-ticket example. An urgent ticket has probability 0.2 of being urgent; escalating an ordinary ticket costs one unit of operator time, and failing to escalate an urgent one costs ten.</p>
-<div id="a25b91ce" class="cell" data-execution_count="6">
+<div id="e7a30427" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> best_expected_loss(p_urgent: <span class="bu">float</span>, false_negative: <span class="bu">float</span>, false_positive: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the loss of the better of two actions under asymmetric costs.</span></span>
@@ -1036,7 +1036,7 @@ D(uniform || peaked) = 1.347 bits</code></pre>
 <span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a>    do_not <span class="op">=</span> p_urgent <span class="op">*</span> false_negative</span>
 <span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">min</span>(escalate, do_not)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="1e1ba9a0" class="cell" data-execution_count="7">
+<div id="5710dadd" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"R(escalate) = </span><span class="sc">{</span>(<span class="dv">1</span> <span class="op">-</span> <span class="fl">0.2</span>) <span class="op">*</span> <span class="dv">1</span><span class="sc">:.2f}</span><span class="ss">"</span>)</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"R(do not)   = </span><span class="sc">{</span><span class="fl">0.2</span> <span class="op">*</span> <span class="dv">10</span><span class="sc">:.2f}</span><span class="ss">"</span>)</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"best loss   = </span><span class="sc">{</span>best_expected_loss(<span class="fl">0.2</span>, <span class="dv">10</span>, <span class="dv">1</span>)<span class="sc">:.2f}</span><span class="ss">  (escalate)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1079,7 +1079,7 @@ Figure&nbsp;A.2: At what urgency probability should the agent escalate? Expected
 </div>
 </div>
 <p>An observation has <strong>value of information</strong> (VOI) when it can change the action and lower expected loss. The value before paying for the observation is never negative, because the decision-maker can always ignore what it learns. We evaluate one binary signal — a classifier with a sensitivity and a specificity — and print not just the final VOI but the two posteriors that produce it, so the mechanism is visible rather than trusted.</p>
-<div id="e31e77ec" class="cell" data-execution_count="9">
+<div id="704e8f86" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> value_of_signal(</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    prior_urgent: <span class="bu">float</span>,</span>
@@ -1123,7 +1123,7 @@ Figure&nbsp;A.2: At what urgency probability should the agent escalate? Expected
 <span id="cb12-41"><a href="#cb12-41" aria-hidden="true" tabindex="-1"></a>        <span class="st">"voi"</span>: prior_loss <span class="op">-</span> observed,</span>
 <span id="cb12-42"><a href="#cb12-42" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="0d482a76" class="cell" data-execution_count="10">
+<div id="93f8569b" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, value <span class="kw">in</span> value_of_signal(<span class="fl">0.2</span>, <span class="fl">0.85</span>, <span class="fl">0.9</span>, <span class="fl">10.0</span>, <span class="fl">1.0</span>).items():</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:20s}</span><span class="ss"> </span><span class="sc">{</span>value<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1136,7 +1136,7 @@ voi                  0.420</code></pre>
 </div>
 <p>A positive signal lifts the urgency belief to 0.68 and a negative one drops it to 0.04, and averaging the best action in each branch avoids 0.42 loss units versus deciding now. That number is the price ceiling: ask the clarifying question, or run the extra classifier, only when its total cost — money, latency, privacy, user friction — is below 0.42. VOI is what gives an agent’s clarifying questions a principled trigger, and Chapter 9 turns it into abstention policy.</p>
 <p>Finally, we need to score probabilistic forecasts honestly. A <strong>proper scoring rule</strong> is minimized in expectation by reporting your true belief. The Brier loss <span class="math inline">(p - y)^2</span> and the log loss <span class="math inline">-[y\log p + (1-y)\log(1-p)]</span> are both proper; thresholded accuracy is not.</p>
-<div id="34ac426f" class="cell" data-execution_count="11">
+<div id="1b3dc904" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> brier(p: <span class="bu">float</span>, y: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the Brier score (p - y)^2 for probability p and outcome y."""</span></span>
@@ -1150,7 +1150,7 @@ voi                  0.420</code></pre>
 <span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="op">-</span>(y <span class="op">*</span> math.log(p) <span class="op">+</span> (<span class="dv">1</span> <span class="op">-</span> y) <span class="op">*</span> math.log(<span class="dv">1</span> <span class="op">-</span> p))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We confirm properness by holding the true probability at 0.3 and varying the report:</p>
-<div id="447288d8" class="cell" data-execution_count="12">
+<div id="6546e6eb" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>true_p <span class="op">=</span> <span class="fl">0.3</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> report <span class="kw">in</span> (<span class="fl">0.3</span>, <span class="fl">0.5</span>, <span class="fl">0.1</span>):</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    e_brier <span class="op">=</span> true_p <span class="op">*</span> brier(report, <span class="dv">1</span>) <span class="op">+</span> (<span class="dv">1</span> <span class="op">-</span> true_p) <span class="op">*</span> brier(report, <span class="dv">0</span>)</span>
@@ -1188,7 +1188,7 @@ Figure&nbsp;A.3: Why does the new agent’s observed success rate misstate its e
 </div>
 </div>
 <p>We make the trap numeric. Generate synthetic logs where hard tickets are preferentially routed to the new agent, and where the agent’s <em>true</em> causal effect is a constant plus-ten points of resolution regardless of difficulty. A naive difference of outcome rates should be badly wrong; a difficulty-adjusted estimate should recover the truth.</p>
-<div id="f2d7477b" class="cell" data-execution_count="13">
+<div id="ab616985" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> simulate_routing(n: <span class="bu">int</span>, seed: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">int</span>, <span class="bu">int</span>]]:</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return synthetic (difficulty, action, outcome) logs with confounding.</span></span>
@@ -1252,7 +1252,7 @@ Figure&nbsp;A.3: Why does the new agent’s observed success rate misstate its e
 <span id="cb18-61"><a href="#cb18-61" aria-hidden="true" tabindex="-1"></a>        effect <span class="op">+=</span> weight <span class="op">*</span> (_rate(treated) <span class="op">-</span> _rate(control))</span>
 <span id="cb18-62"><a href="#cb18-62" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> effect</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="f76f2fc6" class="cell" data-execution_count="14">
+<div id="3cd6fb61" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>logs <span class="op">=</span> simulate_routing(<span class="dv">20_000</span>, seed<span class="op">=</span><span class="dv">0</span>)</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"naive difference   = </span><span class="sc">{</span>naive_effect(logs)<span class="sc">:+.3f}</span><span class="ss">   (looks like the agent is worse)"</span>)</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"backdoor-adjusted  = </span><span class="sc">{</span>backdoor_effect(logs)<span class="sc">:+.3f}</span><span class="ss">   (true effect is +0.100)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1264,7 +1264,7 @@ backdoor-adjusted  = +0.091   (true effect is +0.100)</code></pre>
 <p>The naive difference says the new agent is <em>twenty points worse</em>; the adjusted estimate says it is ten points <em>better</em>. The confounder did not merely add noise — it flipped the sign. That is the whole reason Chapter 27 refuses to trust a raw before-and-after comparison when routing, region, or risk changed exposure. The <strong>backdoor criterion</strong> names the rule: adjust for a set of observed variables that blocks every noncausal path into treatment, and do not adjust mechanically for everything, because conditioning on a collider or a post-treatment variable opens bias rather than closing it. Draw the graph first.</p>
 <p>Backdoor adjustment needs the confounder measured. The <strong>frontdoor criterion</strong> is its escape hatch: when an unmeasured confounder blocks the backdoor, but the treatment acts only through a fully observed mediator <span class="math inline">M</span> (so <span class="math inline">A \rightarrow M \rightarrow Y</span>) that the confounder does not touch, the effect is still identified by chaining <span class="math inline">A \rightarrow M</span> and <span class="math inline">M \rightarrow Y</span>. It is rare in practice because a clean, complete mediator is a strong assumption, but it is the reason “we can’t randomize” is not automatically “we can’t identify.”</p>
 <p>When we cannot adjust because the logs came from a different policy, we reweight. <strong>Inverse propensity scoring</strong> estimates the value of a target policy <span class="math inline">\pi</span> from logs drawn by a behavior policy <span class="math inline">\mu</span> by weighting each reward by <span class="math inline">\pi(a\mid x)/\mu(a\mid x)</span>.</p>
-<div id="17d0b909" class="cell" data-execution_count="15">
+<div id="0cf75b5f" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> ips_value(logged: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">int</span>, <span class="bu">float</span>, <span class="bu">float</span>]]) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the inverse-propensity estimate of an always-treat policy.</span></span>
@@ -1284,7 +1284,7 @@ backdoor-adjusted  = +0.091   (true effect is +0.100)</code></pre>
 <span id="cb21-17"><a href="#cb21-17" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb21-18"><a href="#cb21-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>((<span class="fl">1.0</span> <span class="cf">if</span> a <span class="op">==</span> <span class="dv">1</span> <span class="cf">else</span> <span class="fl">0.0</span>) <span class="op">/</span> mu <span class="op">*</span> r <span class="cf">for</span> a, r, mu <span class="kw">in</span> logged) <span class="op">/</span> <span class="bu">len</span>(logged)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="365c2e88" class="cell" data-execution_count="16">
+<div id="6488a5be" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>logged <span class="op">=</span> [(<span class="dv">1</span>, <span class="fl">1.0</span>, <span class="fl">0.2</span>), (<span class="dv">0</span>, <span class="fl">1.0</span>, <span class="fl">0.8</span>), (<span class="dv">1</span>, <span class="fl">0.0</span>, <span class="fl">0.8</span>), (<span class="dv">0</span>, <span class="fl">0.0</span>, <span class="fl">0.2</span>), (<span class="dv">1</span>, <span class="fl">1.0</span>, <span class="fl">0.8</span>)]</span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"V_IPS(always-treat) = </span><span class="sc">{</span>ips_value(logged)<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1297,7 +1297,7 @@ backdoor-adjusted  = +0.091   (true effect is +0.100)</code></pre>
 <h2 data-number="A.4" class="anchored" data-anchor-id="app-a-optimization"><span class="header-section-number">A.4</span> Constrained and multi-objective optimization</h2>
 <p>Agent systems optimize several objectives at once: task quality, policy compliance, latency, cost, and operator load. Collapsing them to one blended score too early hides structure. A <strong>constrained</strong> problem keeps some objectives as inequalities — <span class="math inline">\min_\theta f(\theta)</span> subject to <span class="math inline">g_j(\theta) \le 0</span> — and a hard constraint declares an infeasible region rather than a price. A penalty <span class="math inline">f(\theta) + \lambda \max(0, g(\theta))</span> softens the wall, useful during optimization but no substitute for a launch invariant: an excellent average score cannot buy back one cross-tenant disclosure.</p>
 <p>With multiple objectives and no constraint to collapse them, configuration <span class="math inline">a</span> <strong>dominates</strong> <span class="math inline">b</span> when it is no worse on every objective and strictly better on at least one. The non-dominated set is the <strong>Pareto frontier</strong>, and everything behind it should leave consideration before anyone argues about preference weights. We compute the frontier over six illustrative model configurations rather than eyeballing a plot.</p>
-<div id="14ea37f8" class="cell" data-execution_count="17">
+<div id="b4425e0e" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>POINTS <span class="op">=</span> {</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"small/direct"</span>: (<span class="fl">1.0</span>, <span class="fl">0.72</span>),</span>
@@ -1335,7 +1335,7 @@ backdoor-adjusted  = +0.091   (true effect is +0.100)</code></pre>
 <span id="cb24-35"><a href="#cb24-35" aria-hidden="true" tabindex="-1"></a>            frontier.add(name)</span>
 <span id="cb24-36"><a href="#cb24-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> frontier</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="4cb5ce48" class="cell" data-execution_count="18">
+<div id="44a9f674" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"frontier :"</span>, <span class="bu">sorted</span>(pareto_names(POINTS)))</span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"dominated:"</span>, <span class="bu">sorted</span>(<span class="bu">set</span>(POINTS) <span class="op">-</span> pareto_names(POINTS)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1382,7 +1382,7 @@ Figure&nbsp;A.4: Which configurations are candidates before preference weights a
 <section id="app-a-planning" class="level2" data-number="A.5">
 <h2 data-number="A.5" class="anchored" data-anchor-id="app-a-planning"><span class="header-section-number">A.5</span> Classical search, planning, and symbolic reasoning</h2>
 <p>Language models propose plans; classical methods still supply the representations and the guarantees. <strong>A*</strong> searches a graph by expanding the node with the smallest <span class="math inline">f(n) = g(n) + h(n)</span>, where <span class="math inline">g(n)</span> is the cost paid to reach <span class="math inline">n</span> and <span class="math inline">h(n)</span> estimates the cost remaining. When <span class="math inline">h</span> never overestimates the true remaining cost — an <strong>admissible</strong> heuristic — A* returns an optimal path, and the more accurate <span class="math inline">h</span> is, the fewer nodes it expands. We run it on a small grid with walls, using Manhattan distance as the heuristic, and count expansions against uninformed search.</p>
-<div id="caac0b22" class="cell" data-execution_count="20">
+<div id="68f7626a" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>GRID <span class="op">=</span> [<span class="st">"S...."</span>, <span class="st">".###."</span>, <span class="st">".#..."</span>, <span class="st">".#.#."</span>, <span class="st">"...#G"</span>]</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1444,7 +1444,7 @@ Figure&nbsp;A.4: Which configurations are candidates before preference weights a
 <span id="cb28-59"><a href="#cb28-59" aria-hidden="true" tabindex="-1"></a>        path.append(came[path[<span class="op">-</span><span class="dv">1</span>]])</span>
 <span id="cb28-60"><a href="#cb28-60" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> path[::<span class="op">-</span><span class="dv">1</span>], expanded</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="8c391da0" class="cell" data-execution_count="21">
+<div id="01fa02e5" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>informed_path, informed_seen <span class="op">=</span> astar(manhattan)</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>_, blind_seen <span class="op">=</span> astar(<span class="kw">lambda</span> a, b: <span class="dv">0</span>)</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"path length       = </span><span class="sc">{</span><span class="bu">len</span>(informed_path) <span class="op">-</span> <span class="dv">1</span><span class="sc">}</span><span class="ss"> steps"</span>)</span>
@@ -1569,7 +1569,7 @@ Figure&nbsp;A.6: What does the Markov assumption buy, and how does an agent cont
 </div>
 </div>
 <p>This picture is the RL section’s real payload for the book: an LLM agent’s context is a belief proxy, not a state. It holds selected messages, tool results, summaries, and retrieved memory — never the environment itself — so “the model saw it earlier” is not a state invariant, and compaction, retrieval, and observation freshness decide what the controller actually believes. To make “MDP” more than a tuple, we run value iteration on a three-state chain where only the goal pays.</p>
-<div id="2cafa0ba" class="cell" data-execution_count="23">
+<div id="273bf71c" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> value_iteration(sweeps: <span class="bu">int</span>, gamma: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.9</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">list</span>[<span class="bu">float</span>]]:</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the value estimate after each sweep on a three-state reward chain.</span></span>
@@ -1599,7 +1599,7 @@ Figure&nbsp;A.6: What does the Markov assumption buy, and how does an agent cont
 <span id="cb32-27"><a href="#cb32-27" aria-hidden="true" tabindex="-1"></a>        history.append([<span class="bu">round</span>(values[s], <span class="dv">3</span>) <span class="cf">for</span> s <span class="kw">in</span> (<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">2</span>)])</span>
 <span id="cb32-28"><a href="#cb32-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> history</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="25601814" class="cell" data-execution_count="24">
+<div id="eaa3d3d3" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> i, row <span class="kw">in</span> <span class="bu">enumerate</span>(value_iteration(<span class="dv">3</span>), start<span class="op">=</span><span class="dv">1</span>):</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"sweep </span><span class="sc">{</span>i<span class="sc">}</span><span class="ss">: V = </span><span class="sc">{</span>row<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1609,7 +1609,7 @@ sweep 3: V = [0.81, 0.9, 1.0]</code></pre>
 </div>
 </div>
 <p>The reward at the goal walks backward one state per sweep — 1.0, then 0.9 at its neighbor, then 0.81 two steps out — which is discounting made visible. Now the clarifying question, priced this time in <em>bits</em> rather than utility. An agent is unsure whether a user wants a refund or a replacement (a fifty-fifty prior, one bit of uncertainty). It can ask “do you want your money back?”, which a refund-seeker answers yes to ninety percent of the time and a replacement-seeker only twenty percent. The <strong>information gain</strong> is the prior entropy minus the expected posterior entropy — the mutual information between the answer and the hidden intent.</p>
-<div id="e7fe315c" class="cell" data-execution_count="25">
+<div id="d1feb1fc" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> clarifying_info_gain(prior_a: <span class="bu">float</span>, p_yes_given_a: <span class="bu">float</span>, p_yes_given_b: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">float</span>]:</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the expected information gain, in bits, of a clarifying question.</span></span>
@@ -1643,7 +1643,7 @@ sweep 3: V = [0.81, 0.9, 1.0]</code></pre>
 <span id="cb35-31"><a href="#cb35-31" aria-hidden="true" tabindex="-1"></a>        <span class="st">"info_gain_bits"</span>: h(prior_a) <span class="op">-</span> expected_post,</span>
 <span id="cb35-32"><a href="#cb35-32" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="b7fa17a4" class="cell" data-execution_count="26">
+<div id="c3736a23" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, value <span class="kw">in</span> clarifying_info_gain(<span class="fl">0.5</span>, <span class="fl">0.9</span>, <span class="fl">0.2</span>).items():</span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:18s}</span><span class="ss"> </span><span class="sc">{</span>value<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1654,7 +1654,7 @@ info_gain_bits     0.397</code></pre>
 </div>
 </div>
 <p>The question buys about 0.40 bits — it does not fully resolve the intent (a “yes” leaves an eighteen-percent chance of replacement) but it moves the belief enough to change the next action, which is the sequential version of the VOI test. The last piece of vocabulary is exploration. A <strong>bandit</strong> is an MDP with one state: pull an arm, see a reward, learn. Cumulative <strong>regret</strong> measures the gap to always pulling the best arm, and the point of a bandit demo is that greedily exploiting your current estimate can lock onto the wrong arm forever.</p>
-<div id="3fdd51b8" class="cell" data-execution_count="27">
+<div id="825a2d72" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bandit_regret(strategy: <span class="bu">str</span>, seed: <span class="bu">int</span>, rounds: <span class="bu">int</span> <span class="op">=</span> <span class="dv">300</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return cumulative regret for a two-armed bandit under a given strategy.</span></span>
@@ -1691,7 +1691,7 @@ info_gain_bits     0.397</code></pre>
 <span id="cb38-34"><a href="#cb38-34" aria-hidden="true" tabindex="-1"></a>        regret <span class="op">+=</span> <span class="bu">max</span>(means) <span class="op">-</span> means[arm]</span>
 <span id="cb38-35"><a href="#cb38-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> regret</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="73400527" class="cell" data-execution_count="28">
+<div id="42d73d1d" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"UCB regret    = </span><span class="sc">{</span>bandit_regret(<span class="st">'ucb'</span>, <span class="dv">1</span>)<span class="sc">:.1f}</span><span class="ss">"</span>)</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"greedy regret = </span><span class="sc">{</span>bandit_regret(<span class="st">'greedy'</span>, <span class="dv">1</span>)<span class="sc">:.1f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1764,7 +1764,7 @@ Figure&nbsp;A.7: Which box owns correction in an agent feedback loop? The goal i
 </div>
 </div>
 <p>Feedback with lag can destabilize, and this is not abstract for agents: a worker retries because a write is not yet visible, both writes land, and now it compensates twice. We simulate the error dynamics of a proportional controller correcting on an observation that is <span class="math inline">d</span> steps stale, <span class="math inline">e_{t+1} = e_t - K\,e_{t-d}</span>, across three gain-and-delay settings.</p>
-<div id="5c047a46" class="cell" data-execution_count="29">
+<div id="6b6cee57" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> error_dynamics(gain: <span class="bu">float</span>, delay: <span class="bu">int</span>, steps: <span class="bu">int</span> <span class="op">=</span> <span class="dv">40</span>, start: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the error trajectory of a proportional controller with lag.</span></span>
@@ -1791,7 +1791,7 @@ Figure&nbsp;A.7: Which box owns correction in an agent feedback loop? The goal i
 <span id="cb41-24"><a href="#cb41-24" aria-hidden="true" tabindex="-1"></a>        history.append(history[<span class="op">-</span><span class="dv">1</span>] <span class="op">-</span> gain <span class="op">*</span> observed)</span>
 <span id="cb41-25"><a href="#cb41-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> history</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="5d4ddd35" class="cell" data-execution_count="30">
+<div id="84933d22" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> gain, delay <span class="kw">in</span> ((<span class="fl">0.5</span>, <span class="dv">0</span>), (<span class="fl">1.0</span>, <span class="dv">1</span>), (<span class="fl">1.3</span>, <span class="dv">1</span>)):</span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>    trace <span class="op">=</span> error_dynamics(gain, delay)</span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>    sample <span class="op">=</span> [<span class="bu">round</span>(trace[i], <span class="dv">2</span>) <span class="cf">for</span> i <span class="kw">in</span> (<span class="dv">0</span>, <span class="dv">5</span>, <span class="dv">10</span>, <span class="dv">20</span>, <span class="dv">40</span>)]</span>
@@ -1840,7 +1840,7 @@ Figure&nbsp;A.8: When does a correcting agent oscillate? Error over time for thr
 <h2 data-number="A.8" class="anchored" data-anchor-id="app-a-distributed"><span class="header-section-number">A.8</span> Distributed systems: partial failure, idempotency, and backpressure</h2>
 <p>Distributed components do not fail as one unit. A caller times out while a server keeps working; an acknowledgement is lost after an effect; a process restarts while another still holds state. This is <strong>partial failure</strong>, and its most dangerous shape is the ambiguous window: a worker sends an effect, the provider performs it, the response or the local commit is lost, and the worker cannot tell whether a retry duplicates the effect or a skip loses it. Delivery semantics do not make the effect atomic — at-most-once may lose work, at-least-once may duplicate it, and “exactly once” is only meaningful as an end-to-end property built from stable intent identity, atomic local state, and provider idempotency or reconciliation.</p>
 <p>An <strong>idempotent</strong> operation produces the same external result when repeated with the same intent, so the key must identify the intent, not the delivery attempt — a fresh UUID per retry defeats deduplication. We build the smallest worker that makes this window executable, and break it twice. First the pieces: a task whose key hashes its intent, a provider that counts calls and effects, and a ledger that records intent status.</p>
-<div id="928b9b60" class="cell" data-execution_count="32">
+<div id="285223a4" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb45"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> InjectedCrash(<span class="pp">RuntimeError</span>):</span>
 <span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Raised once, after an external effect and before the local commit."""</span></span>
@@ -1868,7 +1868,7 @@ Figure&nbsp;A.8: When does a correcting agent oscillate? Error over time for thr
 <span id="cb45-25"><a href="#cb45-25" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> hashlib.sha256(payload.encode()).hexdigest()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The provider is the external world. It counts every call, and optionally honors the caller’s key so that a repeated call performs at most one effect — the behavior a real idempotent API offers.</p>
-<div id="bf24b40a" class="cell" data-execution_count="33">
+<div id="c52a0f82" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> CountingProvider:</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""An external effect that counts calls and, optionally, deduplicates them."""</span></span>
@@ -1889,7 +1889,7 @@ Figure&nbsp;A.8: When does a correcting agent oscillate? Error over time for thr
 <span id="cb46-18"><a href="#cb46-18" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.effects <span class="op">+=</span> <span class="dv">1</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The ledger is the worker’s own memory of what it has started and finished. Reserving a key marks it pending; committing marks it done; an already-committed key refuses re-reservation. We keep it in SQLite to make the point that this is a real check-then-write, not a Python set.</p>
-<div id="8ae531f8" class="cell" data-execution_count="34">
+<div id="4073ba85" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Ledger:</span>
 <span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A local record of pending and committed intent keys.</span></span>
@@ -1959,7 +1959,7 @@ Figure&nbsp;A.9: Where does duplicate execution enter an at-least-once worker? T
 </div>
 </div>
 </div>
-<div id="819c0985" class="cell" data-execution_count="35">
+<div id="20eca80c" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb48"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> fixture_deliveries(task_count: <span class="bu">int</span> <span class="op">=</span> <span class="dv">20</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[Task]:</span>
 <span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return an at-least-once stream: unique tasks with a duplicate every fifth."""</span></span>
@@ -2063,7 +2063,7 @@ Figure&nbsp;A.9: Where does duplicate execution enter an at-least-once worker? T
 <span id="cb48-101"><a href="#cb48-101" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now we run all four drills and print their counts:</p>
-<div id="53749ce5" class="cell" data-execution_count="36">
+<div id="86701073" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(json.dumps(build_report(), indent<span class="op">=</span><span class="dv">2</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>{
@@ -2144,7 +2144,7 @@ Table&nbsp;A.1: The four drills over one twenty-task, four-duplicate stream. A l
 </div>
 <p>The lesson is precise: a local ledger fixes ordinary duplicates but <em>not</em> the crash window, because the pending row is genuinely ambiguous — the fix has to live at the provider, as an idempotency key it deduplicates on, or as reconciliation. Multi-worker exclusion, key lifetime, transactional outbox, and saga compensation are Chapter 26’s job; this lab stops exactly at the point where one worker and one local ledger can go no further.</p>
 <p>Capacity is the other half of distributed reasoning. <strong>Little’s law</strong>, <span class="math inline">L = \lambda W</span>, relates the average number of items in a stable system to the arrival rate and the time each spends inside; with a fan-out <span class="math inline">a</span> of downstream items per request it becomes <span class="math inline">L = \lambda a W</span>.</p>
-<div id="36c8f6e4" class="cell" data-execution_count="37">
+<div id="ab92fe5a" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a>lam, fan_out, residence <span class="op">=</span> <span class="dv">20</span>, <span class="dv">3</span>, <span class="dv">2</span></span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"in-flight downstream items = </span><span class="sc">{</span>lam<span class="sc">}</span><span class="ss"> * </span><span class="sc">{</span>fan_out<span class="sc">}</span><span class="ss"> * </span><span class="sc">{</span>residence<span class="sc">}</span><span class="ss"> = </span><span class="sc">{</span>lam <span class="op">*</span> fan_out <span class="op">*</span> residence<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">

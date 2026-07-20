@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-07-20T18:03:23.796193</dc:date>
+    <dc:date>2026-07-20T18:23:37.320339</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -39,50 +39,50 @@ z
    </g>
    <g id="PathCollection_1">
     <defs>
-     <path id="mee7055561b" d="M -15 15 
+     <path id="mec42f8cc2e" d="M -15 15 
 L 15 15 
 L 15 -15 
 L -15 -15 
 z
 " style="stroke: #666666"/>
     </defs>
-    <g clip-path="url(#p6995e24369)">
-     <use xlink:href="#mee7055561b" x="143.700977" y="96.560742" style="fill: #2a7f4f; stroke: #666666"/>
+    <g clip-path="url(#pc341b7b051)">
+     <use xlink:href="#mec42f8cc2e" x="143.700977" y="96.560742" style="fill: #2a7f4f; stroke: #666666"/>
     </g>
    </g>
    <g id="PathCollection_2">
     <defs>
-     <path id="me4c406d5cf" d="M -15 15 
+     <path id="m9468d8efa0" d="M -15 15 
 L 15 15 
 L 15 -15 
 L -15 -15 
 z
 " style="stroke: #666666"/>
     </defs>
-    <g clip-path="url(#p6995e24369)">
-     <use xlink:href="#me4c406d5cf" x="307.768555" y="96.560742" style="fill: #e6e6e6; stroke: #666666"/>
+    <g clip-path="url(#pc341b7b051)">
+     <use xlink:href="#m9468d8efa0" x="307.768555" y="96.560742" style="fill: #e6e6e6; stroke: #666666"/>
     </g>
    </g>
    <g id="PathCollection_3">
-    <g clip-path="url(#p6995e24369)">
-     <use xlink:href="#mee7055561b" x="143.700977" y="36.986914" style="fill: #2a7f4f; stroke: #666666"/>
+    <g clip-path="url(#pc341b7b051)">
+     <use xlink:href="#mec42f8cc2e" x="143.700977" y="36.986914" style="fill: #2a7f4f; stroke: #666666"/>
     </g>
    </g>
    <g id="PathCollection_4">
-    <g clip-path="url(#p6995e24369)">
-     <use xlink:href="#mee7055561b" x="307.768555" y="36.986914" style="fill: #2a7f4f; stroke: #666666"/>
+    <g clip-path="url(#pc341b7b051)">
+     <use xlink:href="#mec42f8cc2e" x="307.768555" y="36.986914" style="fill: #2a7f4f; stroke: #666666"/>
     </g>
    </g>
    <g id="matplotlib.axis_1">
     <g id="xtick_1">
      <g id="line2d_1">
       <defs>
-       <path id="maaf776be8b" d="M 0 0 
+       <path id="mae4a1bf536" d="M 0 0 
 L 0 3.5 
 " style="stroke: #000000; stroke-width: 0.8"/>
       </defs>
       <g>
-       <use xlink:href="#maaf776be8b" x="143.700977" y="126.347656" style="stroke: #000000; stroke-width: 0.8"/>
+       <use xlink:href="#mae4a1bf536" x="143.700977" y="126.347656" style="stroke: #000000; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_1">
@@ -257,7 +257,7 @@ z
     <g id="xtick_2">
      <g id="line2d_2">
       <g>
-       <use xlink:href="#maaf776be8b" x="307.768555" y="126.347656" style="stroke: #000000; stroke-width: 0.8"/>
+       <use xlink:href="#mae4a1bf536" x="307.768555" y="126.347656" style="stroke: #000000; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_2">
@@ -425,12 +425,12 @@ z
     <g id="ytick_1">
      <g id="line2d_3">
       <defs>
-       <path id="m5240ebd1ac" d="M 0 0 
+       <path id="mb1277d8521" d="M 0 0 
 L -3.5 0 
 " style="stroke: #000000; stroke-width: 0.8"/>
       </defs>
       <g>
-       <use xlink:href="#m5240ebd1ac" x="61.667188" y="96.560742" style="stroke: #000000; stroke-width: 0.8"/>
+       <use xlink:href="#mb1277d8521" x="61.667188" y="96.560742" style="stroke: #000000; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_3">
@@ -522,7 +522,7 @@ z
     <g id="ytick_2">
      <g id="line2d_4">
       <g>
-       <use xlink:href="#m5240ebd1ac" x="61.667188" y="36.986914" style="stroke: #000000; stroke-width: 0.8"/>
+       <use xlink:href="#mb1277d8521" x="61.667188" y="36.986914" style="stroke: #000000; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_4">
@@ -669,7 +669,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="p6995e24369">
+  <clipPath id="pc341b7b051">
    <rect x="61.667188" y="7.2" width="328.135156" height="119.147656"/>
   </clipPath>
  </defs>

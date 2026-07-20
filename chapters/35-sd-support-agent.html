@@ -847,7 +847,7 @@ Table&nbsp;35.1: The contract restated with numbers. The two latency rows are th
 <section id="sec-ch35-numbers" class="level2" data-number="35.2">
 <h2 data-number="35.2" class="anchored" data-anchor-id="sec-ch35-numbers"><span class="header-section-number">35.2</span> The numbers first</h2>
 <p>Numbers before boxes. We recall Chapter 33’s toolkit — the executed calculators for loop cost, completion latency, and in-flight concurrency — and aim them at this prompt. The illustrative frontier-class prices ($3 and $15 per million input and output tokens, cached input at a tenth) are the framework’s teaching constants.</p>
-<div id="19b734cd" class="cell" data-execution_count="1">
+<div id="70089130" class="cell" data-execution_count="1">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
@@ -892,7 +892,7 @@ steps a $0.30 budget buys (hot cache)  : 35</code></pre>
 </div>
 <p>Three anchors and the family’s first lesson. A typical resolution costs under four cents; the interesting number is the last one: at the twelve-step cap, an adversary who <em>defeats the prompt cache</em> (novel tokens every turn, so nothing bills at the cached rate) can drive one session to about twenty-two cents. That is the denial-of-wallet bound — the most a single hijacked session can spend — and it exists only because the step cap exists. A $0.30 budget would buy far more than twelve hot-cache steps, which is the point: the cap here is set by <em>safety and latency</em>, not by the budget, and it bounds cost as a side effect. Loop cost is quadratic in steps without a cache (<a href="33-sd-interview-framework.html#sec-ch33-loops" class="quarto-xref"><span>Section 33.5</span></a>); the hard cap with escalate-on-cap is the control.</p>
 <p>Latency next, and this is where the SLO split lives. A conversational turn is a tool round-trip (one account lookup) plus a short streamed reply — support answers are terse, so the output cap is small.</p>
-<div id="e0523054" class="cell" data-execution_count="2">
+<div id="f5858c3d" class="cell" data-execution_count="2">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>tool_round_trip_ms <span class="op">=</span> <span class="fl">300.0</span>        <span class="co"># one account lookup before the model replies</span></span>
@@ -911,7 +911,7 @@ chats in flight at 20 turns/s : 39  -- not a throughput-bound design</code></pre
 </div>
 <p>The reply completes in about two seconds and the first token streams under a second, so the conversational turn keeps its SLO. The gated path <em>cannot</em>: a refund above the auto-approve threshold waits on a human, and no amount of tuning makes a human synchronous. That is why <a href="#tbl-ch35-req" class="quarto-xref">Table&nbsp;<span>35.1</span></a> states two latency rows — a conversational-turn SLO and an effect-completion SLO — and why the gated action returns “we’re processing your refund” inside the turn while the effect resolves asynchronously. Thirty-nine chats in flight confirms the design is not infra-bound; the serving fleet is a rounding error next to the authority machinery.</p>
 <p>The last anchor is the family’s numeric trap, and it is a trap about <em>metrics</em>, not tokens. The temptation is to treat “unauthorized-action rate” as an SLO you buy down with a better model.</p>
-<div id="efecfaae" class="cell" data-execution_count="3">
+<div id="d2ab2fe5" class="cell" data-execution_count="3">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>actions_per_day <span class="op">=</span> <span class="dv">50_000</span></span>

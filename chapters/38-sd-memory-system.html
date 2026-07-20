@@ -834,7 +834,7 @@ Table&nbsp;38.1: The memory contract restated with numbers, and the design conse
 <section id="sec-ch38-numbers" class="level2" data-number="38.2">
 <h2 data-number="38.2" class="anchored" data-anchor-id="sec-ch38-numbers"><span class="header-section-number">38.2</span> The numbers first</h2>
 <p>Numbers before boxes. Four anchors settle this design, and each imports the back-of-envelope toolkit from Chapter 33 rather than re-deriving it. We start by loading it and pricing the read path.</p>
-<div id="f5b47baf" class="cell" data-execution_count="1">
+<div id="d6e4cb05" class="cell" data-execution_count="1">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
@@ -866,7 +866,7 @@ async write path adds 0 ms to the turn (off the hot path)</code></pre>
 </div>
 </div>
 <p>Twenty-eight milliseconds is three percent of a 900 ms TTFT budget — affordable, but it is <em>serial before generation</em> and competes with retrieval for the same budget, so it is not free. The write path adds nothing to the turn because it is asynchronous. Now the number that justifies the whole system: memory replaces replaying a growing history with injecting a compact, ranked, scoped digest. We price both against <a href="33-sd-interview-framework.html#eq-ch33-cost" class="quarto-xref">Equation&nbsp;<span>33.1</span></a>.</p>
-<div id="0f9eabff" class="cell" data-execution_count="2">
+<div id="3aa85a21" class="cell" data-execution_count="2">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>price <span class="op">=</span> boe.TokenPrice(input_per_million<span class="op">=</span><span class="fl">3.00</span>, output_per_million<span class="op">=</span><span class="fl">15.00</span>,</span>
@@ -890,7 +890,7 @@ at 5M users x 8 turns/day: $1,458,000/day saved</code></pre>
 </div>
 </div>
 <p>The commonly quoted “over ninety percent token savings” is about <em>input</em> tokens — here 94% — and the honest interview move is to separate that from total cost: the fixed output charge is a floor caching cannot move, so per-turn dollars fall 85%, not 94%. At fleet scale the delta is over a million dollars a day, which is what makes memory an economics decision, not a feature. The last anchor is where the family’s numeric trap hides: sizing and latency of the read.</p>
-<div id="4a0c0531" class="cell" data-execution_count="3">
+<div id="93050d29" class="cell" data-execution_count="3">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>users, per_user <span class="op">=</span> <span class="dv">5_000_000</span>, <span class="dv">200</span></span>

@@ -839,7 +839,7 @@ window.Quarto = {
 <h2 data-number="17.1" class="anchored" data-anchor-id="sec-ch17-aci"><span class="header-section-number">17.1</span> The interface is part of the intelligence</h2>
 <p>Start with the claim that interface design is a model-performance variable, and test it with numbers rather than assert it. This is the <strong>Agent–Computer Interface</strong> (ACI) thesis: the same model, given a better vocabulary of actions and observations, becomes a more capable agent <span class="citation" data-cites="yang2024sweagent">(<a href="../references.html#ref-yang2024sweagent" role="doc-biblioref">Yang et al. 2024</a>)</span>. The model reads a small <strong>card</strong> for each tool — a name and a description — and must pick the right one for the task. If the cards are vague, selection fails before any code runs.</p>
 <p>We need a stand-in for the model’s selection step. A real system embeds the task and the cards and ranks by similarity; we use a transparent lexical scorer so the reader can see exactly why a tool wins. It scores a tool by how many meaningful words the task and the card share, after dropping stopwords and light suffixes. This is a teaching probe, not a production retriever, and its transparency is the point — every decision it makes is inspectable.</p>
-<div id="461822d3" class="cell" data-execution_count="1">
+<div id="63a2feaf" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> re</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
@@ -878,7 +878,7 @@ window.Quarto = {
 <span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> w <span class="kw">not</span> <span class="kw">in</span> STOP <span class="kw">and</span> <span class="bu">len</span>(w) <span class="op">&gt;</span> <span class="dv">2</span>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A tool card is just the model-visible pair. We keep it separate from the full executable contract we build in the next section: the model chooses on the card, the application enforces on the contract.</p>
-<div id="e6b20c10" class="cell" data-execution_count="2">
+<div id="7e63849b" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ToolCard:</span>
@@ -914,7 +914,7 @@ window.Quarto = {
 <span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the eval. Six support tasks, each phrased the way a user would phrase it — not as a paraphrase of any tool’s description, which is what would make the test a tautology. Each task has one correct tool. Success is the fraction of tasks routed to the right tool.</p>
-<div id="49f80fab" class="cell" data-execution_count="3">
+<div id="ec22beb6" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>tasks <span class="op">=</span> [</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"the package arrived broken and they want their money back"</span>, <span class="st">"refund_issue"</span>),</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"check whether this order has shipped yet"</span>, <span class="st">"order_status"</span>),</span>
@@ -930,7 +930,7 @@ window.Quarto = {
 <span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(pick <span class="op">==</span> expected <span class="cf">for</span> pick, (_, expected) <span class="kw">in</span> <span class="bu">zip</span>(picks, tasks)) <span class="op">/</span> <span class="bu">len</span>(tasks)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The first surface is the grab-bag every codebase grows by accident: short generic verbs, descriptions that restate the name.</p>
-<div id="c553c631" class="cell" data-execution_count="4">
+<div id="41bfceba" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>bad <span class="op">=</span> [</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    ToolCard(<span class="st">"get"</span>, <span class="st">"get information"</span>),</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    ToolCard(<span class="st">"do"</span>, <span class="st">"perform an action"</span>),</span>
@@ -947,7 +947,7 @@ picks: ['get', 'get', 'get', 'get', 'get', 'get']</code></pre>
 </div>
 </div>
 <p>Every task routes to <code>get</code>, because no card shares any word with any task and the tie-break falls to the first. The model is not stupid; the surface gave it nothing to distinguish. Now rewrite each card as a specific verb–object name with a description that names the job.</p>
-<div id="5d23929b" class="cell" data-execution_count="5">
+<div id="f29cee1c" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>good_v1 <span class="op">=</span> [</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    ToolCard(<span class="st">"refund_issue"</span>, <span class="st">"issue an approved refund and send money back to the original payment method"</span>),</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    ToolCard(<span class="st">"order_status"</span>, <span class="st">"look up whether an order has shipped and its tracking and delivery state"</span>),</span>
@@ -972,7 +972,7 @@ picks: ['get', 'get', 'get', 'get', 'get', 'get']</code></pre>
 </div>
 </div>
 <p>Success jumps to 0.83, but one task still routes wrong: <em>“start a refund but do not send the money yet”</em> picks <code>refund_issue</code>, not <code>refund_draft</code>. Both cards say “refund”; the request’s real intent — <em>do not send money</em> — is the exclusion that separates them, and neither card encodes it. This is the wrong-tool case a real eval exists to catch, and it points at the fix.</p>
-<div id="94523575" class="cell" data-execution_count="6">
+<div id="60b28f76" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>good_v2 <span class="op">=</span> <span class="bu">list</span>(good_v1)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>good_v2[<span class="dv">0</span>] <span class="op">=</span> ToolCard(<span class="st">"refund_issue"</span>,</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>                      <span class="st">"issue an approved refund that actually sends money; do not use to draft or propose"</span>)</span>
@@ -1018,7 +1018,7 @@ Figure&nbsp;17.1: Why does the interface change model capability? The same route
 <section id="sec-ch17-contract" class="level2" data-number="17.2">
 <h2 data-number="17.2" class="anchored" data-anchor-id="sec-ch17-contract"><span class="header-section-number">17.2</span> One tool contract, and its risk rating</h2>
 <p>The card is what the model reads; the <strong>contract</strong> is what the application enforces. It adds three things the card omits: a typed argument schema, a risk rating, and the handler that actually runs. Separating risk from arguments lets the harness decide <em>at discovery time</em> — before it inspects a single argument — whether a call needs a budget, a sandbox, or a human. We use a two-value rating to expose the mechanism; production needs data-sensitivity and resource-impact axes too, because a “read” that exports regulated data is not low-risk merely because it leaves state unchanged.</p>
-<div id="60d2f6d0" class="cell" data-execution_count="8">
+<div id="5d270a9e" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> enum <span class="im">import</span> Enum</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> typing <span class="im">import</span> Any, Callable</span>
@@ -1054,7 +1054,7 @@ Figure&nbsp;17.1: Why does the interface change model capability? The same route
 <span id="cb11-33"><a href="#cb11-33" aria-hidden="true" tabindex="-1"></a>    target_version: Callable[[<span class="bu">dict</span>[<span class="bu">str</span>, Any]], <span class="bu">str</span>] <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A proposed call and the authenticated context that surrounds it are separate values. The model supplies the call; the application supplies the tenant and actor. The model never names its own authority.</p>
-<div id="c231f443" class="cell" data-execution_count="9">
+<div id="b69cc458" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Call:</span>
@@ -1072,7 +1072,7 @@ Figure&nbsp;17.1: Why does the interface change model capability? The same route
 <span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>    actor_id: <span class="bu">str</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Before any tool runs, its arguments are validated against the schema. A malformed call is a typed rejection the agent can react to, not an exception that unwinds the loop. The model should never learn argument legality from a stack trace.</p>
-<div id="85559e07" class="cell" data-execution_count="10">
+<div id="26a9a96e" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> validate_call(call: Call, tool: Tool) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Reject a call whose arguments do not match the tool's typed schema.</span></span>
@@ -1095,7 +1095,7 @@ Figure&nbsp;17.1: Why does the interface change model capability? The same route
 <span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>            <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss"> must be </span><span class="sc">{</span>expected<span class="sc">.</span><span class="va">__name__</span><span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We build the six-tool surface around one mutable order and check that validation catches a wrong-typed argument. The <code>refund_issue</code> tool is the only <code>WRITE</code>; it carries a <code>target_version</code> so the harness can later detect a changed order.</p>
-<div id="e257b716" class="cell" data-execution_count="11">
+<div id="3f9a0db1" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>order <span class="op">=</span> {<span class="st">"status"</span>: <span class="st">"damaged"</span>, <span class="st">"version"</span>: <span class="st">"v1"</span>, <span class="st">"refunded_cents"</span>: <span class="dv">0</span>}</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1135,7 +1135,7 @@ rejected: amount_cents must be int</code></pre>
 <section id="sec-ch17-search" class="level2" data-number="17.3">
 <h2 data-number="17.3" class="anchored" data-anchor-id="sec-ch17-search"><span class="header-section-number">17.3</span> Search the tool surface, or hand over a code runner</h2>
 <p>Six tools fit in a prompt. Six hundred do not, and a large menu also breeds selection errors: the more near-synonyms the model sees, the more often it picks the wrong one. Two patterns handle scale. The first keeps typed tools but <strong>retrieves</strong> a small candidate set per task instead of preloading the catalog. The retrieval objective is recall — missing the needed tool makes the task impossible, while one extra plausible tool costs only a little context — so we measure recall at k and the characters exposed.</p>
-<div id="475d525f" class="cell" data-execution_count="12">
+<div id="71efa019" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> select_tools(query: <span class="bu">str</span>, tools: <span class="bu">list</span>[Tool], k: <span class="bu">int</span> <span class="op">=</span> <span class="dv">3</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[Tool]:</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Retrieve the k tools whose card best matches a task query.</span></span>
@@ -1161,7 +1161,7 @@ rejected: amount_cents must be int</code></pre>
 <span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [tools[i] <span class="cf">for</span> i <span class="kw">in</span> ranked[:k]]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We build a ten-tool catalog and six queries whose target tool is known, then sweep k.</p>
-<div id="5243d583" class="cell" data-execution_count="13">
+<div id="eb7ace4f" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>catalog <span class="op">=</span> [</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    Tool(<span class="st">"refund_issue"</span>, <span class="st">"issue an approved refund and send money to the original payment method"</span>, {}, Risk.WRITE, <span class="kw">lambda</span>: <span class="va">None</span>),</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    Tool(<span class="st">"order_status"</span>, <span class="st">"check whether an order shipped and its delivery tracking"</span>, {}, Risk.READ, <span class="kw">lambda</span>: <span class="va">None</span>),</span>
@@ -1242,7 +1242,7 @@ Figure&nbsp;17.2: What does raising k buy, and what does it cost? Retrieval reca
 \sum_i n_i \le W - R.
 \tag{17.1}</span></span></p>
 <p>The inequality is simple; the policy is deciding which rows survive when it does not hold. We admit by ascending priority — the safety contract and current task first, older history last — until the budget is spent.</p>
-<div id="0dfd6130" class="cell" data-execution_count="15">
+<div id="cc756388" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> LedgerRow:</span>
@@ -1293,7 +1293,7 @@ Figure&nbsp;17.2: What does raising k buy, and what does it cost? Retrieval reca
 <span id="cb20-48"><a href="#cb20-48" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> admitted, evicted</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We fill a ledger for a 1,200-token window reserving 300 for output, then print what it admits and what it drops.</p>
-<div id="4ddd86fa" class="cell" data-execution_count="16">
+<div id="df4e0e29" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>ledger <span class="op">=</span> ContextLedger(window<span class="op">=</span><span class="dv">1200</span>, reserve<span class="op">=</span><span class="dv">300</span>)</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> row <span class="kw">in</span> [</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    LedgerRow(<span class="st">"safety_contract"</span>, <span class="dv">120</span>, <span class="st">"authoritative"</span>, <span class="dv">0</span>),</span>
@@ -1363,7 +1363,7 @@ Figure&nbsp;17.3: Which components enter one model call? Admitted rows fill the 
 <section id="sec-ch17-sandbox" class="level2" data-number="17.5">
 <h2 data-number="17.5" class="anchored" data-anchor-id="sec-ch17-sandbox"><span class="header-section-number">17.5</span> A workspace boundary, and a real sandbox</h2>
 <p>Longer tasks need files: notes, patches, downloaded pages, test reports. A per-thread <strong>workspace</strong> gives them stable names and separates one run from another. The smallest useful rule resolves every requested path against one owned root and rejects anything outside it.</p>
-<div id="b9dd153b" class="cell" data-execution_count="18">
+<div id="63b4fd70" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1398,7 +1398,7 @@ Figure&nbsp;17.3: Which components enter one model call? Admitted rows fill the 
 <span id="cb24-32"><a href="#cb24-32" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> candidate</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Path resolution is naming, not execution containment. The moment a tool runs untrusted code — the code-execution pattern from the last section, or any subprocess a tool spawns — we need to bound its CPU, memory, and time so a runaway or hostile snippet cannot take the host down. On Linux the kernel gives us that directly: a child process with resource limits set before <code>exec</code>. Here is a restricted executor that runs code in an isolated subprocess under a CPU-second and address-space cap, with a wall-clock timeout as a backstop.</p>
-<div id="b5f89ed0" class="cell" data-execution_count="19">
+<div id="02d9c3c8" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> subprocess</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
@@ -1442,7 +1442,7 @@ Figure&nbsp;17.3: Which components enter one model call? Admitted rows fill the 
 <span id="cb25-41"><a href="#cb25-41" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"status"</span>: <span class="st">"ok"</span>, <span class="st">"detail"</span>: proc.stdout.strip()}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run three snippets: a benign computation, an infinite loop, and an allocation bomb.</p>
-<div id="d4ca603c" class="cell" data-execution_count="20">
+<div id="9e7eb259" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"benign :"</span>, run_restricted(<span class="st">"print(sum(range(1000)))"</span>))</span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"cpu    :"</span>, run_restricted(<span class="st">"while True: pass"</span>))</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"memory :"</span>, run_restricted(<span class="st">"x = bytearray(400 * 1024 * 1024)"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1453,7 +1453,7 @@ memory : {'status': 'error', 'detail': 'MemoryError'}</code></pre>
 </div>
 </div>
 <p>The benign call returns its output; the busy loop is killed by the CPU limit; the allocation bomb dies with <code>MemoryError</code> under the address-space cap. This is the containment that makes the one-code-tool pattern from the previous section concrete. Instead of exposing separate <code>list_orders</code>, <code>filter_by_state</code>, and <code>sum_amounts</code> tools and having the model orchestrate three round-trips, we expose one code tool and let the model write the aggregation once. We embed the data and run the snippet under the same limits.</p>
-<div id="28ff8384" class="cell" data-execution_count="21">
+<div id="c94dae15" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>orders <span class="op">=</span> [{<span class="st">"id"</span>: <span class="st">"A-17"</span>, <span class="st">"cents"</span>: <span class="dv">4999</span>, <span class="st">"state"</span>: <span class="st">"shipped"</span>},</span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>          {<span class="st">"id"</span>: <span class="st">"A-18"</span>, <span class="st">"cents"</span>: <span class="dv">1200</span>, <span class="st">"state"</span>: <span class="st">"pending"</span>},</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>          {<span class="st">"id"</span>: <span class="st">"A-19"</span>, <span class="st">"cents"</span>: <span class="dv">3050</span>, <span class="st">"state"</span>: <span class="st">"shipped"</span>}]</span>
@@ -1465,7 +1465,7 @@ memory : {'status': 'error', 'detail': 'MemoryError'}</code></pre>
 </div>
 </div>
 <p>The model expressed a filter-and-sum in one turn, and the sandbox bounded it — that is the whole trade: the code tool collapses the schema surface but only pays off if the executor holds. It is also how we would run any subprocess a tool spawns. But resource limits are not filesystem or network containment. The next snippet, run under the very same limits, reads a file far outside any workspace — and succeeds.</p>
-<div id="a3c8369d" class="cell" data-execution_count="22">
+<div id="c30f51bd" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>escape <span class="op">=</span> run_restricted(<span class="st">"import os; print(os.path.exists('/etc/hostname'))"</span>)</span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"filesystem escape :"</span>, escape)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1503,7 +1503,7 @@ Figure&nbsp;17.4: What does each containment layer cover, and what still escapes
 <h2 data-number="17.6" class="anchored" data-anchor-id="sec-ch17-skills"><span class="header-section-number">17.6</span> Skills as progressively disclosed procedures</h2>
 <p>A tool supplies an action; a <strong>skill</strong> supplies procedural knowledge — when to use which tools, in what order, what to check. Loading every skill’s instructions into every prompt taxes every task with procedures it will not use. The durable fix is <strong>progressive disclosure</strong> in three levels: cheap metadata (a name and a description) stays resident so the harness can index broadly; the instructions load only when a task activates the skill; and resources — scripts, templates, reference data — load only when a step needs them.</p>
 <p>We write a real skill to disk: a <code>SKILL.md</code> with front-matter metadata, an instructions body, and one resource file.</p>
-<div id="e47de49c" class="cell" data-execution_count="23">
+<div id="868eeb27" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>skill_dir <span class="op">=</span> Path(tempfile.mkdtemp()) <span class="op">/</span> <span class="st">"refund-investigation"</span></span>
@@ -1530,7 +1530,7 @@ Figure&nbsp;17.4: What does each containment layer cover, and what still escapes
 </div>
 </div>
 <p>The loader reads only what a level needs. Metadata parsing touches the front-matter alone; the body and resources are separate reads gated on demand.</p>
-<div id="f581637b" class="cell" data-execution_count="24">
+<div id="8c6c87d5" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> SkillCard:</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A skill's always-resident metadata plus lazy access to deeper levels.</span></span>
@@ -1570,7 +1570,7 @@ Figure&nbsp;17.4: What does each containment layer cover, and what still escapes
 <span id="cb34-37"><a href="#cb34-37" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> (<span class="va">self</span>.root <span class="op">/</span> <span class="st">"instructions.md"</span>).read_text()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Before activation only metadata is resident. We show the disclosure decision on one task, and how many characters each level costs.</p>
-<div id="406996a1" class="cell" data-execution_count="25">
+<div id="7148fb29" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>card <span class="op">=</span> SkillCard(skill_dir)</span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"resident metadata: </span><span class="sc">{</span>card<span class="sc">.</span>metadata_chars<span class="sc">}</span><span class="ss"> chars"</span>)</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"activates on 'can this order be refunded'? "</span>, card.activates_on(<span class="st">"can this order be refunded"</span>))</span>
@@ -1585,7 +1585,7 @@ on activation, instructions add 214 chars</code></pre>
 </div>
 </div>
 <p>The description fires the skill; the excluded task — a shipping-address change — does not, even though “address” appears in the exclusion clause, because the classifier subtracts exclusion matches. A skill description is an activation classifier, so we score it on labeled cases: six tasks that should activate, six that should not.</p>
-<div id="229522a6" class="cell" data-execution_count="26">
+<div id="9766daf2" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>positives <span class="op">=</span> [</span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"can this order be refunded"</span>, <span class="st">"is the buyer eligible for a refund"</span>,</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"check the refund window for this purchase"</span>, <span class="st">"does this refund fall inside the returns policy"</span>,</span>
@@ -1642,7 +1642,7 @@ Figure&nbsp;17.5: What loads, and when? Only metadata stays resident; instructio
 <h2 data-number="17.7" class="anchored" data-anchor-id="sec-ch17-approval"><span class="header-section-number">17.7</span> Human approval, revalidated at the last moment</h2>
 <p>“Ask a human before dangerous actions” sounds precise until the system has to pause. What exactly did the person approve? Was the target still in the reviewed state when the action ran? Could the model change the arguments afterward? A <strong>time-of-check to time-of-use</strong> (TOCTOU) failure is the gap between the state a human reviewed and the state the handler used. The model may substitute an argument; another process may change the order; the approval may expire. The defense is to bind the approval to exact values and <strong>revalidate at the last responsible moment</strong> — recompute the digests immediately before the handler runs.</p>
 <p>We bind two digests: an <em>action</em> digest over the tool, canonical arguments, and authenticated identity, and a <em>target</em> digest over the resource version the human saw. Canonical serialization makes the hashes stable.</p>
-<div id="0628adb1" class="cell" data-execution_count="28">
+<div id="afc1ec85" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> hashlib</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> json</span>
@@ -1677,7 +1677,7 @@ Figure&nbsp;17.5: What loads, and when? Only metadata stays resident; instructio
 <span id="cb40-32"><a href="#cb40-32" aria-hidden="true" tabindex="-1"></a>                    <span class="st">"tenant"</span>: context.tenant_id, <span class="st">"actor"</span>: context.actor_id})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>An approval request is an immutable proposal carrying both digests and an expiry; approving it records a person without changing the payload. Editing a proposal creates a <em>new</em> request rather than mutating the one an approval signs.</p>
-<div id="09701ae8" class="cell" data-execution_count="29">
+<div id="eefb1d03" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ApprovalRequest:</span>
@@ -1729,7 +1729,7 @@ Figure&nbsp;17.5: What loads, and when? Only metadata stays resident; instructio
 <span id="cb41-49"><a href="#cb41-49" aria-hidden="true" tabindex="-1"></a>                    request.expires_at, approver_id)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The dispatcher is where the binding earns its keep. For a write, it re-reads the current target version, recomputes both digests, checks expiry, and only then calls the handler. Any mismatch is a typed rejection.</p>
-<div id="de67ad21" class="cell" data-execution_count="30">
+<div id="24b7efbc" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dispatch(call: Call, context: ExecutionContext, tool: Tool,</span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>             approval: Approval <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, now: <span class="bu">float</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>) <span class="op">-&gt;</span> Any:</span>
@@ -1770,7 +1770,7 @@ Figure&nbsp;17.5: What loads, and when? Only metadata stays resident; instructio
 <span id="cb42-38"><a href="#cb42-38" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> tool.handler(<span class="op">**</span>call.arguments)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the attack. A human approves a 4,999-cent refund on order <code>A-17</code> at version <code>v1</code>. Then three things go wrong in turn: the model substitutes a larger amount, another process bumps the order version, and the clock passes the expiry. Each must be caught; a fresh, matching approval must still succeed.</p>
-<div id="da2a27e2" class="cell" data-execution_count="31">
+<div id="0c235abe" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>order <span class="op">=</span> {<span class="st">"status"</span>: <span class="st">"damaged"</span>, <span class="st">"version"</span>: <span class="st">"v1"</span>, <span class="st">"refunded_cents"</span>: <span class="dv">0</span>}</span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a>refund_tool <span class="op">=</span> Tool(<span class="st">"refund_issue"</span>, <span class="st">"issue an approved refund"</span>,</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>                   {<span class="st">"order_id"</span>: <span class="bu">str</span>, <span class="st">"amount_cents"</span>: <span class="bu">int</span>}, Risk.WRITE, issue_refund,</span>
@@ -1800,7 +1800,7 @@ refunded_cents after all three attacks: 0</code></pre>
 </div>
 </div>
 <p>None of the three reaches the handler, and <code>refunded_cents</code> is still zero — no attack moved money. A fresh approval bound to the current state runs cleanly.</p>
-<div id="1dd81448" class="cell" data-execution_count="32">
+<div id="9b841b04" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb45"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>order[<span class="st">"version"</span>] <span class="op">=</span> <span class="st">"v1"</span></span>
 <span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a>fresh <span class="op">=</span> approve(request_approval(original, context, order[<span class="st">"version"</span>], ttl_s<span class="op">=</span><span class="dv">60</span>, now<span class="op">=</span><span class="dv">300</span>), <span class="st">"manager-3"</span>)</span>
 <span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>receipt <span class="op">=</span> dispatch(original, context, refund_tool, fresh, now<span class="op">=</span><span class="dv">305</span>)</span>
@@ -1850,7 +1850,7 @@ Figure&nbsp;17.6: How does approval stay bound when arguments or target state ch
 <section id="sec-ch17-compose" class="level2" data-number="17.8">
 <h2 data-number="17.8" class="anchored" data-anchor-id="sec-ch17-compose"><span class="header-section-number">17.8</span> Compose safely, and resume without losing count</h2>
 <p>Individually harmless actions can compose into harm. Three approved reads — an order that contains an email, a customer profile that contains an address, an export to an outside ticket — each look low-risk, but chained they exfiltrate personal data. The harness must reason about the <em>sequence</em>, not just each call. And high-value writes often need more than one person: <strong>dual control</strong> requires two distinct approvers, which means rejecting a second signature from the same identity.</p>
-<div id="4e8ca628" class="cell" data-execution_count="33">
+<div id="387f51e5" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> DualControl:</span>
 <span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Collect distinct approver signatures until a threshold is met.</span></span>
@@ -1882,7 +1882,7 @@ Figure&nbsp;17.6: How does approval stay bound when arguments or target state ch
 <span id="cb47-29"><a href="#cb47-29" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="bu">len</span>(<span class="va">self</span>.signers) <span class="op">&gt;=</span> <span class="va">self</span>.threshold</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We show a large refund requiring two approvers, and the rejection of a reused identity.</p>
-<div id="f1b3151d" class="cell" data-execution_count="34">
+<div id="d68a1d15" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb48"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a>gate <span class="op">=</span> DualControl(threshold<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"manager-3 signs, threshold met?"</span>, gate.sign(<span class="st">"manager-3"</span>))</span>
 <span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
@@ -1898,7 +1898,7 @@ director-1 signs, threshold met? True</code></pre>
 </div>
 <p>The first signature does not authorize; the same identity signing again is rejected; a second distinct approver clears the gate. The mechanism binds to whatever policy Chapter 24 sets — a cost threshold, a cooling-off delay — without the harness needing to know the policy.</p>
 <p>A long-running harness must also survive a restart between approval and execution. It checkpoints thread state and appends audit events with stable identifiers, so replaying an event after a crash does not double-count it. We use SQLite with <code>INSERT OR IGNORE</code> keyed on the event id.</p>
-<div id="1ff7e769" class="cell" data-execution_count="35">
+<div id="3cb2d19a" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sqlite3</span>
 <span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1951,7 +1951,7 @@ director-1 signs, threshold met? True</code></pre>
 <span id="cb50-50"><a href="#cb50-50" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.db.execute(<span class="st">"SELECT COUNT(*) FROM events WHERE thread_id=?"</span>, (thread_id,)).fetchone()[<span class="dv">0</span>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We write an approval event, checkpoint, close the database to simulate a crash, reopen, and replay the same event.</p>
-<div id="26e905f3" class="cell" data-execution_count="36">
+<div id="53a8c815" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> tempfile.TemporaryDirectory() <span class="im">as</span> directory:</span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>    path <span class="op">=</span> Path(directory) <span class="op">/</span> <span class="st">"harness.sqlite"</span></span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>    first <span class="op">=</span> Journal(path)</span>

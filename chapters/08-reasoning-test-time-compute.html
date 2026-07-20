@@ -840,7 +840,7 @@ window.Quarto = {
 <section id="sec-ch08-task" class="level2" data-number="8.1">
 <h2 data-number="8.1" class="anchored" data-anchor-id="sec-ch08-task"><span class="header-section-number">8.1</span> A verifiable task and a controllable solver</h2>
 <p>Everything downstream needs two things: a task whose answer can be <em>checked</em> by a program, and a way to dial how often the model gets it right. We use multi-step integer arithmetic — a chain of additions and subtractions applied to a starting value. A problem carries its own gold trace (the correct running value after each step) and its gold answer (the last value), so checking is exact substitution, not judgment.</p>
-<div id="7055999d" class="cell" data-execution_count="1">
+<div id="914c44a1" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> random</span>
@@ -891,7 +891,7 @@ window.Quarto = {
 <span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Problem(rng.randint(<span class="dv">1</span>, <span class="dv">9</span>), ops)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The solver is where the intuition about serial reasoning lives. A transformer applies a fixed number of layers per generated token; emitting an intermediate result and conditioning on it lets a fixed-depth network run a longer computation through the autoregressive loop (<a href="#fig-ch08-serial" class="quarto-xref">Figure&nbsp;<span>8.1</span></a>). Our solver imitates that step by step: at each step it writes the correct running value with probability <code>reliability</code>, and otherwise <em>slips</em>. A slip corrupts the running value, and — as in real arithmetic reasoning — every later step inherits the corrupted value, so one early mistake dooms the final answer. Slips come in two flavors we will need later: a <em>systematic</em> off-by-one that many attempts share (the shared misconception), and a diffuse random error.</p>
-<div id="8be1c7b1" class="cell" data-execution_count="2">
+<div id="9ad9a99f" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>SYSTEMATIC_DELTA <span class="op">=</span> <span class="op">-</span><span class="dv">1</span>  <span class="co"># the off-by-one misconception many attempts share</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -960,7 +960,7 @@ window.Quarto = {
 <span id="cb2-66"><a href="#cb2-66" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">None</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>One attempt, printed, makes the object concrete: the gold trace, one sampled trace, and whether the exact verifier accepts it.</p>
-<div id="9e216bee" class="cell" data-execution_count="3">
+<div id="abc738a7" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>rng <span class="op">=</span> random.Random(<span class="dv">0</span>)</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>problem <span class="op">=</span> make_problem(<span class="dv">4</span>, rng)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>attempt <span class="op">=</span> sample_trace(problem, reliability<span class="op">=</span><span class="fl">0.9</span>, trap<span class="op">=</span><span class="fl">0.5</span>, rng<span class="op">=</span>rng)</span>
@@ -974,7 +974,7 @@ answer: -9  verifier accepts: False</code></pre>
 </div>
 </div>
 <p>The knob claim needs a measurement, not a promise. We define three difficulty classes as <code>(steps, reliability)</code> pairs and check that the empirical per-attempt accuracy matches the closed form <code>reliability ** steps</code>.</p>
-<div id="8f14070c" class="cell" data-execution_count="4">
+<div id="1458f273" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>DIFFICULTY <span class="op">=</span> {<span class="st">"easy"</span>: (<span class="dv">2</span>, <span class="fl">0.93</span>), <span class="st">"medium"</span>: (<span class="dv">4</span>, <span class="fl">0.80</span>), <span class="st">"hard"</span>: (<span class="dv">8</span>, <span class="fl">0.72</span>)}</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1000,7 +1000,7 @@ answer: -9  verifier accepts: False</code></pre>
 <span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>        hits <span class="op">+=</span> final_answer(sample_trace(prob, reliability, trap, rng)) <span class="op">==</span> prob.gold</span>
 <span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> hits <span class="op">/</span> trials</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="13e1e313" class="cell" data-execution_count="5">
+<div id="b8454263" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, (steps, reliability) <span class="kw">in</span> DIFFICULTY.items():</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:7}</span><span class="ss"> measured p = </span><span class="sc">{</span>measure_p(steps, reliability)<span class="sc">:.3f}</span><span class="ss">   "</span></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>          <span class="ss">f"reliability**steps = </span><span class="sc">{</span>reliability <span class="op">**</span> steps<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1045,7 +1045,7 @@ Figure&nbsp;8.1: How does emitting intermediate tokens buy extra computation? A 
 \operatorname{pass@}k(x) = 1 - (1 - p_x)^k .
 \tag{8.1}</span></span></p>
 <p>This quantity is <strong>coverage</strong>: whether the sampled set <em>contains</em> a success, regardless of whether we can find it. The marginal gain from attempt <span class="math inline">k+1</span> is <span class="math inline">p_x(1-p_x)^k</span> — always positive when <span class="math inline">p_x \in (0,1)</span>, but shrinking geometrically. Estimating <a href="#eq-ch08-passk" class="quarto-xref">Equation&nbsp;<span>8.1</span></a> naively by “draw <span class="math inline">k</span>, check any” is high-variance at large <span class="math inline">k</span>; the standard unbiased estimator draws a larger pool of <span class="math inline">n</span> attempts, counts <span class="math inline">c</span> correct, and computes pass@<span class="math inline">k</span> combinatorially <span class="citation" data-cites="brown2024monkeys">(<a href="../references.html#ref-brown2024monkeys" role="doc-biblioref">Brown et al. 2024</a>)</span>.</p>
-<div id="cd64d3d0" class="cell" data-execution_count="6">
+<div id="ca539101" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> pass_at_k(n: <span class="bu">int</span>, c: <span class="bu">int</span>, k: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Unbiased pass@k from a pool of n attempts with c correct.</span></span>
@@ -1099,7 +1099,7 @@ Figure&nbsp;8.1: How does emitting intermediate tokens buy extra computation? A 
 <span id="cb8-51"><a href="#cb8-51" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {k: totals[k] <span class="op">/</span> problems <span class="cf">for</span> k <span class="kw">in</span> ks}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>On the medium class the measured curve tracks the closed form of <a href="#eq-ch08-passk" class="quarto-xref">Equation&nbsp;<span>8.1</span></a> almost exactly.</p>
-<div id="f5064850" class="cell" data-execution_count="7">
+<div id="87a8b693" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>med_cov <span class="op">=</span> coverage_curve(<span class="op">*</span>DIFFICULTY[<span class="st">"medium"</span>])</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>p_med <span class="op">=</span> DIFFICULTY[<span class="st">"medium"</span>][<span class="dv">1</span>] <span class="op">**</span> DIFFICULTY[<span class="st">"medium"</span>][<span class="dv">0</span>]</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"measured   pass@k:"</span>, {k: <span class="bu">round</span>(v, <span class="dv">3</span>) <span class="cf">for</span> k, v <span class="kw">in</span> med_cov.items()})</span>
@@ -1111,7 +1111,7 @@ Figure&nbsp;8.1: How does emitting intermediate tokens buy extra computation? A 
 </div>
 </div>
 <p>A per-attempt probability of 0.41 becomes coverage 0.65 at two samples, 0.88 at four, and effectively one by sixteen (<a href="#fig-ch08-coverage" class="quarto-xref">Figure&nbsp;<span>8.2</span></a>). The correct answer is <em>in there</em> far more often than a single attempt suggests. This is also the cleanest way to see why a chain of thought helps at all. Compare three procedures on the same medium problems: a <strong>direct</strong> answer that commits in one shot with no scratch computation; <strong>chain-of-thought (CoT)</strong>, our step-by-step solver, which emits intermediate results <span class="citation" data-cites="wei2022cot">(<a href="../references.html#ref-wei2022cot" role="doc-biblioref">Wei et al. 2022</a>)</span>; and <strong>self-consistency</strong>, which samples several CoT traces and returns the plurality final answer <span class="citation" data-cites="wang2022selfconsistency">(<a href="../references.html#ref-wang2022selfconsistency" role="doc-biblioref">Wang et al. 2023</a>)</span>.</p>
-<div id="5e6c2241" class="cell" data-execution_count="8">
+<div id="f8a32b3a" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sample_direct(problem: Problem, p_direct: <span class="bu">float</span>, trap: <span class="bu">float</span>,</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>                  rng: random.Random) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
@@ -1165,7 +1165,7 @@ Figure&nbsp;8.1: How does emitting intermediate tokens buy extra computation? A 
 <span id="cb11-51"><a href="#cb11-51" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (direct_hits <span class="op">/</span> problems, cot_hits <span class="op">/</span> problems,</span>
 <span id="cb11-52"><a href="#cb11-52" aria-hidden="true" tabindex="-1"></a>            {k: v <span class="op">/</span> problems <span class="cf">for</span> k, v <span class="kw">in</span> sc_hits.items()})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="b2b743c5" class="cell" data-execution_count="9">
+<div id="e4cd6abb" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>direct_acc, cot_acc, sc <span class="op">=</span> cot_family(<span class="op">*</span>DIFFICULTY[<span class="st">"medium"</span>])</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"direct  pass@1 = </span><span class="sc">{</span>direct_acc<span class="sc">:.3f}</span><span class="ss">"</span>)</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"CoT     pass@1 = </span><span class="sc">{</span>cot_acc<span class="sc">:.3f}</span><span class="ss">"</span>)</span>
@@ -1214,7 +1214,7 @@ Figure&nbsp;8.2: How much does repeated sampling buy? Measured pass@k on the med
 <h2 data-number="8.3" class="anchored" data-anchor-id="sec-ch08-selection"><span class="header-section-number">8.3</span> Selection is not coverage</h2>
 <p>Coverage is an upper bound on what any procedure can deliver, not the delivery itself. To <em>return</em> an answer we must select one, and selection is where the compute is usually lost. Self-consistency’s plurality vote is one selector; its asymptotic guarantee holds only when the correct answer is the unique most probable bucket, <span class="math inline">P(A = a^\star) &gt; \max_{a \neq a^\star} P(A = a)</span>. That condition fails whenever a single systematic mistake is more probable than the truth. A <strong>verifier</strong> is the other selector: a check that marks candidates, so we can return a marked one. A perfect verifier turns coverage directly into accuracy. A realistic verifier is noisy, and its noise imposes a ceiling.</p>
 <p>We measure three selectors on the same pools: coverage (an oracle that returns any correct attempt), plurality, and best-of-<span class="math inline">n</span> under a binary verifier with symmetric error rate <span class="math inline">q</span> — it passes a correct attempt with probability <span class="math inline">{1-q}</span> and a wrong one with probability <span class="math inline">q</span>.</p>
-<div id="4a058286" class="cell" data-execution_count="11">
+<div id="9b462c6a" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> selection_curve(steps: <span class="bu">int</span>, reliability: <span class="bu">float</span>, trap: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.5</span>,</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>                    problems: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1500</span>, pool: <span class="bu">int</span> <span class="op">=</span> <span class="dv">64</span>, seed: <span class="bu">int</span> <span class="op">=</span> <span class="dv">9</span>,</span>
@@ -1284,7 +1284,7 @@ Figure&nbsp;8.2: How much does repeated sampling buy? Measured pass@k on the med
 <span id="cb15-67"><a href="#cb15-67" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
 <span id="cb15-68"><a href="#cb15-68" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> p <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> q) <span class="op">/</span> (p <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> q) <span class="op">+</span> (<span class="dv">1</span> <span class="op">-</span> p) <span class="op">*</span> q)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="fde916a5" class="cell" data-execution_count="12">
+<div id="bde0ae19" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>cov, plur, bon <span class="op">=</span> selection_curve(<span class="op">*</span>DIFFICULTY[<span class="st">"medium"</span>])</span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"coverage@k :"</span>, {k: <span class="bu">round</span>(v, <span class="dv">3</span>) <span class="cf">for</span> k, v <span class="kw">in</span> cov.items()})</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"plurality@k:"</span>, {k: <span class="bu">round</span>(v, <span class="dv">3</span>) <span class="cf">for</span> k, v <span class="kw">in</span> plur.items()})</span>
@@ -1302,7 +1302,7 @@ verifier precision ceiling pi_v = 0.797</code></pre>
 \pi_v = \frac{p(1-q)}{p(1-q) + (1-p)q} .
 \tag{8.2}</span></span></p>
 <p>More samples create more correct candidates <em>and</em> more false positives; past a point the verifier cannot tell which new marked candidate is real, and best-of-<span class="math inline">n</span> saturates below one. This is the single most important number in a test-time-compute budget: not coverage, but the quality of the check that harvests it. Now watch plurality fail outright. On a harder, trap-heavy class — low per-attempt accuracy, most slips being the shared off-by-one — coverage still rises to one while plurality goes to <em>zero</em>, because the systematic wrong answer becomes the unique mode.</p>
-<div id="1c10388e" class="cell" data-execution_count="13">
+<div id="766dc69d" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>trap_cov, trap_plur, _ <span class="op">=</span> selection_curve(<span class="dv">4</span>, reliability<span class="op">=</span><span class="fl">0.62</span>, trap<span class="op">=</span><span class="fl">0.9</span>)</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"trap class (p=</span><span class="sc">{</span><span class="fl">0.62</span><span class="op">**</span><span class="dv">4</span><span class="sc">:.3f}</span><span class="ss">):  coverage@64 = </span><span class="sc">{</span>trap_cov[<span class="dv">64</span>]<span class="sc">:.3f}</span><span class="ss">   "</span></span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"plurality@64 = </span><span class="sc">{</span>trap_plur[<span class="dv">64</span>]<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1401,7 +1401,7 @@ Figure&nbsp;8.3: Why does best-of-n saturate below 100%? Coverage (what the pool
 </tbody>
 </table>
 <p>We implement <strong>beam search</strong> over steps: at each depth, expand every surviving prefix into several candidate next-steps, score them with the noisy process checker, and keep the top <span class="math inline">B</span>. Then we run it against greedy decoding (one attempt) and against independent sampling given the <em>same</em> expansion budget, with oracle final-answer selection — a deliberately generous baseline.</p>
-<div id="376bdd6c" class="cell" data-execution_count="15">
+<div id="24385700" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> beam_search(problem: Problem, reliability: <span class="bu">float</span>, trap: <span class="bu">float</span>,</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>                rng: random.Random, beam: <span class="bu">int</span> <span class="op">=</span> <span class="dv">4</span>, fanout: <span class="bu">int</span> <span class="op">=</span> <span class="dv">4</span>,</span>
@@ -1485,7 +1485,7 @@ Figure&nbsp;8.3: Why does best-of-n saturate below 100%? Coverage (what the pool
 <span id="cb21-81"><a href="#cb21-81" aria-hidden="true" tabindex="-1"></a>            <span class="st">"beam_exp"</span>: beam_exp <span class="op">/</span> n, <span class="st">"indep_exp"</span>: indep_exp <span class="op">/</span> n}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>On the hard class, where a single attempt succeeds only about 8% of the time, the three methods diverge sharply.</p>
-<div id="8fa4cc93" class="cell" data-execution_count="16">
+<div id="ad0f193b" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>res <span class="op">=</span> compare_search(<span class="op">*</span>DIFFICULTY[<span class="st">"hard"</span>])</span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"greedy (1 attempt)          accuracy = </span><span class="sc">{</span>res[<span class="st">'greedy'</span>]<span class="sc">:.3f}</span><span class="ss">"</span>)</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"beam search                 accuracy = </span><span class="sc">{</span>res[<span class="st">'beam'</span>]<span class="sc">:.3f}</span><span class="ss">   "</span></span>
@@ -1499,7 +1499,7 @@ independent, equal budget   accuracy = 0.663   (112 expansions/problem)</code></
 </div>
 </div>
 <p>Greedy solves 8%. Beam search, spending about 116 step-expansions per problem and a <em>noisy</em> process checker, solves 93%. Independent sampling given the same expansion budget and <em>oracle</em> selection solves only 66%. Search wins not because its verifier is better — the beam’s is worse — but because it reuses verified partial work: keeping several correct prefixes alive means a correct path survives the depth even though every individual attempt would slip somewhere. The PRM’s other payoff is early stopping. Counting how many step-checks each granularity spends on wrong attempts shows the asymmetry.</p>
-<div id="81848fc8" class="cell" data-execution_count="17">
+<div id="886b54c5" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> prm_vs_orm_checks(steps: <span class="bu">int</span>, reliability: <span class="bu">float</span>, trap: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.5</span>,</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>                      problems: <span class="bu">int</span> <span class="op">=</span> <span class="dv">3000</span>, seed: <span class="bu">int</span> <span class="op">=</span> <span class="dv">17</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">float</span>]:</span>
@@ -1541,7 +1541,7 @@ independent, equal budget   accuracy = 0.663   (112 expansions/problem)</code></
 <span id="cb24-39"><a href="#cb24-39" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"wrong"</span>: wrong, <span class="st">"caught"</span>: caught,</span>
 <span id="cb24-40"><a href="#cb24-40" aria-hidden="true" tabindex="-1"></a>            <span class="st">"avg_prm_checks"</span>: prm_checks <span class="op">/</span> problems, <span class="st">"steps"</span>: steps}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="70a7cb81" class="cell" data-execution_count="18">
+<div id="35bedd67" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>prm <span class="op">=</span> prm_vs_orm_checks(<span class="op">*</span>DIFFICULTY[<span class="st">"hard"</span>])</span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"PRM caught </span><span class="sc">{</span>prm[<span class="st">'caught'</span>]<span class="sc">}</span><span class="ss">/</span><span class="sc">{</span>prm[<span class="st">'wrong'</span>]<span class="sc">}</span><span class="ss"> wrong attempts at their first error"</span>)</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"average process checks/problem = </span><span class="sc">{</span>prm[<span class="st">'avg_prm_checks'</span>]<span class="sc">:.2f}</span><span class="ss"> of </span><span class="sc">{</span>prm[<span class="st">'steps'</span>]<span class="sc">}</span><span class="ss"> steps"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1596,7 +1596,7 @@ Figure&nbsp;8.4: What does each reasoning-search structure retain? Arrows are an
 <section id="sec-ch08-reflect" class="level2" data-number="8.5">
 <h2 data-number="8.5" class="anchored" data-anchor-id="sec-ch08-reflect"><span class="header-section-number">8.5</span> Self-reflection without new evidence</h2>
 <p>Search and best-of-<span class="math inline">n</span> both add an external signal. A cheaper-sounding idea is to ask the same model to reconsider — “are you sure? check your work” — with no new information. We can measure exactly what that does. Intrinsic revision, in our toy, is a second independent attempt at the same problem: same distribution, no evidence the first attempt lacked. Verifier-informed revision instead keeps the verified-correct prefix (located by a reliable process check) and re-samples only the steps after the first error. We log the two transition directions separately, because a net accuracy number hides the damage.</p>
-<div id="9e88452c" class="cell" data-execution_count="19">
+<div id="73b73742" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> self_correction(steps: <span class="bu">int</span>, reliability: <span class="bu">float</span>, trap: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.5</span>,</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>                    problems: <span class="bu">int</span> <span class="op">=</span> <span class="dv">4000</span>, seed: <span class="bu">int</span> <span class="op">=</span> <span class="dv">21</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">dict</span>, <span class="bu">dict</span>]:</span>
@@ -1639,7 +1639,7 @@ Figure&nbsp;8.4: What does each reasoning-search structure retain? Arrows are an
 <span id="cb27-40"><a href="#cb27-40" aria-hidden="true" tabindex="-1"></a>    scale <span class="op">=</span> <span class="kw">lambda</span> d: {k: (v <span class="op">/</span> n <span class="cf">if</span> k <span class="kw">in</span> (<span class="st">"before"</span>, <span class="st">"after"</span>) <span class="cf">else</span> v) <span class="cf">for</span> k, v <span class="kw">in</span> d.items()}</span>
 <span id="cb27-41"><a href="#cb27-41" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> scale(intr), scale(vinf)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="be21cbdc" class="cell" data-execution_count="20">
+<div id="629a8371" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>intrinsic, informed <span class="op">=</span> self_correction(<span class="op">*</span>DIFFICULTY[<span class="st">"medium"</span>])</span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"intrinsic         before=</span><span class="sc">{</span>intrinsic[<span class="st">'before'</span>]<span class="sc">:.3f}</span><span class="ss">  after=</span><span class="sc">{</span>intrinsic[<span class="st">'after'</span>]<span class="sc">:.3f}</span><span class="ss">"</span></span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"   right-&gt;wrong=</span><span class="sc">{</span>intrinsic[<span class="st">'r2w'</span>]<span class="sc">}</span><span class="ss">  wrong-&gt;right=</span><span class="sc">{</span>intrinsic[<span class="st">'w2r'</span>]<span class="sc">}</span><span class="ss">"</span>)</span>
@@ -1655,7 +1655,7 @@ verifier-informed before=0.415  after=0.751   right-&gt;wrong=0  wrong-&gt;right
 <section id="sec-ch08-allocation" class="level2" data-number="8.6">
 <h2 data-number="8.6" class="anchored" data-anchor-id="sec-ch08-allocation"><span class="header-section-number">8.6</span> Allocating compute by marginal value</h2>
 <p>There is no universally optimal number of samples. The right budget depends on the prompt, because difficulty changes the coverage curve’s shape. A decision rule maximizes expected utility net of compute, <span class="math inline">\arg\max_{m,b}\left(\mathbb{E}[U \mid x, m, b] - \lambda\, C(m,b)\right)</span> over strategy <span class="math inline">m</span> and budget <span class="math inline">b</span>, but the actionable object is the <em>slope</em> of verified utility against spend, stratified by difficulty. We compute coverage curves for all three classes and find the knee — the budget past which the marginal gain per doubling drops below a threshold.</p>
-<div id="1ba53478" class="cell" data-execution_count="21">
+<div id="2ad6ad45" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> knee(curve: <span class="bu">dict</span>[<span class="bu">int</span>, <span class="bu">float</span>], threshold: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.03</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""First budget whose next doubling gains less than ``threshold``.</span></span>
@@ -1683,7 +1683,7 @@ verifier-informed before=0.415  after=0.751   right-&gt;wrong=0  wrong-&gt;right
 <span id="cb30-25"><a href="#cb30-25" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> ks[i]</span>
 <span id="cb30-26"><a href="#cb30-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ks[<span class="op">-</span><span class="dv">1</span>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="46b689af" class="cell" data-execution_count="22">
+<div id="280669c9" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, (steps, reliability) <span class="kw">in</span> DIFFICULTY.items():</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>    curve <span class="op">=</span> coverage_curve(steps, reliability, problems<span class="op">=</span><span class="dv">600</span>)</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    ks <span class="op">=</span> <span class="bu">sorted</span>(curve)</span>
@@ -1741,7 +1741,7 @@ A_i = \frac{R_i - \mu_{\mathcal G}}{\sigma_{\mathcal G} + \varepsilon},
 \sigma_{\mathcal G} = \sqrt{\tfrac{1}{G}\sum_{j=1}^{G}(R_j - \mu_{\mathcal G})^2}.
 \tag{8.3}</span></span></p>
 <p>The siblings are the baseline. A response better than its group gets positive advantage; one worse gets negative; and a group whose rewards all tie has <span class="math inline">\sigma_{\mathcal G} = 0</span> and supplies no signal at all — every advantage is zero. This is the same group-relative advantage <a href="23-training-agents-rl.html" class="quarto-xref"><span>Chapter 23</span></a> uses to train a multi-turn tool-using agent; there the group is defined over environment states, here over a single reasoning attempt, but <a href="#eq-ch08-grpo" class="quarto-xref">Equation&nbsp;<span>8.3</span></a> is identical.</p>
-<div id="fd9685ea" class="cell" data-execution_count="24">
+<div id="45ff19ce" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> softmax(logits: <span class="bu">list</span>[<span class="bu">float</span>]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Turn logits into a probability distribution (max-shifted for stability).</span></span>
@@ -1785,7 +1785,7 @@ A_i = \frac{R_i - \mu_{\mathcal G}}{\sigma_{\mathcal G} + \varepsilon},
 <span id="cb34-41"><a href="#cb34-41" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [(r <span class="op">-</span> mean) <span class="op">/</span> (std <span class="op">+</span> <span class="fl">1e-8</span>) <span class="cf">for</span> r <span class="kw">in</span> rewards]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Eight rollouts of one prompt, three of which the verifier accepts, make the centering concrete.</p>
-<div id="18f6a93e" class="cell" data-execution_count="25">
+<div id="694e30f0" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>group <span class="op">=</span> [<span class="fl">1.0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="fl">1.0</span>, <span class="fl">0.0</span>, <span class="fl">1.0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>]</span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>adv <span class="op">=</span> grpo_advantages(group)</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"rewards:   "</span>, group)</span>
@@ -1798,7 +1798,7 @@ tied group: [0.0, 0.0, 0.0, 0.0]</code></pre>
 </div>
 </div>
 <p>Successes receive +1.29, failures -0.77 — the failures are pushed <em>down</em>, not weakly up, and the advantages sum to zero without any learned critic. A tied group returns all zeros. Now the policy. To keep every probability printable we make it a distribution over five reasoning <strong>strategies</strong> for one prompt — concise-correct, verbose-correct, off-by-one, diffuse-wrong, and a verbose reward-hack — each mapped to solver parameters, so a sampled strategy runs the solver and is scored by the <em>exact verifier</em>. The verifier reward is therefore executed on a real generated candidate inside every training step; nothing about correctness is hard-coded.</p>
-<div id="ce56abf3" class="cell" data-execution_count="26">
+<div id="c155f775" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>STEPS_RLVR <span class="op">=</span> <span class="dv">4</span></span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="co"># (name, per-step reliability, response length in tokens); accuracy = reliability**4</span></span>
@@ -1926,7 +1926,7 @@ tied group: [0.0, 0.0, 0.0, 0.0]</code></pre>
 <span id="cb37-125"><a href="#cb37-125" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> history</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Train with the exact verifier as the only reward and watch a checkpoint table. Every strategy’s advantage comes from running the solver and checking its answer; the policy has no other information about which strategy is good.</p>
-<div id="d491fc08" class="cell" data-execution_count="27">
+<div id="1b7f5724" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>exact <span class="op">=</span> train_grpo(<span class="st">"exact"</span>)</span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"step  true_acc  entropy  tokens  objective  probs"</span>)</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> h <span class="kw">in</span> exact:</span>
@@ -1971,7 +1971,7 @@ Figure&nbsp;8.6: What distinct problem does each stage of an R1-style pipeline s
 <section id="sec-ch08-pathologies" class="level2" data-number="8.8">
 <h2 data-number="8.8" class="anchored" data-anchor-id="sec-ch08-pathologies"><span class="header-section-number">8.8</span> Entropy, length, and Goodhart break naive RL</h2>
 <p>The training reward can rise while the policy becomes useless. <strong>Goodhart’s law</strong> names it: a measure stops tracking the goal once optimization targets the measure. Our proxy reward keeps the exact verifier and adds a length bonus — a plausible “show your work” shaping term with a blind spot, since the verbose reward-hack strategy is almost always <em>wrong</em> but very long. We run it through the identical GRPO core.</p>
-<div id="a42f7dea" class="cell" data-execution_count="28">
+<div id="f0f8d60a" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>proxy <span class="op">=</span> train_grpo(<span class="st">"proxy"</span>)</span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"step  true_acc  entropy  tokens  objective  probs"</span>)</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> h <span class="kw">in</span> proxy:</span>
@@ -2022,7 +2022,7 @@ Figure&nbsp;8.7: What does RLVR do, and how does a misspecified reward break it?
 </div>
 <p>Two repairs matter more than the variant zoo. The first is <strong>measurement separation</strong>: keep outcome quality, length, format, and verifier score as distinct time series and roll back when they decouple — a single blended reward would have shown only the rising proxy objective. The second is guarding the reward’s blind spots: constrain cheap-to-game shaping terms, evaluate on held-out and adversarial candidates the reward never saw, and remember that an ensemble of correlated weak judges is not an independent check. The GRPO-family variants target narrower biases: Dr.&nbsp;GRPO removes the response-length and group-standard-deviation normalization that bias toward long wrong answers, and DAPO adds batch-level token averaging, asymmetric clipping that permits more upward movement to fight premature entropy collapse, and dynamic sampling that drops zero-variance groups <span class="citation" data-cites="liu2025drgrpo yu2025dapo cui2025entropy">(<a href="../references.html#ref-liu2025drgrpo" role="doc-biblioref">Z. Liu et al. 2025</a>; <a href="../references.html#ref-yu2025dapo" role="doc-biblioref"><span class="nocase">Yu et al.</span> 2025</a>; <a href="../references.html#ref-cui2025entropy" role="doc-biblioref"><span class="nocase">Cui et al.</span> 2025</a>)</span>. Our toy’s failure is coarser than these — a reward with a hole, not a normalization subtlety — but the discipline is the same: write the objective down and measure what optimization does to it.</p>
 <p>That leaves the sharpest question RLVR raises: does raising pass@1 mean the model is <em>more capable</em>, or only better at surfacing what it already had? A pass@1 number cannot tell them apart, so compare full pass@<span class="math inline">k</span> curves before and after.</p>
-<div id="4e8c2934" class="cell" data-execution_count="30">
+<div id="6e2962bb" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> policy_coverage(logits: <span class="bu">list</span>[<span class="bu">float</span>], ks<span class="op">=</span>(<span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">4</span>, <span class="dv">8</span>, <span class="dv">16</span>, <span class="dv">32</span>),</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>                    problems: <span class="bu">int</span> <span class="op">=</span> <span class="dv">2000</span>, seed: <span class="bu">int</span> <span class="op">=</span> <span class="dv">31</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">int</span>, <span class="bu">float</span>]:</span>
@@ -2055,7 +2055,7 @@ Figure&nbsp;8.7: What does RLVR do, and how does a misspecified reward break it?
 <span id="cb43-30"><a href="#cb43-30" aria-hidden="true" tabindex="-1"></a>            out[k] <span class="op">+=</span> <span class="bu">any</span>(hits[:k])</span>
 <span id="cb43-31"><a href="#cb43-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {k: out[k] <span class="op">/</span> problems <span class="cf">for</span> k <span class="kw">in</span> ks}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="fd6dba1a" class="cell" data-execution_count="31">
+<div id="cb0e99f2" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>base_cov <span class="op">=</span> policy_coverage([<span class="fl">0.3</span>, <span class="fl">0.5</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="op">-</span><span class="fl">1.5</span>])</span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>trained_cov <span class="op">=</span> policy_coverage(exact[<span class="op">-</span><span class="dv">1</span>][<span class="st">"logits"</span>])</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"base    coverage@k:"</span>, {k: <span class="bu">round</span>(v, <span class="dv">3</span>) <span class="cf">for</span> k, v <span class="kw">in</span> base_cov.items()})</span>

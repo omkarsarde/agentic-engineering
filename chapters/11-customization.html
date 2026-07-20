@@ -936,16 +936,16 @@ Figure&nbsp;11.1: Which missing mechanism should a team repair before it changes
 <section id="sec-ch11-lora" class="level2" data-number="11.2">
 <h2 data-number="11.2" class="anchored" data-anchor-id="sec-ch11-lora"><span class="header-section-number">11.2</span> LoRA and QLoRA isolate a small trainable update</h2>
 <p>Everything below builds on one base model, so we fix determinism once and pull the tinygpt class straight out of <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>’s tangled module rather than re-implementing it. Recall from <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a> that <code>TinyGPT</code> is a decoder-only transformer with pre-norm blocks, SwiGLU feed-forward layers, and a tied LM head; we reuse it unchanged.</p>
-<div id="8f78924d" class="cell" data-execution_count="1">
+<div id="a7c4298a" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>torch.set_num_threads(<span class="dv">4</span>)  <span class="co"># tiny models: fewer threads run faster and stay deterministic</span></span>
 <span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-display" data-execution_count="1">
-<pre><code>&lt;torch._C.Generator at 0x7f7299f1eb50&gt;</code></pre>
+<pre><code>&lt;torch._C.Generator at 0x7fb458236b50&gt;</code></pre>
 </div>
 </div>
-<div id="0e0d3cf7" class="cell" data-execution_count="2">
+<div id="66928565" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> copy</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
@@ -988,7 +988,7 @@ Figure&nbsp;11.1: Which missing mechanism should a team repair before it changes
 <span id="cb3-40"><a href="#cb3-40" aria-hidden="true" tabindex="-1"></a>TinyGPT, GPTConfig, generate <span class="op">=</span> _ch02.TinyGPT, _ch02.GPTConfig, _ch02.generate</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The task is a <em>tagged transform</em>. Each example is a one-character operation tag, four digits, <code>=</code>, and the four-digit answer, ended by <code>|</code>: <code>A8012=9123|</code> says “apply operation <code>A</code> (add one) to <code>8012</code>.” The tag lets one model hold several operations at once, so forgetting and merging are about capacity and interference, not logical contradiction.</p>
-<div id="5257a6bf" class="cell" data-execution_count="3">
+<div id="61d02800" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>ALPHABET <span class="op">=</span> <span class="st">"0123456789=|EAFS"</span></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>STOI <span class="op">=</span> {c: i <span class="cf">for</span> i, c <span class="kw">in</span> <span class="bu">enumerate</span>(ALPHABET)}</span>
@@ -1027,7 +1027,7 @@ Figure&nbsp;11.1: Which missing mechanism should a team repair before it changes
 <span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> torch.tensor([STOI[c] <span class="cf">for</span> c <span class="kw">in</span> text], dtype<span class="op">=</span>torch.<span class="bu">long</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Training and evaluation are the standard character-LM loop from <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>, wrapped so every later section can reuse them. <code>fit</code> runs AdamW with linear warmup and gradient clipping; <code>accuracy</code> generates the answer greedily and scores it <em>per character</em>, a smoother signal than exact-match at this scale.</p>
-<div id="2168fc57" class="cell" data-execution_count="4">
+<div id="b2682cfa" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> batch(stream: Tensor, size: <span class="bu">int</span>, gen: torch.Generator) <span class="op">-&gt;</span> <span class="bu">tuple</span>[Tensor, Tensor]:</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Draw aligned (input, next-token) windows from a token stream.</span></span>
@@ -1121,7 +1121,7 @@ Figure&nbsp;11.1: Which missing mechanism should a team repair before it changes
 <span id="cb5-91"><a href="#cb5-91" aria-hidden="true" tabindex="-1"></a>                             d_model<span class="op">=</span>d_model, n_heads<span class="op">=</span>n_heads, n_layers<span class="op">=</span>n_layers))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We pretrain the base as a <em>generalist</em> on a fifty-fifty mix of echo (<code>E</code>) and add-one (<code>A</code>). These are its established capabilities — the ones a customization must not silently break.</p>
-<div id="103b418f" class="cell" data-execution_count="5">
+<div id="54db62c0" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">1</span>)</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>base <span class="op">=</span> small_gpt(d_model<span class="op">=</span><span class="dv">64</span>, n_layers<span class="op">=</span><span class="dv">2</span>, n_heads<span class="op">=</span><span class="dv">4</span>)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>fit(base, make_stream([<span class="st">"E"</span>, <span class="st">"A"</span>], <span class="dv">1200</span>, seed<span class="op">=</span><span class="dv">10</span>), steps<span class="op">=</span><span class="dv">500</span>, lr<span class="op">=</span><span class="fl">2e-3</span>, seed<span class="op">=</span><span class="dv">1</span>)</span>
@@ -1139,7 +1139,7 @@ base capabilities: {'E': 1.0, 'A': 1.0, 'F': 0.06, 'S': 0.32}</code></pre>
 h = W_0 x + \frac{\alpha}{r}\, B A x, \qquad A \in \mathbb{R}^{r \times d_{in}},\ B \in \mathbb{R}^{d_{out} \times r},
 \tag{11.1}</span></span></p>
 <p>with rank <span class="math inline">r \ll \min(d_{in}, d_{out})</span> and a scale <span class="math inline">\alpha</span>. The trainable count is <span class="math inline">r(d_{in} + d_{out})</span> instead of <span class="math inline">d_{in} d_{out}</span> — the rank-<span class="math inline">r</span> bottleneck is the whole idea. Initializing <span class="math inline">B = 0</span> makes the first forward pass identical to the base, so training starts from the model we trust. In code, a LoRA layer wraps an existing <code>nn.Linear</code>, freezes it, and adds the two small matrices.</p>
-<div id="0b4f8b1c" class="cell" data-execution_count="6">
+<div id="bf5d770c" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> LoRALinear(nn.Module):</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A frozen linear layer plus a trainable low-rank update ``(alpha/r)·B·A``.</span></span>
@@ -1168,7 +1168,7 @@ h = W_0 x + \frac{\alpha}{r}\, B A x, \qquad A \in \mathbb{R}^{r \times d_{in}},
 <span id="cb8-26"><a href="#cb8-26" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.scaling <span class="op">*</span> (<span class="va">self</span>.B <span class="op">@</span> <span class="va">self</span>.A)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We attach a LoRA layer to every attention and feed-forward projection, then freeze everything except the adapters. Which modules to target is a design choice; targeting all linear layers is the modern default, not the historical query/value-only one.</p>
-<div id="b9e43900" class="cell" data-execution_count="7">
+<div id="d841460a" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>TARGETS <span class="op">=</span> (<span class="st">"qkv"</span>, <span class="st">"output"</span>, <span class="st">"up_gate"</span>, <span class="st">"down"</span>)</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1213,7 +1213,7 @@ h = W_0 x + \frac{\alpha}{r}\, B A x, \qquad A \in \mathbb{R}^{r \times d_{in}},
 <span id="cb9-42"><a href="#cb9-42" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> trainable</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We adapt a copy of the base to the flip task and watch the loss fall.</p>
-<div id="0275ffe2" class="cell" data-execution_count="8">
+<div id="2001c2cf" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">2</span>)</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>lora_flip <span class="op">=</span> attach_lora(copy.deepcopy(base), rank<span class="op">=</span><span class="dv">4</span>, alpha<span class="op">=</span><span class="dv">8</span>)</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>trainable <span class="op">=</span> lora_parameters(lora_flip)</span>
@@ -1268,7 +1268,7 @@ Figure&nbsp;11.2: How much does LoRA actually shrink the trainable footprint? Fu
 </div>
 </div>
 <p>For contrast, we full-fine-tune the same task. A full update also reaches flip — and also forgets — but it moves all 101K parameters and produces a whole new checkpoint to store and serve, where the adapter is a few kilobytes bolted onto the shared base.</p>
-<div id="bb762f69" class="cell" data-execution_count="10">
+<div id="9bc636dd" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>full_flip <span class="op">=</span> copy.deepcopy(base)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>fit(full_flip, make_stream(<span class="st">"F"</span>, <span class="dv">800</span>, seed<span class="op">=</span><span class="dv">20</span>), steps<span class="op">=</span><span class="dv">300</span>, lr<span class="op">=</span><span class="fl">1.2e-3</span>, seed<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"full-FT flip:"</span>, <span class="bu">round</span>(accuracy(full_flip, <span class="st">"F"</span>), <span class="dv">2</span>),</span>
@@ -1278,7 +1278,7 @@ Figure&nbsp;11.2: How much does LoRA actually shrink the trainable footprint? Fu
 </div>
 </div>
 <p><strong>QLoRA</strong> attacks the other cost: holding the frozen base in memory during training <span class="citation" data-cites="dettmers2023qlora">(<a href="../references.html#ref-dettmers2023qlora" role="doc-biblioref">Dettmers et al. 2023</a>)</span>. It stores the base weights in four-bit <strong>NormalFloat (NF4)</strong>, a sixteen-value codebook whose points are spaced by the quantiles of a normal distribution — dense near zero, sparse in the tails, with an exact zero. It dequantizes to compute and backpropagates through that fixed reconstruction into the adapter. <a href="#fig-ch11-nf4" class="quarto-xref">Figure&nbsp;<span>11.3</span></a> shows why the codepoints cluster where weights actually live.</p>
-<div id="45fadc6c" class="cell" data-execution_count="11">
+<div id="dda16fd4" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>NF4 <span class="op">=</span> torch.tensor(</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    [<span class="op">-</span><span class="fl">1.0</span>, <span class="op">-</span><span class="fl">0.6961928</span>, <span class="op">-</span><span class="fl">0.5250731</span>, <span class="op">-</span><span class="fl">0.3949175</span>, <span class="op">-</span><span class="fl">0.2844414</span>, <span class="op">-</span><span class="fl">0.1847734</span>,</span>
@@ -1342,7 +1342,7 @@ Figure&nbsp;11.3: Why are the sixteen NF4 code points bunched near zero? They ar
 </div>
 </div>
 <p>We quantize the base’s targeted matrices, confirm the frozen four-bit model still holds its capabilities, then train a LoRA adapter on top of it. <a href="#fig-ch11-qlora" class="quarto-xref">Figure&nbsp;<span>11.4</span></a> traces which representation stores, which computes, and which updates.</p>
-<div id="37c5d4c4" class="cell" data-execution_count="13">
+<div id="c3e28b2b" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>qbase <span class="op">=</span> copy.deepcopy(base)</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>squared_error <span class="op">=</span> total <span class="op">=</span> <span class="dv">0</span></span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> torch.no_grad():</span>
@@ -1400,7 +1400,7 @@ Figure&nbsp;11.4: During QLoRA, which representation is stored, which precision 
 <section id="sec-ch11-distill" class="level2" data-number="11.3">
 <h2 data-number="11.3" class="anchored" data-anchor-id="sec-ch11-distill"><span class="header-section-number">11.3</span> Distillation moves behavior into a smaller model</h2>
 <p>Our flip model works, but it is the full 100K-parameter base. Suppose serving cost forces something smaller. <strong>Distillation</strong> trains a small <em>student</em> to reproduce a larger <em>teacher</em> on a declared operating distribution. It does not copy an abstract capability; what transfers depends on the prompts, the targets, and the loss. We take the full-fine-tuned flip model as the teacher and a student <strong>four times smaller</strong>.</p>
-<div id="2b50b1f2" class="cell" data-execution_count="14">
+<div id="e2e4ef6e" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>teacher <span class="op">=</span> full_flip  <span class="co"># a d=64 flip specialist, 101K parameters</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> new_student():</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    torch.manual_seed(<span class="dv">7</span>)</span>
@@ -1412,7 +1412,7 @@ Figure&nbsp;11.4: During QLoRA, which representation is stored, which precision 
 </div>
 </div>
 <p><strong>Sequence-level distillation</strong> samples the teacher’s completions and uses them as ordinary SFT targets. It works through a black-box API and can transfer format, tone, or solution traces, but it keeps only the teacher’s single chosen token and inherits its sampling errors. <strong>Logit distillation</strong> uses the teacher’s whole distribution. That distribution is where the teaching is: for one flip prompt, the teacher is almost sure of the right digit but places its small residual mass on the <em>near-miss</em> digits — the “dark knowledge” a hard label throws away.</p>
-<div id="29d7f7a1" class="cell" data-execution_count="15">
+<div id="74c71e8a" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="at">@torch.no_grad</span>()</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> teacher_distribution(model, op, seed):</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    rng <span class="op">=</span> np.random.default_rng(seed)</span>
@@ -1472,7 +1472,7 @@ Figure&nbsp;11.5: What does raising the temperature do to the teacher’s target
 </div>
 </div>
 <p>Now the executed comparison. We give a small student only <strong>40 labeled examples</strong> and train it three ways: on the ground-truth labels (hard SFT), on the teacher’s greedy completions (sequence KD), and on the teacher’s softened answer-position distributions (logit KD). Distilling only the answer positions matters — the teacher has nothing useful to say about the random prompt digits.</p>
-<div id="a4a7c6e0" class="cell" data-execution_count="17">
+<div id="3047f258" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> answer_positions(x: Tensor) <span class="op">-&gt;</span> Tensor:</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Mark the ``NDIG`` positions after each ``=`` — where the answer is written.</span></span>
@@ -1571,7 +1571,7 @@ Figure&nbsp;11.5: What does raising the temperature do to the teacher’s target
 <span id="cb24-96"><a href="#cb24-96" aria-hidden="true" tabindex="-1"></a>        losses.append(loss.item())</span>
 <span id="cb24-97"><a href="#cb24-97" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> losses</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="b1f16155" class="cell" data-execution_count="18">
+<div id="c5ac38ee" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>budget <span class="op">=</span> <span class="dv">40</span></span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>data <span class="op">=</span> make_stream(<span class="st">"F"</span>, budget, seed<span class="op">=</span><span class="dv">31</span>)</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1627,7 +1627,7 @@ Figure&nbsp;11.6: From 40 examples, which supervision lets a 4x-smaller student 
 <section id="sec-ch11-merge" class="level2" data-number="11.4">
 <h2 data-number="11.4" class="anchored" data-anchor-id="sec-ch11-merge"><span class="header-section-number">11.4</span> Merging combines task vectors, not capabilities</h2>
 <p>Two teams fine-tune the same base — one for flip, one for a second operation, <strong>shift</strong> — and want one model that does both without a joint retraining run. Merging tries to get it by arithmetic on the weights. For base parameters <span class="math inline">\theta_0</span> and a fine-tuned <span class="math inline">\theta_i</span>, the <strong>task vector</strong> is <span class="math inline">\tau_i = \theta_i - \theta_0</span> <span class="citation" data-cites="ilharco2022taskarithmetic">(<a href="../references.html#ref-ilharco2022taskarithmetic" role="doc-biblioref">Ilharco et al. 2022</a>)</span>, and linear merging forms <span class="math inline">\theta_0 + \sum_i \lambda_i \tau_i</span>. LoRA makes this cheap: the task vector is already the realized delta <span class="math inline">(\alpha/r) B A</span>. We first build the shift specialist.</p>
-<div id="a56b7e65" class="cell" data-execution_count="20">
+<div id="4255108c" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">3</span>)</span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>lora_shift <span class="op">=</span> attach_lora(copy.deepcopy(base), rank<span class="op">=</span><span class="dv">4</span>, alpha<span class="op">=</span><span class="dv">8</span>)</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>lora_parameters(lora_shift)</span>
@@ -1638,7 +1638,7 @@ Figure&nbsp;11.6: From 40 examples, which supervision lets a 4x-smaller student 
 </div>
 </div>
 <p>We collect each adapter’s per-layer deltas and merge them two ways: plain weighted averaging, and <strong>TIES</strong>, which trims each delta to its largest-magnitude coordinates, elects a sign per coordinate, and averages only the sign-agreeing survivors — an attempt to keep the two updates from cancelling <span class="citation" data-cites="yadav2023ties">(<a href="../references.html#ref-yadav2023ties" role="doc-biblioref">Yadav et al. 2023</a>)</span>.</p>
-<div id="4d1fa995" class="cell" data-execution_count="21">
+<div id="7c07912e" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> collect_deltas(model) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Collect every LoRA layer's realized dense update as a task vector.</span></span>
@@ -1716,7 +1716,7 @@ Figure&nbsp;11.6: From 40 examples, which supervision lets a 4x-smaller student 
 <span id="cb30-75"><a href="#cb30-75" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> m</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We sweep the flip/shift blend from all-shift to all-flip, scoring both tasks at every point.</p>
-<div id="e14114f1" class="cell" data-execution_count="22">
+<div id="b3923e8b" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>deltas_flip, deltas_shift <span class="op">=</span> collect_deltas(lora_flip), collect_deltas(lora_shift)</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>sweep <span class="op">=</span> []</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> wa <span class="kw">in</span> (<span class="fl">0.0</span>, <span class="fl">0.2</span>, <span class="fl">0.4</span>, <span class="fl">0.5</span>, <span class="fl">0.6</span>, <span class="fl">0.8</span>, <span class="fl">1.0</span>):</span>
@@ -1783,7 +1783,7 @@ Figure&nbsp;11.7: Does averaging a flip adapter and a shift adapter yield a mode
 <p><strong>Q — If LoRA freezes the base weights, how can training an adapter degrade the model’s other capabilities?</strong> Because inference uses <span class="math inline">W_0 + \Delta W</span>, not <span class="math inline">W_0</span>. The adapter adds a term to every targeted activation, and <a href="#eq-ch11-lora" class="quarto-xref">Equation&nbsp;<span>11.1</span></a> shows that term can be large relative to the base output — a frozen matrix is not frozen behavior. The trap is treating “base weights unchanged” as “old behavior safe” and shipping without a regression set. Always measure the capabilities you care about <em>after</em> tuning, on data the adapter never saw.</p>
 </div>
 </div>
-<div id="55f8ba53" class="cell" data-execution_count="24">
+<div id="ac561309" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>forget_stages <span class="op">=</span> {}</span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>forget_stages[<span class="st">"base"</span>] <span class="op">=</span> {op: accuracy(base, op) <span class="cf">for</span> op <span class="kw">in</span> <span class="st">"EAS"</span>}</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1796,7 +1796,7 @@ Figure&nbsp;11.7: Does averaging a flip adapter and a shift adapter yield a mode
 </div>
 </div>
 <p>Shift went from chance to solved, and echo and add-one collapsed with it. The standard repair is <strong>replay</strong>: mix a representative slice of the old capabilities back into the training data so the gradient keeps seeing them.</p>
-<div id="5ec26524" class="cell" data-execution_count="25">
+<div id="31095f39" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>replay <span class="op">=</span> copy.deepcopy(base)</span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>fit(replay, make_stream([<span class="st">"S"</span>, <span class="st">"E"</span>, <span class="st">"A"</span>], <span class="dv">900</span>, seed<span class="op">=</span><span class="dv">26</span>), steps<span class="op">=</span><span class="dv">350</span>, lr<span class="op">=</span><span class="fl">1.2e-3</span>, seed<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>forget_stages[<span class="st">"replay mix"</span>] <span class="op">=</span> {op: accuracy(replay, op) <span class="cf">for</span> op <span class="kw">in</span> <span class="st">"EAS"</span>}</span>
@@ -1889,7 +1889,7 @@ Figure&nbsp;11.8: What does aggressive fine-tuning cost, and does replay repay i
 \operatorname{ship} = \mathbf{1}\big[\Delta M \ge \delta \ \wedge\ \forall j:\ \Delta R_j \le \epsilon_j\big].
 \tag{11.3}</span></span></p>
 <p>Our regression set is the old echo and add-one behaviors; the gate refuses any candidate that buys shift by wrecking them.</p>
-<div id="304da0e0" class="cell" data-execution_count="27">
+<div id="d7ab2907" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> release_gate(baseline, candidate, task_op, regression_ops, min_gain<span class="op">=</span><span class="fl">0.30</span>, max_drop<span class="op">=</span><span class="fl">0.05</span>):</span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Decide whether a candidate ships, given a task gain and regression budget.</span></span>
@@ -1914,7 +1914,7 @@ Figure&nbsp;11.8: What does aggressive fine-tuning cost, and does replay repay i
 <span id="cb39-22"><a href="#cb39-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"gain"</span>: <span class="bu">round</span>(gain, <span class="dv">3</span>), <span class="st">"worst_regression_drop"</span>: <span class="bu">round</span>(worst_drop, <span class="dv">3</span>),</span>
 <span id="cb39-23"><a href="#cb39-23" aria-hidden="true" tabindex="-1"></a>            <span class="st">"ship"</span>: <span class="bu">bool</span>(gain <span class="op">&gt;=</span> min_gain <span class="kw">and</span> worst_drop <span class="op">&lt;=</span> max_drop)}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="57d82eb4" class="cell" data-execution_count="28">
+<div id="c4b25c59" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>base_scores <span class="op">=</span> forget_stages[<span class="st">"base"</span>]</span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"fine-tuned-on-shift candidate:"</span>,</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>      release_gate(base_scores, forget_stages[<span class="st">"fine-tuned on shift"</span>], <span class="st">"S"</span>, <span class="st">"EA"</span>))</span>
@@ -1962,7 +1962,7 @@ Figure&nbsp;11.9: Where must provenance, filtering, and evaluation quarantine in
 <section id="sec-ch11-other" class="level2" data-number="11.6">
 <h2 data-number="11.6" class="anchored" data-anchor-id="sec-ch11-other"><span class="header-section-number">11.6</span> Preference tuning, reinforcement fine-tuning, and pruning</h2>
 <p>SFT treats every target token as equally authoritative. When several responses are valid but one is preferred — less hedging, a cleaner refusal, the right tone — comparative feedback fits better. <strong>Preference tuning</strong> collects a chosen and a rejected response to the same prompt and optimizes the margin between them relative to a reference policy. <a href="07-post-training.html" class="quarto-xref"><span>Chapter 7</span></a> derives the DPO loss; the shape is a logistic on the reference-relative margin, and the point here is only that it is a small, surgical intervention.</p>
-<div id="3f6755b8" class="cell" data-execution_count="29">
+<div id="c13d1d56" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dpo_margin_loss(chosen, rejected, ref_chosen, ref_rejected, beta<span class="op">=</span><span class="fl">0.1</span>):</span>
@@ -1979,7 +1979,7 @@ misaligned: 0.744</code></pre>
 </div>
 <p>The loss is low when the policy raises the chosen response’s log-probability above the rejected one relative to the reference, and high when it does the reverse — a tone or refusal fix, not a way to inject a quarterly policy document. <strong>Reinforcement fine-tuning</strong> goes further when a reliable scalar verifier exists — tests that pass, a checked final answer, a validator — and <a href="08-reasoning-test-time-compute.html" class="quarto-xref"><span>Chapter 8</span></a> owns its mechanics (<a href="23-training-agents-rl.html" class="quarto-xref"><span>Chapter 23</span></a> extends it to full agent trajectories). Its first failure mode is the grader: if formatting or leaked references can raise reward without solving the task, the model will find that path, so evaluate the grader on held-out good and bad outputs before trusting it.</p>
 <p><strong>Compression</strong> creates a smaller model rather than an adapter. Structured pruning removes whole heads, channels, or layers and needs recovery training; the Minitron line prunes then distills to recover quality <span class="citation" data-cites="muralidharan2024minitron">(<a href="../references.html#ref-muralidharan2024minitron" role="doc-biblioref">Muralidharan et al. 2024</a>)</span>, and SliceGPT deletes rows and columns after rotations that preserve the network’s function <span class="citation" data-cites="ashkboos2024slicegpt">(<a href="../references.html#ref-ashkboos2024slicegpt" role="doc-biblioref">Ashkboos et al. 2024</a>)</span>. <strong>Low-rank compression</strong> factorizes an existing matrix <span class="math inline">W \in \mathbb{R}^{m\times n}</span> as a rank-<span class="math inline">k</span> product, cutting parameters from <span class="math inline">mn</span> to <span class="math inline">k(m+n)</span>. A truncated SVD minimizes reconstruction error — which is not the same as minimizing language-model loss, the caveat worth executing on one of our own weight matrices.</p>
-<div id="c9f345a3" class="cell" data-execution_count="30">
+<div id="f8dc5d78" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>W <span class="op">=</span> teacher.blocks[<span class="dv">0</span>].mlp.down.weight.detach()</span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>U, S, Vt <span class="op">=</span> torch.linalg.svd(W, full_matrices<span class="op">=</span><span class="va">False</span>)</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> k <span class="kw">in</span> (<span class="dv">2</span>, <span class="dv">8</span>, <span class="dv">16</span>):</span>
@@ -2000,7 +2000,7 @@ rank 16:  3760 params (vs 10944), reconstruction error 0.43</code></pre>
 <p>Training produces an artifact; serving gives it identity, latency, and a blast radius. Register the whole lineage — base and tokenizer revisions, chat template, quantization recipe, adapter or merged weights, data manifest, evaluation record, and approval — because a hash of the adapter file alone cannot detect a mismatched base.</p>
 <p>The unmerged-versus-merged choice is a real trade. An <strong>unmerged adapter</strong> keeps a tiny artifact, instant rollback, and multi-tenant sharing — many adapters over one base, the multi-LoRA serving path <a href="10-serving-at-scale.html" class="quarto-xref"><span>Chapter 10</span></a> owns — at the cost of adapter loading and routing in the serving lattice. A <strong>merged checkpoint</strong> simplifies the runtime and removes adapter lookup, but consumes a full artifact, weakens revocability, and demands another quantization and regression pass. When two task vectors conflict, as flip and shift did, separate adapters are also simply better than a merge.</p>
 <p>QLoRA makes merging numerically delicate. The training base is a four-bit reconstruction while a higher-precision checkpoint may also exist; adding <span class="math inline">\Delta W</span> to one and serving the other changes the model, and repeatedly merging into four-bit codes re-quantizes the sum. Choose the target representation explicitly: dequantize the intended base, merge in adequate precision, quantize once under a pinned recipe, then rerun the gate. The real seven-billion-parameter path is the same mechanism at scale — an NF4 base, a rank-16 adapter, all-linear targets — which we show as configuration, not as a run:</p>
-<div id="a8d76058" class="cell" data-execution_count="31">
+<div id="038d3ffe" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Representative real-scale QLoRA seam (illustrative config, not executed here).</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> transformers <span class="im">import</span> AutoModelForCausalLM, BitsAndBytesConfig</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> peft <span class="im">import</span> LoraConfig, get_peft_model</span>

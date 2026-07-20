@@ -816,7 +816,7 @@ window.Quarto = {
 <p>A user sends a 2,000-token contract and asks for a 100-token answer. The first token arrives slowly; the rest stream at a steadier pace. A dashboard reports one latency number, so an engineer shortens the output limit. Total latency drops a little, but the long opening pause is untouched. The intervention changed the wrong phase, because the two phases of autoregressive inference obey different physics and the single number hid the split.</p>
 <p>This chapter opens the generate loop and measures what is inside it, reusing the small GPT we trained in <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a> as the thing under the microscope. We (i) time prefill against per-token decode on that real model and watch the asymmetry grow with context; (ii) build the sampling stack — temperature, top-<span class="math inline">k</span>, top-<span class="math inline">p</span>, min-<span class="math inline">p</span>, and the logit processors — and show what each does to a real logit vector; (iii) batch the same prompt at different sizes and measure the logits drift, so “set the seed” stops meaning “get the same output”; and (iv) spend the second half on the applied reader’s most-asked question — when the model should <em>not</em> answer — building calibrated confidence, a semantic-entropy estimate, a risk-coverage curve, and a conformal abstention rule that comes with a coverage guarantee. Everything runs on CPU in about ten seconds.</p>
 <p>We start by reusing Chapter 2’s tokenizer and model, training one small instance so its next-token distributions are meaningful rather than uniform.</p>
-<div id="f174eaed" class="cell" data-execution_count="1">
+<div id="f1c7c8bb" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> matplotlib</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>matplotlib.use(<span class="st">"Agg"</span>)</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys, math, time, codecs, re, random, statistics</span>
@@ -904,7 +904,7 @@ Figure&nbsp;9.1: Where does elapsed time enter one autoregressive request? Prefi
 </div>
 </div>
 <p>Rather than assert the asymmetry, we time it. We prefill prompts of growing length and, from each resulting cache, time one decode step. Prefill work scales with the prompt; a single decode step does not.</p>
-<div id="4f4802e5" class="cell" data-execution_count="2">
+<div id="e7a67b6e" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> median_ms(call, reps):</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    call()                                            <span class="co"># warm up</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    samples <span class="op">=</span> []</span>
@@ -930,10 +930,10 @@ Figure&nbsp;9.1: Where does elapsed time enter one autoregressive request? Prefi
 <span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"context </span><span class="sc">{</span>ctx<span class="sc">:4d}</span><span class="ss">:  prefill </span><span class="sc">{</span>prefill_ms[<span class="op">-</span><span class="dv">1</span>]<span class="sc">:6.2f}</span><span class="ss"> ms   decode/token </span><span class="sc">{</span>decode_ms[<span class="op">-</span><span class="dv">1</span>]<span class="sc">:5.2f}</span><span class="ss"> ms"</span></span>
 <span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>          <span class="ss">f"   ratio </span><span class="sc">{</span>prefill_ms[<span class="op">-</span><span class="dv">1</span>] <span class="op">/</span> decode_ms[<span class="op">-</span><span class="dv">1</span>]<span class="sc">:4.1f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>context   32:  prefill   1.56 ms   decode/token  1.04 ms   ratio  1.5
-context   64:  prefill   2.12 ms   decode/token  1.05 ms   ratio  2.0
-context  128:  prefill   3.17 ms   decode/token  1.08 ms   ratio  2.9
-context  176:  prefill   4.07 ms   decode/token  1.12 ms   ratio  3.6</code></pre>
+<pre><code>context   32:  prefill   1.80 ms   decode/token  1.37 ms   ratio  1.3
+context   64:  prefill   2.33 ms   decode/token  1.36 ms   ratio  1.7
+context  128:  prefill   3.40 ms   decode/token  1.40 ms   ratio  2.4
+context  176:  prefill   4.21 ms   decode/token  1.41 ms   ratio  3.0</code></pre>
 </div>
 </div>
 <p>Prefill time climbs with context while per-token decode stays roughly flat, so their ratio grows. These are wall-clock numbers on one CPU and will differ on other hardware; the <em>shape</em> is the lesson, and <a href="#fig-ch09-phases" class="quarto-xref">Figure&nbsp;<span>9.2</span></a> draws it.</p>
@@ -961,7 +961,7 @@ Figure&nbsp;9.2
 <section id="sec-ch09-roofline" class="level2" data-number="9.2">
 <h2 data-number="9.2" class="anchored" data-anchor-id="sec-ch09-roofline"><span class="header-section-number">9.2</span> Where the two phases hit the hardware</h2>
 <p>The KV cache is what makes decode cheap per step: instead of reprojecting every earlier token, the model reads stored keys and values and appends one new pair. We measured in <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a> that this storage grows linearly with sequence length, and sized it across attention variants in <a href="03-attention-position-long-context.html" class="quarto-xref"><span>Chapter 3</span></a>. Here we only need the linear growth, read straight off the real cache.</p>
-<div id="dee78974" class="cell" data-execution_count="4">
+<div id="7fd89d43" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> ctx <span class="kw">in</span> (<span class="dv">32</span>, <span class="dv">96</span>, <span class="dv">176</span>):</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    cache <span class="op">=</span> prefill(ctx)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> ch02.kv_cache_bytes(cache)</span>
@@ -981,7 +981,7 @@ context  176:  KV cache  396.0 KiB   (2304 bytes per token)</code></pre>
 p_i(T) = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}, \qquad T &gt; 0.
 \tag{9.2}</span></span></p>
 <p>Equivalently <span class="math inline">p_i(T) \propto p_i(1)^{1/T}</span>: low <span class="math inline">T</span> sharpens the distribution, high <span class="math inline">T</span> flattens it, and dividing every logit by the same positive number never changes their order. Temperature moves gaps and entropy, not the argmax. We implement it with two guards the equation hides — a branch to argmax at <span class="math inline">T\to 0</span> instead of dividing by zero, and subtracting the peak logit before exponentiating so nothing overflows.</p>
-<div id="bba0ec2c" class="cell" data-execution_count="5">
+<div id="576990eb" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1012,7 +1012,7 @@ p_i(T) = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}, \qquad T &gt; 0.
 <span id="cb8-28"><a href="#cb8-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [e <span class="op">/</span> total <span class="cf">for</span> e <span class="kw">in</span> exps]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We take a real logit vector from the trained model. After the prompt <code>"the cat s"</code> the model is genuinely uncertain — the completion could be <em>sat</em>, <em>sing</em>, and others — so its next-token distribution has a few real competitors and a long tail. We sweep the temperature over it.</p>
-<div id="593ef965" class="cell" data-execution_count="6">
+<div id="7b55285f" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>z_full <span class="op">=</span> model(torch.tensor([tok.encode(<span class="st">"the cat s"</span>)]))[<span class="dv">0</span>][<span class="dv">0</span>, <span class="op">-</span><span class="dv">1</span>].tolist()</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>order <span class="op">=</span> <span class="bu">sorted</span>(<span class="bu">range</span>(<span class="bu">len</span>(z_full)), key<span class="op">=</span><span class="kw">lambda</span> i: z_full[i], reverse<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>head <span class="op">=</span> order[:<span class="dv">8</span>]</span>
@@ -1052,7 +1052,7 @@ Figure&nbsp;9.3
 </figure>
 </div>
 <p>Sampling from the full softmax keeps every token with nonzero probability, including a long tail of implausible ones. <strong>Truncation</strong> masks part of the distribution and renormalizes the survivors before drawing — a bias–diversity decision. Four policies express different invariants. <strong>Top-<span class="math inline">k</span></strong> keeps the <span class="math inline">k</span> highest-probability tokens (always at least one), a fixed support regardless of shape. <strong>Top-<span class="math inline">p</span></strong> (nucleus, Holtzman et al., 2020) keeps the smallest prefix whose cumulative mass reaches <span class="math inline">p</span>; its support adapts to shape, and the token that crosses the threshold belongs <em>inside</em> the set. <strong>Min-<span class="math inline">p</span></strong> keeps token <span class="math inline">i</span> when <span class="math inline">p_i \ge \alpha\,p_{\max}</span>, a floor relative to the mode (Nguyen et al., 2024). <strong>Locally typical</strong> sampling keeps tokens whose surprisal <span class="math inline">-\log p_i</span> sits near the distribution’s entropy (Meister et al., 2023). We implement all four with one nonempty, renormalized result.</p>
-<div id="1e55f980" class="cell" data-execution_count="8">
+<div id="64e25af6" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1106,7 +1106,7 @@ Figure&nbsp;9.3
 <span id="cb12-51"><a href="#cb12-51" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [probs[i] <span class="op">/</span> total <span class="cf">if</span> i <span class="kw">in</span> keep <span class="cf">else</span> <span class="fl">0.0</span> <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="bu">len</span>(probs))]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run each policy on the same real distribution and print both the total support and which of the top-8 survive. The interesting behavior is in the tail: <code>top_p</code> reaches deep to accumulate its mass, while <code>min_p</code> collapses to the single confident token.</p>
-<div id="99374daf" class="cell" data-execution_count="9">
+<div id="130b30d9" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>base <span class="op">=</span> softmax(z_full, <span class="fl">1.0</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"full distribution support: </span><span class="sc">{</span><span class="bu">sum</span>(x <span class="op">&gt;</span> <span class="dv">0</span> <span class="cf">for</span> x <span class="kw">in</span> base)<span class="sc">}</span><span class="ss"> tokens"</span>)</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> method, value <span class="kw">in</span> [(<span class="st">"top_k"</span>, <span class="dv">3</span>), (<span class="st">"top_p"</span>, <span class="fl">0.8</span>), (<span class="st">"min_p"</span>, <span class="fl">0.2</span>), (<span class="st">"typical"</span>, <span class="fl">0.8</span>)]:</span>
@@ -1151,7 +1151,7 @@ Figure&nbsp;9.4
 <p><span id="eq-ch09-processor"><span class="math display">
 z'_i = z_i + a_i - f c_i - u \,\mathbf{1}[c_i &gt; 0].
 \tag{9.3}</span></span></p>
-<div id="cc84c199" class="cell" data-execution_count="11">
+<div id="78f12138" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> process_logits(logits: <span class="bu">list</span>[<span class="bu">float</span>], counts: <span class="bu">list</span>[<span class="bu">int</span>], repetition: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>,</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>                   frequency: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.0</span>, presence: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.0</span>,</span>
@@ -1185,7 +1185,7 @@ z'_i = z_i + a_i - f c_i - u \,\mathbf{1}[c_i &gt; 0].
 <span id="cb16-31"><a href="#cb16-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> out</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A quick check on three tokens — one positive and seen, one negative and seen, one unseen — shows the sign-aware split: the positive logit shrinks toward zero, the negative one grows more negative, and the untouched token is unchanged.</p>
-<div id="f07f3039" class="cell" data-execution_count="12">
+<div id="3f850464" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>demo <span class="op">=</span> process_logits([<span class="fl">2.0</span>, <span class="op">-</span><span class="fl">2.0</span>, <span class="fl">0.5</span>], counts<span class="op">=</span>[<span class="dv">3</span>, <span class="dv">3</span>, <span class="dv">0</span>], repetition<span class="op">=</span><span class="fl">1.5</span>, frequency<span class="op">=</span><span class="fl">0.1</span>)</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"before:"</span>, [<span class="fl">2.0</span>, <span class="op">-</span><span class="fl">2.0</span>, <span class="fl">0.5</span>])</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"after :"</span>, [<span class="bu">round</span>(x, <span class="dv">3</span>) <span class="cf">for</span> x <span class="kw">in</span> demo])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1264,7 +1264,7 @@ Figure&nbsp;9.5: In what order does a decoding configuration become one categori
 <h2 data-number="9.5" class="anchored" data-anchor-id="sec-ch09-determinism"><span class="header-section-number">9.5</span> Seeded is not batch-invariant</h2>
 <p>Set temperature to zero, fix a seed, send the same prompt twice under load, and you can still get different text. Sampling need not be the cause. Greedy output flips whenever a tiny numerical change reorders two nearly tied logits, and floating-point addition is not associative: <span class="math inline">(a+b)+c</span> can differ from <span class="math inline">a+(b+c)</span>. GPU and CPU kernels partition reductions across threads and tiles, and a runtime may pick a different split when the batch shape, sequence packing, or kernel changes. Those legal execution paths produce slightly different logits — and once an argmax flips, every later token inherits a different context.</p>
 <p>We can measure this on the real model. We take one prompt, compute its last-token logits alone, then batch identical copies of it and compare. Nothing about the prompt changed; only the batch shape did.</p>
-<div id="27c3ce49" class="cell" data-execution_count="13">
+<div id="669e2481" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="at">@torch.inference_mode</span>()</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> last_logits(ids_batch, net):</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> net(ids_batch)[<span class="dv">0</span>][:, <span class="op">-</span><span class="dv">1</span>]</span>
@@ -1290,7 +1290,7 @@ batch  32 in float64:  max |Δlogit| 2.66e-15</code></pre>
 </div>
 </div>
 <p>The drift is small — around a part in ten million in float32 — and here it does not flip the greedy token, because this prompt’s top two logits are far apart. Note the trap: at batch 2 the logits may be bitwise identical, so the bug hides until load grows the batch. In float64 the drift nearly vanishes, which locates the cause in finite precision, not in the model. To see how a drift this size <em>can</em> flip a choice, we construct the worst case: a logit built from a catastrophic cancellation, summed two legal ways.</p>
-<div id="1628cf08" class="cell" data-execution_count="14">
+<div id="347f50e2" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> batch_invariance_probe() <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">float</span>]:</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Show that two legal reduction orders can flip a greedy argmax.</span></span>
@@ -1317,7 +1317,7 @@ batch  32 in float64:  max |Δlogit| 2.66e-15</code></pre>
 <span id="cb21-24"><a href="#cb21-24" aria-hidden="true" tabindex="-1"></a>            <span class="st">"max_drift"</span>: <span class="bu">max</span>(<span class="bu">abs</span>(a <span class="op">-</span> b) <span class="cf">for</span> a, b <span class="kw">in</span> <span class="bu">zip</span>(single, batched))}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run the constructed probe and read off the flip.</p>
-<div id="a2863ecc" class="cell" data-execution_count="15">
+<div id="f50aae1a" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(batch_invariance_probe())</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>{'serial_sum': 0.0, 'partitioned_sum': 1.0, 'greedy_flip': 1.0, 'max_drift': 0.24491866240370913}</code></pre>
@@ -1410,7 +1410,7 @@ Figure&nbsp;9.6: Which surfaces must be invariant before a repeated request can 
 </tbody>
 </table>
 <p>A long answer should be decomposed into atomic claims before scoring, because one correct paragraph can carry one consequential false sentence (Min et al., 2023). We take the fabricated answer, split it into atomic claims, mark each supported or not against what actually exists, and compute a support fraction.</p>
-<div id="3397fac7" class="cell" data-execution_count="16">
+<div id="3d5012d8" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> support_fraction(claims: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">bool</span>]]) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Fraction of atomic claims that are supported by the reference.</span></span>
@@ -1431,7 +1431,7 @@ Figure&nbsp;9.6: Which surfaces must be invariant before a repeated request can 
 <span id="cb24-18"><a href="#cb24-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(<span class="dv">1</span> <span class="cf">for</span> _, ok <span class="kw">in</span> claims <span class="cf">if</span> ok) <span class="op">/</span> <span class="bu">len</span>(claims)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We decompose the fabricated Aerolith answer and score it.</p>
-<div id="3dfbafba" class="cell" data-execution_count="17">
+<div id="f1a91b7a" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>answer <span class="op">=</span> [</span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"The Aerolith Maritime Council was created by a treaty"</span>, <span class="va">False</span>),</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"It was created in 1987"</span>, <span class="va">False</span>),</span>
@@ -1453,7 +1453,7 @@ Figure&nbsp;9.6: Which surfaces must be invariant before a repeated request can 
 \Pr\!\big(Y = 1 \mid q(X) \approx c\big) \approx c.
 \tag{9.4}</span></span></p>
 <p>Calibration is population- and event-specific: a score calibrated for short-answer correctness need not be calibrated for every atomic claim or after a domain shift. Several signals compete. <strong>Token log probability</strong> is available but measures fluency, not truth; summed it grows more negative with length, averaged it changes the quantity. <strong>P(True)</strong> shows the model its own answer and asks whether it is correct, a more relevant event with useful in-distribution calibration (Kadavath et al., 2022). <strong>Verbalized confidence</strong> — the model stating “I’m about 80% sure” — can beat raw probabilities for some post-trained models (Tian et al., 2023) but is a learned utterance that must itself be calibrated. We compare two of these on a labeled fixture, honestly synthetic, where each item carries a correctness label, an overconfident logprob-style score, and a coarse verbalized score.</p>
-<div id="bcc88b4a" class="cell" data-execution_count="18">
+<div id="6ebc03e5" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> random</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1485,7 +1485,7 @@ Figure&nbsp;9.6: Which surfaces must be invariant before a repeated request can 
 <span id="cb27-29"><a href="#cb27-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> items</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Two proper scoring rules grade a probability against an outcome: the <strong>Brier score</strong> <span class="math inline">(q-y)^2</span> and log loss; both are minimized in expectation by truthful probabilities. <strong>Expected calibration error (ECE)</strong> bins predictions and averages the gap between mean confidence and bin accuracy — readable, but sensitive to bins. We compute all three for both signals.</p>
-<div id="66822680" class="cell" data-execution_count="19">
+<div id="8120709e" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> brier(items: <span class="bu">list</span>[<span class="bu">dict</span>], key: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Mean squared error between a confidence score and the binary outcome."""</span></span>
@@ -1517,7 +1517,7 @@ Figure&nbsp;9.6: Which surfaces must be invariant before a repeated request can 
 <span id="cb28-29"><a href="#cb28-29" aria-hidden="true" tabindex="-1"></a>            error <span class="op">+=</span> <span class="bu">len</span>(bucket) <span class="op">/</span> <span class="bu">len</span>(items) <span class="op">*</span> <span class="bu">abs</span>(confidence <span class="op">-</span> accuracy)</span>
 <span id="cb28-30"><a href="#cb28-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> error</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="7bb7c5d0" class="cell" data-execution_count="20">
+<div id="74f579be" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>fixture <span class="op">=</span> qa_fixture()</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>accuracy <span class="op">=</span> <span class="bu">sum</span>(it[<span class="st">"correct"</span>] <span class="cf">for</span> it <span class="kw">in</span> fixture) <span class="op">/</span> <span class="bu">len</span>(fixture)</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"base accuracy: </span><span class="sc">{</span>accuracy<span class="sc">:.3f}</span><span class="ss">"</span>)</span>
@@ -1534,7 +1534,7 @@ verbal_conf    ECE 0.196   Brier 0.224</code></pre>
 H_{\text{sem}}(x) = -\sum_c P(c \mid x)\,\log P(c \mid x), \qquad P(c \mid x) = \sum_{y \in c} p(y \mid x).
 \tag{9.5}</span></span></p>
 <p>Real systems cluster with a bidirectional-entailment model (Kuhn et al., 2023; Farquhar et al., 2024); we use a deterministic normalizer — lowercase, drop punctuation and a few stopwords, keep the content words as the cluster key — which collapses paraphrases of a single answer.</p>
-<div id="063eef64" class="cell" data-execution_count="21">
+<div id="a3c74503" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math, re</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1580,7 +1580,7 @@ H_{\text{sem}}(x) = -\sum_c P(c \mid x)\,\log P(c \mid x), \qquad P(c \mid x) = 
 <span id="cb31-43"><a href="#cb31-43" aria-hidden="true" tabindex="-1"></a>            <span class="st">"clusters"</span>: {(<span class="st">" "</span>.join(k) <span class="kw">or</span> <span class="st">"&lt;empty&gt;"</span>): <span class="bu">round</span>(v, <span class="dv">3</span>) <span class="cf">for</span> k, v <span class="kw">in</span> clusters.items()}}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We sample five surface answers to one question — three of them paraphrases of “Paris” — and compare surface entropy with entropy after clustering.</p>
-<div id="0af0c067" class="cell" data-execution_count="22">
+<div id="e6b7c846" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>samples <span class="op">=</span> [(<span class="st">"Paris"</span>, <span class="fl">0.36</span>), (<span class="st">"The city is Paris"</span>, <span class="fl">0.24</span>), (<span class="st">"Lyon"</span>, <span class="fl">0.20</span>),</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>           (<span class="st">"It was Marseille"</span>, <span class="fl">0.12</span>), (<span class="st">"paris."</span>, <span class="fl">0.08</span>)]</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>result <span class="op">=</span> semantic_entropy(samples)</span>
@@ -1617,7 +1617,7 @@ Figure&nbsp;9.7
 </figure>
 </div>
 <p>A miscalibrated but well-ranked score can often be <em>fixed</em> by a monotone map. <strong>Temperature scaling</strong> (Guo et al., 2017) fits one scalar on a held-out split and rescales the confidence in logit space, changing calibration without touching the ranking. We fit it on the logprob signal and re-score.</p>
-<div id="8694abe8" class="cell" data-execution_count="24">
+<div id="68a64e74" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1652,7 +1652,7 @@ Figure&nbsp;9.7
 <span id="cb35-32"><a href="#cb35-32" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="dv">1</span> <span class="op">/</span> (<span class="dv">1</span> <span class="op">+</span> math.exp(<span class="op">-</span>math.log(q <span class="op">/</span> (<span class="dv">1</span> <span class="op">-</span> q)) <span class="op">/</span> tau))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We fit the temperature on the fixture and re-score the logprob signal.</p>
-<div id="e491766f" class="cell" data-execution_count="25">
+<div id="74076439" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>tau <span class="op">=</span> fit_temperature(fixture, <span class="st">"logprob_conf"</span>)</span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> it <span class="kw">in</span> fixture:</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    it[<span class="st">"cal_conf"</span>] <span class="op">=</span> calibrate(it[<span class="st">"logprob_conf"</span>], tau)</span>
@@ -1701,7 +1701,7 @@ Figure&nbsp;9.8
 R_{\text{selective}}(t) = \frac{\mathbb{E}[\ell\, g_t]}{\mathbb{E}[g_t]}, \qquad R_{\text{marginal}}(t) = \mathbb{E}[\ell\, g_t].
 \tag{9.6}</span></span></p>
 <p>Selective risk is the error rate <em>among answered queries</em>; marginal error is the wrong-answer rate over <em>all</em> queries, counting abstentions as zero loss. They differ by coverage: <span class="math inline">R_{\text{marginal}} = C \cdot R_{\text{selective}}</span>. A requirement of “ten percent risk” is incomplete until it names which. Sweeping <span class="math inline">t</span> traces a <strong>risk-coverage curve</strong>.</p>
-<div id="423dce45" class="cell" data-execution_count="27">
+<div id="d917f8ee" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> risk_curve(items: <span class="bu">list</span>[<span class="bu">dict</span>], key: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">dict</span>]:</span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Trace coverage, selective risk, and marginal error as the threshold sweeps.</span></span>
@@ -1727,7 +1727,7 @@ R_{\text{selective}}(t) = \frac{\mathbb{E}[\ell\, g_t]}{\mathbb{E}[g_t]}, \qquad
 <span id="cb39-23"><a href="#cb39-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We sweep the calibrated confidence and print a handful of operating points.</p>
-<div id="99da2290" class="cell" data-execution_count="28">
+<div id="defd7d1f" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>curve <span class="op">=</span> risk_curve(fixture, <span class="st">"cal_conf"</span>)</span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> row <span class="kw">in</span> curve[:: <span class="bu">max</span>(<span class="dv">1</span>, <span class="bu">len</span>(curve) <span class="op">//</span> <span class="dv">5</span>)]:</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>({k: <span class="bu">round</span>(v, <span class="dv">3</span>) <span class="cf">for</span> k, v <span class="kw">in</span> row.items()})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1761,7 +1761,7 @@ Figure&nbsp;9.9
 </figure>
 </div>
 <p>A threshold picked by eye has no guarantee attached. <strong>Conformal risk control (CRC)</strong> picks one that provably bounds a monotone loss (Angelopoulos et al., 2024). For a wrong-answer loss on <span class="math inline">n</span> calibration items, accept a threshold only when <span class="math inline">(e_t + 1)/(n + 1) \le \alpha</span>, where <span class="math inline">e_t</span> is the number of wrong answers it would release, and take the lowest accepted threshold to maximize coverage.</p>
-<div id="a9dff68d" class="cell" data-execution_count="30">
+<div id="70611ca6" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1788,7 +1788,7 @@ Figure&nbsp;9.9
 <span id="cb43-24"><a href="#cb43-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> math.inf</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We select a threshold at two risk budgets and read off both risks it produces.</p>
-<div id="30bb5e76" class="cell" data-execution_count="31">
+<div id="e37cc832" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> alpha <span class="kw">in</span> (<span class="fl">0.10</span>, <span class="fl">0.20</span>):</span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>    t <span class="op">=</span> crc_threshold(fixture, <span class="st">"cal_conf"</span>, alpha)</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>    answered <span class="op">=</span> [it <span class="cf">for</span> it <span class="kw">in</span> fixture <span class="cf">if</span> it[<span class="st">"cal_conf"</span>] <span class="op">&gt;=</span> t]</span>
@@ -1801,7 +1801,7 @@ alpha 0.2:  threshold 0.595   coverage 0.660   marginal 0.198   selective 0.299<
 </div>
 </div>
 <p>At <span class="math inline">\alpha = 0.10</span> the marginal error lands under the target, but the selective risk is roughly double it — the same operating point, read as marginal or conditional, gives two very different numbers. That distinction is the whole reason to name which risk a requirement means. A second conformal tool, <strong>split conformal prediction</strong> (Angelopoulos and Bates, 2021), controls <em>set</em> coverage without assuming raw probabilities are calibrated. On a calibration set it scores nonconformity <span class="math inline">s_i = 1 - p_i(y_i)</span>, sorts, and takes the rank-<span class="math inline">\lceil (n+1)(1-\alpha)\rceil</span> value as a threshold <span class="math inline">\hat q</span>; a new input returns every answer with nonconformity at most <span class="math inline">\hat q</span>, and under exchangeability the true answer is in that set with probability at least <span class="math inline">(1-\alpha)</span>.</p>
-<div id="0ed84c5b" class="cell" data-execution_count="32">
+<div id="fd67b374" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math, random</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1866,7 +1866,7 @@ alpha 0.2:  threshold 0.595   coverage 0.660   marginal 0.198   selective 0.299<
 <span id="cb46-62"><a href="#cb46-62" aria-hidden="true" tabindex="-1"></a>            <span class="st">"singleton_risk"</span>: errors <span class="op">/</span> singleton <span class="cf">if</span> singleton <span class="cf">else</span> <span class="fl">0.0</span>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We build the calibration and test sets and read the coverage the guarantee delivers.</p>
-<div id="c3e00620" class="cell" data-execution_count="33">
+<div id="fcb61b92" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>cal, test <span class="op">=</span> multiclass_fixture()</span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>({k: <span class="bu">round</span>(v, <span class="dv">3</span>) <span class="cf">for</span> k, v <span class="kw">in</span> split_conformal(cal, test, <span class="fl">0.10</span>).items()})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1891,7 +1891,7 @@ alpha 0.2:  threshold 0.595   coverage 0.660   marginal 0.198   selective 0.299<
 <section id="sec-ch09-streaming" class="level2" data-number="9.9">
 <h2 data-number="9.9" class="anchored" data-anchor-id="sec-ch09-streaming"><span class="header-section-number">9.9</span> Streaming tokens are not text</h2>
 <p>The last edge is where bytes meet users. A server emits token IDs; a UI shows Unicode text, and the boundaries need not align. UTF-8 encodes one scalar value in one to four bytes, and a byte-level tokenizer can emit a piece that ends inside a multibyte character. Decoding each event on its own then produces replacement characters. Stop sequences have the same problem one level up: a requested stop of <code>STOP</code> can arrive as <code>ST</code> then <code>OP</code>, and checking each chunk alone leaks the marker. The fix is to run an incremental decoder and hold back the longest possible stop-prefix.</p>
-<div id="13bb103b" class="cell" data-execution_count="34">
+<div id="01801a75" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> codecs</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1924,7 +1924,7 @@ alpha 0.2:  threshold 0.595   coverage 0.660   marginal 0.198   selective 0.299<
 <span id="cb49-30"><a href="#cb49-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">""</span>.join(emitted) <span class="op">+</span> pending <span class="op">+</span> decoder.decode(<span class="st">b""</span>, final<span class="op">=</span><span class="va">True</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We drive it with the real Chapter 2 tokenizer. The emoji <code>🙂</code> is four UTF-8 bytes the tokenizer never merged, so it streams as four separate single-byte pieces — the exact case that breaks naive per-piece decoding.</p>
-<div id="de53159e" class="cell" data-execution_count="35">
+<div id="004570df" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>ids <span class="op">=</span> tok.encode(<span class="st">"Hi 🙂"</span>)</span>
 <span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a>pieces <span class="op">=</span> [tok.token_bytes[i] <span class="cf">for</span> i <span class="kw">in</span> ids]</span>
 <span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"token pieces:"</span>, pieces)</span>

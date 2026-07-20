@@ -871,7 +871,7 @@ Figure&nbsp;1.1: What does the caller control, and what does the server return? 
 </div>
 </div>
 <p>Two boundaries in <a href="#fig-ch01-call-contract" class="quarto-xref">Figure&nbsp;<span>1.1</span></a> are easy to blur, and both cause bugs. The caller controls <em>what context and permissions to supply</em>; it does not control how the server decodes or batches. And the model does not retrieve an omitted policy, remember a previous request, or gain permission to run a tool merely because the chat syntax names one. To keep those measurements beside the text where an attractive answer cannot hide them, we carry a small provider-neutral result type through the whole chapter. The cell below is marked <code># @save</code>, so <code>scripts/tangle.py</code> exports it to <code>code/ch01/_generated.py</code> for the tests to import.</p>
-<div id="c68a17fa" class="cell" data-execution_count="1">
+<div id="6113aa54" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -908,7 +908,7 @@ Figure&nbsp;1.1: What does the caller control, and what does the server return? 
 <span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>    total_ms: <span class="bu">float</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A value of this type carries the answer and its measurements together, so we build one and read the log probabilities back out.</p>
-<div id="e644f4ed" class="cell" data-execution_count="2">
+<div id="26779462" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>example <span class="op">=</span> Completion(</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    text<span class="op">=</span><span class="st">"not covered"</span>,</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    token_scores<span class="op">=</span>(TokenScore(<span class="st">"not"</span>, <span class="op">-</span><span class="fl">0.11</span>), TokenScore(<span class="st">" covered"</span>, <span class="op">-</span><span class="fl">0.42</span>)),</span>
@@ -923,7 +923,7 @@ Figure&nbsp;1.1: What does the caller control, and what does the server return? 
 </div>
 </div>
 <p>The interface records counts and timing as first-class data. A production version would add finish reasons, request ids, and errors, but the contract we are teaching does not change. What does a real server put in these fields? The following cell issues one streaming chat completion with log probabilities against any OpenAI-compatible endpoint. It does not run in the book — it needs a network and a served model — so it is a <code>#| eval: false</code> cell, and the block after it shows a representative response with the exact shape any OpenAI-compatible endpoint returns; run the cell against your own endpoint to capture the real thing.</p>
-<div id="2846aec8" class="cell" data-execution_count="3">
+<div id="9eff1b74" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> httpx</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>payload <span class="op">=</span> {</span>
@@ -951,7 +951,7 @@ usage: {'prompt_tokens': 18, 'completion_tokens': 21, 'total_tokens': 39}</code>
 <section id="sec-ch01-context" class="level2" data-number="1.2">
 <h2 data-number="1.2" class="anchored" data-anchor-id="sec-ch01-context"><span class="header-section-number">1.2</span> Tokens and context are budgets</h2>
 <p>Before a model sees text it sees token ids, and the mapping is not one token per word. A <strong>tokenizer</strong> maps text spans to integers from a fixed vocabulary; frequent strings become single tokens while rare ones fragment. That is exactly what byte-pair encoding produces: it starts every word as a sequence of characters and repeatedly merges the most frequent adjacent pair, so common words and suffixes collapse to one piece while an unfamiliar name stays split <span class="citation" data-cites="sennrich2016neural">(<a href="../references.html#ref-sennrich2016neural" role="doc-biblioref">Sennrich et al. 2016</a>)</span>. We can watch this happen by training a tiny encoder on a handful of sentences.</p>
-<div id="fc4874f0" class="cell" data-execution_count="4">
+<div id="b985a539" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections <span class="im">import</span> Counter</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -998,7 +998,7 @@ usage: {'prompt_tokens': 18, 'completion_tokens': 21, 'total_tokens': 39}</code>
 <span id="cb6-44"><a href="#cb6-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> merges</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Encoding a new word means replaying those merges greedily until nothing more joins. The pieces that come out are the tokens the model would actually charge for.</p>
-<div id="0cd070ac" class="cell" data-execution_count="5">
+<div id="1012f215" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bpe_encode(word: <span class="bu">str</span>, merges: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">str</span>]:</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Encode one word into subword pieces by replaying learned merges.</span></span>
@@ -1025,7 +1025,7 @@ usage: {'prompt_tokens': 18, 'completion_tokens': 21, 'total_tokens': 39}</code>
 <span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> symbols</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We train on a small, repetitive corpus so common words earn their own tokens, then encode a sentence that mixes ordinary words with an invented name. Watch the token count diverge from the word count.</p>
-<div id="a9183eda" class="cell" data-execution_count="6">
+<div id="01154c2d" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>corpus <span class="op">=</span> [</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the refund policy covers the standard window"</span>,</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the policy covers refunds inside the window"</span>,</span>
@@ -1055,7 +1055,7 @@ a            -&gt;  1 tokens  ['a&lt;/w&gt;']
 </div>
 </div>
 <p>The common words that appeared often in training — <code>the</code>, <code>refund</code>, <code>policy</code> — each collapse to a single piece, while <code>denies</code> (never seen) and the invented name <code>Wagnersløv</code> shatter into many, so seven words become twenty tokens. That is the general rule: token count tracks familiarity, not word count, so character or word counts are poor proxies for what a call costs. Every token id is also an entry in a fixed vocabulary; assigning ids makes the point that the model reasons over integers, not letters.</p>
-<div id="d978a0e8" class="cell" data-execution_count="7">
+<div id="4dcec51c" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>vocab <span class="op">=</span> {piece: i <span class="cf">for</span> i, piece <span class="kw">in</span> <span class="bu">enumerate</span>(<span class="bu">sorted</span>({t <span class="cf">for</span> toks <span class="kw">in</span> pieces.values() <span class="cf">for</span> t <span class="kw">in</span> toks}))}</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"first ids:"</span>, <span class="bu">dict</span>(<span class="bu">list</span>(vocab.items())[:<span class="dv">6</span>]))</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"ids for 'refund':"</span>, [vocab[t] <span class="cf">for</span> t <span class="kw">in</span> pieces[<span class="st">"refund"</span>]])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1073,7 +1073,7 @@ ids for 'refund': [12]</code></pre>
 p_i(T) = \frac{\exp(z_i / T)}{\sum_{j=1}^{V} \exp(z_j / T)}.
 \tag{1.2}</span></span></p>
 <p>Low <span class="math inline">T</span> sharpens the differences between logits toward the top token; high <span class="math inline">T</span> flattens them toward uniform. It reshapes <em>which continuations are likely</em> — it adds no evidence and cannot turn the distribution into a truth estimator. Here is <a href="#eq-ch01-softmax" class="quarto-xref">Equation&nbsp;<span>1.2</span></a> as code.</p>
-<div id="5d2a7b02" class="cell" data-execution_count="8">
+<div id="eeb8e53e" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1100,7 +1100,7 @@ p_i(T) = \frac{\exp(z_i / T)}{\sum_{j=1}^{V} \exp(z_j / T)}.
 <span id="cb12-24"><a href="#cb12-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [weight <span class="op">/</span> total <span class="cf">for</span> weight <span class="kw">in</span> weights]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Take one concrete case. After the prompt “A refund after 45 days is”, suppose the model’s four candidate next words carry logits <code>[1.6, 0.9, 0.3, -0.4]</code> for <code>not</code>, <code>sometimes</code>, <code>usually</code>, <code>always</code>. We push those exact numbers through <a href="#eq-ch01-softmax" class="quarto-xref">Equation&nbsp;<span>1.2</span></a> at three temperatures and print the distribution.</p>
-<div id="dff36593" class="cell" data-execution_count="9">
+<div id="82491af7" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>candidates <span class="op">=</span> [<span class="st">"not"</span>, <span class="st">"sometimes"</span>, <span class="st">"usually"</span>, <span class="st">"always"</span>]</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>logits <span class="op">=</span> [<span class="fl">1.6</span>, <span class="fl">0.9</span>, <span class="fl">0.3</span>, <span class="op">-</span><span class="fl">0.4</span>]</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> temp <span class="kw">in</span> (<span class="fl">0.5</span>, <span class="fl">1.0</span>, <span class="fl">2.0</span>):</span>
@@ -1143,7 +1143,7 @@ Figure&nbsp;1.2: How does temperature reshape one next-token distribution? Low T
 </div>
 </div>
 <p>A distribution is only visible if we draw from it. The server samples one token per step; we reproduce that with a seeded inverse-CDF draw, which also shows why a seed makes the <em>offline</em> probe reproducible.</p>
-<div id="d1d91984" class="cell" data-execution_count="11">
+<div id="c5deb84f" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> random</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1172,7 +1172,7 @@ Figure&nbsp;1.2: How does temperature reshape one next-token distribution? Low T
 <span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">len</span>(probs) <span class="op">-</span> <span class="dv">1</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The same seed and temperature reproduce the same token; different seeds explore the distribution. We show both, then measure how diversity grows with temperature by drawing many samples and counting distinct outcomes and their entropy.</p>
-<div id="621da788" class="cell" data-execution_count="12">
+<div id="27a64451" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>probs <span class="op">=</span> softmax(logits, <span class="fl">1.0</span>)</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"same seed twice:"</span>, sample_token(probs, random.Random(<span class="dv">3</span>)), sample_token(probs, random.Random(<span class="dv">3</span>)))</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"seeds 0..5:     "</span>, [candidates[sample_token(probs, random.Random(s))] <span class="cf">for</span> s <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">6</span>)])</span>
@@ -1224,13 +1224,13 @@ Figure&nbsp;1.3: How does output entropy grow with temperature? Sampled diversit
 <section id="sec-ch01-confabulation" class="level2" data-number="1.4">
 <h2 data-number="1.4" class="anchored" data-anchor-id="sec-ch01-confabulation"><span class="header-section-number">1.4</span> Confabulation, confidence, and abstention</h2>
 <p>Now the treaty. Ask the model “What did the 1912 Alpine Berry Treaty establish?” and it may answer fluently about seasonal quotas and an inspection council. The treaty is invented. This is compatible with the modeling objective in <a href="#eq-ch01-autoregressive" class="quarto-xref">Equation&nbsp;<span>1.1</span></a>: the model estimates likely continuations of the supplied text, and a false premise phrased like a real historical question has a coherent, high-probability continuation. Dates, treaties, and councils co-occur in training-like text; nothing in next-token prediction forces an existence check first. The trap is that the model’s certainty about its <em>tokens</em> is high, and it is easy to read that as certainty about the <em>world</em>. Take per-token log probabilities representative of such an answer and exponentiate them — recall from <a href="#eq-ch01-autoregressive" class="quarto-xref">Equation&nbsp;<span>1.1</span></a> that a token’s model probability is <span class="math inline">\exp(\ell)</span>.</p>
-<div id="b1c26534" class="cell" data-execution_count="14">
+<div id="92fab2be" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> token_confidence(logprob: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return exp(logprob): the model's probability for that single token."""</span></span>
 <span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> math.exp(logprob)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="2d85ba9b" class="cell" data-execution_count="15">
+<div id="f83fa8d1" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Representative per-token log probabilities of a confabulated treaty answer.</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>treaty_logprobs <span class="op">=</span> [<span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.05</span>, <span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.04</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.06</span>, <span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.04</span>]</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>per_token <span class="op">=</span> [token_confidence(lp) <span class="cf">for</span> lp <span class="kw">in</span> treaty_logprobs]</span>
@@ -1270,7 +1270,7 @@ Figure&nbsp;1.4: Why does a high log probability not mean the claim is true? Per
 </div>
 </div>
 <p>Keep three quantities apart. <strong>Token likelihood</strong> asks how probable a token is under the model given the context; the API may expose its logarithm, and that is what we just exponentiated. <strong>Semantic confidence</strong> asks whether independently sampled generations agree in meaning; methods like semantic entropy estimate it, but it is still a measurement of model behavior, not of the world <span class="citation" data-cites="farquhar2024semantic">(<a href="../references.html#ref-farquhar2024semantic" role="doc-biblioref">Farquhar et al. 2024</a>)</span>. <strong>Factual correctness</strong> asks whether a claim matches an authoritative source, and it requires evidence, a verifier, or a human — it is not contained in a log probability. Calibration is the bridge between a stated confidence and observed frequency. If answers rated 0.9 are correct 90% of the time on a task, the score is calibrated there. It rarely is out of the box, and we can see the miscalibration in a representative evaluation slice.</p>
-<div id="07499d63" class="cell" data-execution_count="17">
+<div id="2829e983" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># A representative evaluation slice: (stated_confidence, was_correct) pairs.</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>slice_ <span class="op">=</span> [(<span class="fl">0.95</span>, <span class="dv">1</span>), (<span class="fl">0.92</span>, <span class="dv">0</span>), (<span class="fl">0.91</span>, <span class="dv">1</span>), (<span class="fl">0.90</span>, <span class="dv">0</span>), (<span class="fl">0.72</span>, <span class="dv">1</span>),</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>          (<span class="fl">0.70</span>, <span class="dv">0</span>), (<span class="fl">0.68</span>, <span class="dv">1</span>), (<span class="fl">0.65</span>, <span class="dv">0</span>), (<span class="fl">0.55</span>, <span class="dv">1</span>), (<span class="fl">0.52</span>, <span class="dv">0</span>)]</span>
@@ -1285,7 +1285,7 @@ stated 0.0-0.60: empirical accuracy 0.50  (n=2)</code></pre>
 </div>
 </div>
 <p>The high-confidence bucket is right only about half the time here — badly overconfident — which is why a raw threshold on model confidence is not an abstention policy. An <strong>abstention policy</strong> is software: it decides, given an uncertainty estimate <em>and</em> whether evidence supports the claim, whether to answer, gather evidence, or decline. The model may supply a number; ordinary code enforces the boundary. “Only answer when certain” in a prompt is a request, not a gate.</p>
-<div id="c6220572" class="cell" data-execution_count="18">
+<div id="542533e1" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> decide_response(confidence: <span class="bu">float</span>, evidence_score: <span class="bu">float</span>, threshold: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.7</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Turn an uncertainty estimate into a concrete system action.</span></span>
@@ -1310,7 +1310,7 @@ stated 0.0-0.60: empirical accuracy 0.50  (n=2)</code></pre>
 <span id="cb26-22"><a href="#cb26-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"retrieve"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run the policy on the two cases from the opening: the fluent treaty answer (high confidence, no evidence) and a refund question backed by a retrieved policy passage (confident and supported).</p>
-<div id="7563d01f" class="cell" data-execution_count="19">
+<div id="6bd3f418" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"treaty (0.97 conf, 0.0 evidence):"</span>, decide_response(<span class="fl">0.97</span>, <span class="fl">0.0</span>))</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"refund (0.90 conf, 0.9 evidence):"</span>, decide_response(<span class="fl">0.90</span>, <span class="fl">0.9</span>))</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"vague  (0.60 conf, 0.3 evidence):"</span>, decide_response(<span class="fl">0.60</span>, <span class="fl">0.3</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1387,7 +1387,7 @@ Instruction-tuned model (illustrative):
 \mathrm{TPOT} = \frac{t_N - t_1}{N - 1}.
 \tag{1.3}</span></span></p>
 <p>We simulate a decode loop with a deterministic fake clock so we can exercise the same arithmetic a real stream would drive, then read TTFT and TPOT off the timestamps.</p>
-<div id="d4462d5d" class="cell" data-execution_count="20">
+<div id="364ec716" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> simulate_decode(prompt_tokens: <span class="bu">int</span>, output_tokens: <span class="bu">int</span>, <span class="op">*</span>,</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>                    prefill_ms_per_token: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.4</span>, decode_ms_per_token: <span class="bu">float</span> <span class="op">=</span> <span class="fl">18.0</span>,</span>
@@ -1417,7 +1417,7 @@ Instruction-tuned model (illustrative):
 <span id="cb30-27"><a href="#cb30-27" aria-hidden="true" tabindex="-1"></a>        times.append(times[<span class="op">-</span><span class="dv">1</span>] <span class="op">+</span> decode_ms_per_token <span class="op">+</span> rng.uniform(<span class="op">-</span>jitter_ms, jitter_ms))</span>
 <span id="cb30-28"><a href="#cb30-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> times</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="db171a86" class="cell" data-execution_count="21">
+<div id="f03002d3" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> tpot_ms(token_times_ms: <span class="bu">list</span>[<span class="bu">float</span>]) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Compute time per output token from a decode loop's arrival times.</span></span>
@@ -1432,7 +1432,7 @@ Instruction-tuned model (illustrative):
 <span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="fl">0.0</span></span>
 <span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (token_times_ms[<span class="op">-</span><span class="dv">1</span>] <span class="op">-</span> token_times_ms[<span class="dv">0</span>]) <span class="op">/</span> (<span class="bu">len</span>(token_times_ms) <span class="op">-</span> <span class="dv">1</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="82b67b95" class="cell" data-execution_count="22">
+<div id="12979d82" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>times <span class="op">=</span> simulate_decode(prompt_tokens<span class="op">=</span><span class="dv">800</span>, output_tokens<span class="op">=</span><span class="dv">20</span>)</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>ttft <span class="op">=</span> times[<span class="dv">0</span>]</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>total <span class="op">=</span> times[<span class="op">-</span><span class="dv">1</span>]</span>
@@ -1474,7 +1474,7 @@ Figure&nbsp;1.5: Where does the time go? A single prefill segment reaches the fi
 </div>
 </div>
 <p>The phases explain the cost asymmetry. A longer <em>input</em> inflates prefill and occupies context capacity; a longer <em>output</em> extends serial decoding and keeps accelerator state resident. The two are not interchangeable, and the useful denominator is not raw token price but a successful, policy-compliant outcome — a cheaper model that triggers more retries or human corrections can cost more per resolved task. We can make that concrete: charge input and output tokens, then divide by a success rate.</p>
-<div id="cc5e0486" class="cell" data-execution_count="24">
+<div id="a97bacdf" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>prompt_toks, output_toks <span class="op">=</span> <span class="dv">800</span>, <span class="dv">200</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>in_rate, out_rate <span class="op">=</span> <span class="fl">0.05</span> <span class="op">/</span> <span class="dv">1000</span>, <span class="fl">0.40</span> <span class="op">/</span> <span class="dv">1000</span>   <span class="co"># dollars per token; output is dearer</span></span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>raw <span class="op">=</span> prompt_toks <span class="op">*</span> in_rate <span class="op">+</span> output_toks <span class="op">*</span> out_rate</span>
@@ -1541,7 +1541,7 @@ Figure&nbsp;1.7: The authority ladder, levels 0–5. Each rung buys one capabili
 </figure>
 </div>
 <p>These levels describe permissions, not intelligence: a powerful model can sit at L0 while a modest classifier triggers an L4 effect if software wires it that way. Each increment also has a countable price, and “the model will handle it” is never a budget. We cost the increments explicitly. Represent each rung by the per-task overhead it adds — extra model calls, expected retries, and operator review minutes — and accumulate.</p>
-<div id="8fba5a20" class="cell" data-execution_count="25">
+<div id="aa0dc9e7" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Rung:</span>
@@ -1583,7 +1583,7 @@ Figure&nbsp;1.7: The authority ladder, levels 0–5. Each rung buys one capabili
 <span id="cb37-39"><a href="#cb37-39" aria-hidden="true" tabindex="-1"></a>        rows.append((rung.name, incremental, cumulative))</span>
 <span id="cb37-40"><a href="#cb37-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="4d34e336" class="cell" data-execution_count="26">
+<div id="5e3a35f1" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>ladder <span class="op">=</span> [</span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"conventional"</span>, <span class="dv">0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="dv">1</span>),</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"one model call"</span>, <span class="dv">1</span>, <span class="fl">0.0</span>, <span class="fl">0.5</span>, <span class="dv">1</span>),</span>

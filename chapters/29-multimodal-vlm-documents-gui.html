@@ -842,7 +842,7 @@ window.Quarto = {
 N=\frac{H}{P}\cdot\frac{W}{P},
 \tag{29.1}</span></span></p>
 <p>assuming both sides divide evenly by <span class="math inline">P</span>. Each patch flattens to a vector in <span class="math inline">\mathbb{R}^{P^2C}</span>, which a learned matrix projects to the encoder’s width. We start with the two operations that <a href="#eq-ch29-patches" class="quarto-xref">Equation&nbsp;<span>29.1</span></a> describes, and a real image to run them on. Our constructed image is a four-bar chart — the analyst’s revenue figure in miniature, one bar taller and tinted differently.</p>
-<div id="07826932" class="cell" data-execution_count="1">
+<div id="92b67c45" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -907,7 +907,7 @@ N=\frac{H}{P}\cdot\frac{W}{P},
 <span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> img</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>With the tokenizer written, we run it. A 224-by-224 image at <span class="math inline">P=16</span> should give a 14-by-14 grid — 196 tokens — and each token should be a 768-vector, since <span class="math inline">{16\times16\times3=768}</span>.</p>
-<div id="dc94e283" class="cell" data-execution_count="2">
+<div id="b2a17bc6" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>image <span class="op">=</span> toy_chart(<span class="dv">224</span>)</span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>patches, grid <span class="op">=</span> patchify(image, <span class="dv">16</span>)</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"image:"</span>, image.shape, <span class="st">" patch grid:"</span>, grid, <span class="st">" tokens:"</span>, patches.shape[<span class="dv">0</span>])</span>
@@ -949,7 +949,7 @@ Figure&nbsp;29.1: How does a 224x224 image become 196 tokens? The Vision Transfo
 </div>
 </div>
 <p>A patch matrix is not yet contextual: each row still describes its square in isolation. The Vision Transformer fixes that with the same self-attention we built in <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>, so a patch showing the top of a bar can be informed by the patch showing its base. We import that function unchanged from Chapter 2 and run it over projected patch embeddings. To keep the demo honest we use <em>untrained</em> random projections — no learning has happened — and simply confirm the operation is a genuine soft mixture, not a hard lookup.</p>
-<div id="c0a8b2d9" class="cell" data-execution_count="4">
+<div id="e2fd227c" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>sys.path.insert(<span class="dv">0</span>, <span class="st">"code/ch02"</span>)</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> _generated <span class="im">as</span> ch02                      <span class="co"># scaled_dot_product_attention from Ch 2</span></span>
@@ -1007,7 +1007,7 @@ Figure&nbsp;29.2: Where does an image become a sequence the language model can a
 \mathcal{L}_{I\to T}=-\frac{1}{B}\sum_{i=1}^{B}\log\frac{\exp(s_{ii}/\tau)}{\sum_{j=1}^{B}\exp(s_{ij}/\tau)}.
 \tag{29.2}</span></span></p>
 <p>The text-to-image direction is symmetric; CLIP averages the two. Each positive competes against every other caption in the batch, which is what pulls matched pairs together and pushes mismatched ones apart. We build a minimal version: synthetic pairs that share a hidden latent but live in different raw feature spaces, and two linear encoders that must learn to project both into one shared space. If the idea works, an untrained model’s similarity matrix is near-random and a trained one is diagonal.</p>
-<div id="ef936836" class="cell" data-execution_count="5">
+<div id="4f0f3764" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> info_nce_loss(similarity: torch.Tensor, tau: <span class="bu">float</span>) <span class="op">-&gt;</span> torch.Tensor:</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Symmetric CLIP loss: each matched pair must win its row and column."""</span></span>
@@ -1066,7 +1066,7 @@ Figure&nbsp;29.2: Where does an image become a sequence the language model can a
 <span id="cb7-56"><a href="#cb7-56" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> images, captions</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We instantiate six pairs — think invoice, bar chart, screenshot, receipt, table, map — and read off the similarity matrix and loss before any training.</p>
-<div id="c217494c" class="cell" data-execution_count="6">
+<div id="a5800646" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">0</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>images, captions <span class="op">=</span> make_pairs(<span class="dv">6</span>, shared_dim<span class="op">=</span><span class="dv">6</span>, img_dim<span class="op">=</span><span class="dv">16</span>, cap_dim<span class="op">=</span><span class="dv">12</span>, seed<span class="op">=</span><span class="dv">1</span>)</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>model <span class="op">=</span> DualEncoder(<span class="dv">16</span>, <span class="dv">12</span>, <span class="dv">8</span>)</span>
@@ -1090,7 +1090,7 @@ InfoNCE loss: 5.142  diagonal-argmax hits: 1 / 6</code></pre>
 </div>
 </div>
 <p>The matrix is a mess of positive and negative correlations, and only one of the six images picks its true caption as the strongest match. Now we minimize <a href="#eq-ch29-infonce" class="quarto-xref">Equation&nbsp;<span>29.2</span></a> for 300 steps of Adam and look again.</p>
-<div id="a9d5cb06" class="cell" data-execution_count="7">
+<div id="d73ca513" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>opt <span class="op">=</span> torch.optim.Adam(model.parameters(), lr<span class="op">=</span><span class="fl">0.05</span>)</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">300</span>):</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    vi, vt <span class="op">=</span> model(images, captions)</span>
@@ -1149,7 +1149,7 @@ Figure&nbsp;29.3: Why does contrastive training place a matched image and captio
 V(n)=nk+t.
 \tag{29.3}</span></span></p>
 <p>We fix <span class="math inline">k=256</span> and <span class="math inline">t=64</span> — representative of a common tile size — and read the bill straight off <a href="#eq-ch29-bill" class="quarto-xref">Equation&nbsp;<span>29.3</span></a>.</p>
-<div id="553d3cef" class="cell" data-execution_count="9">
+<div id="e6b26bf0" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> image_token_bill(tiles: <span class="bu">int</span>, tokens_per_tile: <span class="bu">int</span> <span class="op">=</span> <span class="dv">256</span>, thumbnail: <span class="bu">int</span> <span class="op">=</span> <span class="dv">64</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return per-page visual tokens under dynamic tiling, from @eq-ch29-bill."""</span></span>
@@ -1162,7 +1162,7 @@ V(n)=nk+t.
 <span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Convert a token count to dollars at a per-million-token input price."""</span></span>
 <span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> tokens <span class="op">/</span> <span class="fl">1e6</span> <span class="op">*</span> price_per_mtok</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="2dc54fdc" class="cell" data-execution_count="10">
+<div id="e7e3e3f6" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> n <span class="kw">in</span> (<span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">9</span>, <span class="dv">16</span>):</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"tiles=</span><span class="sc">{</span>n<span class="sc">:2d}</span><span class="ss">  -&gt;  </span><span class="sc">{</span>image_token_bill(n)<span class="sc">:5d}</span><span class="ss"> image tokens/page"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1186,7 +1186,7 @@ tiles=16  -&gt;   4160 image tokens/page</code></pre>
 <p><strong>Q. A pixel-based computer-use agent runs 20 steps on a 4K screen, tiling each screenshot into 16 tiles. Estimate the image-token cost per task, and where it hides.</strong> Price the pixels, not the call. Each step is <span class="math inline">{16\times256+64=4{,}160}</span> image tokens, so twenty steps is <span class="math inline">{83{,}200}</span> image tokens <em>before</em> any prompt, tool, or history text — and before caching. At an illustrative $3 per million input tokens that is about $0.25 per task in pixels alone; a thousand tasks a day is $250/day for <em>seeing</em>, independent of the reasoning. The number they want is <span class="math inline">s\cdot V(n)</span> with the step count <span class="math inline">s</span> made explicit, plus the observation that resolution and step count multiply. The trap is quoting a single per-image price as if a task were one image, or silently dropping tiling resolution below the target size to save tokens — which trades a budget line for a misgrounded click.</p>
 </div>
 </div>
-<div id="f2015e24" class="cell" data-execution_count="11">
+<div id="d74950c6" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>task_tokens <span class="op">=</span> <span class="dv">20</span> <span class="op">*</span> image_token_bill(<span class="dv">16</span>)</span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"20 steps x 16 tiles:"</span>, task_tokens, <span class="st">"image tokens/task"</span>)</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"illustrative cost at $3/Mtok: $"</span>, <span class="bu">round</span>(dollars(task_tokens, <span class="fl">3.0</span>), <span class="dv">3</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1196,7 +1196,7 @@ illustrative cost at $3/Mtok: $ 0.25</code></pre>
 </div>
 </div>
 <p>To see tiling on a real page we first need one. We build a small synthetic invoice — five fields at known boxes, every value emitted by the generator so the ground truth is exact rather than transcribed — and reuse it for extraction in the next section. The <code>Box</code> and <code>Page</code> records carry both the gold values and the evidence rectangle each value came from.</p>
-<div id="5add2767" class="cell" data-execution_count="12">
+<div id="5aa135d8" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> PIL <span class="im">import</span> Image, ImageDraw, ImageFont</span>
@@ -1315,7 +1315,7 @@ Figure&nbsp;29.4: How does one page become n tiles plus a thumbnail, and why doe
 <h2 data-number="29.4" class="anchored" data-anchor-id="sec-ch29-documents"><span class="header-section-number">29.4</span> Documents: values, structure, and evidence</h2>
 <p>Now we make the token bill pay for something. Document extraction has to produce not just recognized text but <em>normalized values</em> tied to <em>evidence</em> on the page — the total is <code>312.00</code>, and here is the box it came from — so a reviewer or a downstream check can audit each claim. We already have the synthetic page and its <code>render_page</code> from the previous section; here we build a genuine extractor that reads the rendered fields back by matching each character cell against reference glyphs. Crucially, the reader sees the page <em>degraded</em> to a resolution set by the tile budget, so its errors are real recognition failures under blur, not a scripted curve.</p>
 <p>The reader has two halves: reference glyph templates rendered once, and a per-field recognizer that crops each character cell from the <em>degraded</em> page and picks the nearest template. The degradation is a downscale-then-upscale, and the scale is set by the tile budget — fewer tiles, harsher blur.</p>
-<div id="4eb717dc" class="cell" data-execution_count="14">
+<div id="50eeee5c" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> _templates() <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    templates <span class="op">=</span> {}</span>
@@ -1372,7 +1372,7 @@ Figure&nbsp;29.4: How does one page become n tiles plus a thumbnail, and why doe
 <span id="cb20-54"><a href="#cb20-54" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> out</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Before scoring anything we run one page at the extremes and <em>look at the output</em>, d2l-style — the honest artifact, misreads and all.</p>
-<div id="52995041" class="cell" data-execution_count="15">
+<div id="b3c5d787" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>page0 <span class="op">=</span> make_pages(<span class="dv">1</span>)[<span class="dv">0</span>]</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>img0 <span class="op">=</span> render_page(page0)</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"gold      :"</span>, page0.gold)</span>
@@ -1385,7 +1385,7 @@ read @16 tile: {'invoice_id': 'INV-1040', 'vendor': 'NORTHWIND', 'total': '125.0
 </div>
 </div>
 <p>At one tile the reader returns <code>NORIHWIND</code> for the vendor and <code>O4</code> for the chart label: the blur turned the T into an I and the Q into an O, the two confusions a human squinting at a thumbnail would make. At sixteen tiles every field is exact. Recognition is not enough, though — a value we cannot audit is a liability. Two deterministic functions enforce the contract: the schema and evidence bounds, then the exact-match score against gold.</p>
-<div id="89fe8cec" class="cell" data-execution_count="16">
+<div id="354f31f4" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> validate_extraction(extraction: <span class="bu">dict</span>, page: Page) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Reject a result missing fields, mistyped, or citing an off-page box.</span></span>
@@ -1439,7 +1439,7 @@ read @16 tile: {'invoice_id': 'INV-1040', 'vendor': 'NORTHWIND', 'total': '125.0
 <span id="cb23-51"><a href="#cb23-51" aria-hidden="true" tabindex="-1"></a>            <span class="st">"correct"</span>: correct, <span class="st">"total"</span>: total, <span class="st">"accuracy"</span>: <span class="bu">round</span>(correct <span class="op">/</span> total, <span class="dv">4</span>)}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the sweep across the four tile budgets, over all twelve pages and sixty fields.</p>
-<div id="7082b46b" class="cell" data-execution_count="17">
+<div id="070dd3dc" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>pages <span class="op">=</span> make_pages(<span class="dv">12</span>)</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>sweep <span class="op">=</span> [evaluate(n, pages) <span class="cf">for</span> n <span class="kw">in</span> (<span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">9</span>, <span class="dv">16</span>)]</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="st">'tiles'</span><span class="sc">:&gt;5}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'tokens/pg'</span><span class="sc">:&gt;10}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'correct/60'</span><span class="sc">:&gt;11}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'accuracy'</span><span class="sc">:&gt;9}</span><span class="ss">"</span>)</span>
@@ -1485,7 +1485,7 @@ Figure&nbsp;29.5: Where does more page resolution stop paying? Exact field accur
 </div>
 </div>
 <p>The reader stands in for a VLM so the chapter runs offline; the <em>interface</em> is what a real model plugs into. Swapping in a hosted or local model means replacing <code>read_fields</code> with an endpoint call and validating its JSON with the same two functions — never publishing its fixture numbers as model performance. The adapter below shows the shape; we mark it <code>#| eval: false</code> because it needs a running server and a network.</p>
-<div id="f785c9ce" class="cell" data-execution_count="19">
+<div id="9d018e91" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> OpenAICompatibleVLM:</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Extract the same schema from a real local OpenAI-compatible endpoint.</span></span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1521,7 +1521,7 @@ Figure&nbsp;29.5: Where does more page resolution stop paying? Exact field accur
 S(Q,D)=\sum_{i=1}^{m}\max_{1\le j\le n}\mathbf{q}_i^\top\mathbf{d}_j.
 \tag{29.4}</span></span></p>
 <p>The construction that makes the difference visible: a query with two orthogonal concepts, a relevant page holding one perfect patch for each plus eight distractors, and a “flooded” page repeating a single generic vector aimed halfway between the concepts — the shape a poisoned or boilerplate-heavy page takes.</p>
-<div id="c415da90" class="cell" data-execution_count="20">
+<div id="d701c7dd" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> _normalize(vec) <span class="op">-&gt;</span> np.ndarray:</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    arr <span class="op">=</span> np.asarray(vec, dtype<span class="op">=</span>np.float64)</span>
@@ -1553,7 +1553,7 @@ S(Q,D)=\sum_{i=1}^{m}\max_{1\le j\le n}\mathbf{q}_i^\top\mathbf{d}_j.
 <span id="cb28-29"><a href="#cb28-29" aria-hidden="true" tabindex="-1"></a>    qn, dn <span class="op">=</span> [_normalize(v) <span class="cf">for</span> v <span class="kw">in</span> query], [_normalize(v) <span class="cf">for</span> v <span class="kw">in</span> document]</span>
 <span id="cb28-30"><a href="#cb28-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">float</span>(<span class="bu">sum</span>(<span class="bu">max</span>(q <span class="op">@</span> d <span class="cf">for</span> d <span class="kw">in</span> dn) <span class="cf">for</span> q <span class="kw">in</span> qn))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="f4032d24" class="cell" data-execution_count="21">
+<div id="a31e248e" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>query <span class="op">=</span> [(<span class="fl">1.0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>), (<span class="fl">0.0</span>, <span class="fl">1.0</span>, <span class="fl">0.0</span>)]</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>relevant <span class="op">=</span> [query[<span class="dv">0</span>], query[<span class="dv">1</span>]] <span class="op">+</span> [(<span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="fl">1.0</span>)] <span class="op">*</span> <span class="dv">8</span></span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>flooded <span class="op">=</span> [(<span class="fl">0.7</span>, <span class="fl">0.7</span>, <span class="fl">0.0</span>)] <span class="op">*</span> <span class="dv">10</span></span>
@@ -1598,7 +1598,7 @@ Figure&nbsp;29.6: Why does late interaction keep a small region that pooling dro
 <section id="sec-ch29-grounding" class="level2" data-number="29.6">
 <h2 data-number="29.6" class="anchored" data-anchor-id="sec-ch29-grounding"><span class="header-section-number">29.6</span> Grounding: turning words into coordinates</h2>
 <p><strong>Grounding</strong> connects a linguistic reference to image coordinates. A model answers “the total is 312.00” and emits <code>[820,1180,1080,1260]</code> as the box it read; a GUI model emits the center point of “Save draft.” A grounding result is <em>evidence or a proposal, never authorization</em> — a distinction the next section enforces. The first practical hazard is the coordinate convention. Absolute pixels break the moment the render size changes, so models emit <em>normalized</em> coordinates, typically integers on a <code>0..1000</code> grid, which travel across image sizes. Mapping one back to a pixel is a division — except when preprocessing <strong>letterboxed</strong> the image, padding it to a square with gray bars, in which case the pad must be subtracted first. Forget the pad and every click shifts. We write the mapping to make that failure a number.</p>
-<div id="57a2b21a" class="cell" data-execution_count="22">
+<div id="d88daf77" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> to_pixels(u: <span class="bu">int</span>, v: <span class="bu">int</span>, grid: <span class="bu">int</span>, screen_w: <span class="bu">int</span>, screen_h: <span class="bu">int</span>,</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>              pad_x: <span class="bu">int</span> <span class="op">=</span> <span class="dv">0</span>, pad_y: <span class="bu">int</span> <span class="op">=</span> <span class="dv">0</span>) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">int</span>, <span class="bu">int</span>]:</span>
@@ -1627,7 +1627,7 @@ Figure&nbsp;29.6: Why does late interaction keep a small region that pooling dro
 <span id="cb31-26"><a href="#cb31-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">round</span>(fx <span class="op">*</span> screen_w), <span class="bu">round</span>(fy <span class="op">*</span> screen_h)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A 1920-by-1080 screen fit into a 1000-square keeps its width but shrinks to 562 tall, leaving a <span class="math inline">(1000-562)/2\approx219</span> pad top and bottom. Consider a model coordinate near the lower third, <code>v=700</code>.</p>
-<div id="b9e8367f" class="cell" data-execution_count="23">
+<div id="0c00cb05" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"no letterbox, v=300 :"</span>, to_pixels(<span class="dv">760</span>, <span class="dv">300</span>, <span class="dv">1000</span>, <span class="dv">1000</span>, <span class="dv">700</span>))</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>right <span class="op">=</span> to_pixels(<span class="dv">760</span>, <span class="dv">700</span>, <span class="dv">1000</span>, <span class="dv">1920</span>, <span class="dv">1080</span>, pad_y<span class="op">=</span><span class="dv">219</span>)   <span class="co"># pad removed</span></span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>wrong <span class="op">=</span> to_pixels(<span class="dv">760</span>, <span class="dv">700</span>, <span class="dv">1000</span>, <span class="dv">1920</span>, <span class="dv">1080</span>)              <span class="co"># pad forgotten</span></span>
@@ -1676,7 +1676,7 @@ Figure&nbsp;29.7: Where does a normalized model coordinate actually land, and ho
 <section id="sec-ch29-gui" class="level2" data-number="29.7">
 <h2 data-number="29.7" class="anchored" data-anchor-id="sec-ch29-gui"><span class="header-section-number">29.7</span> GUI perception and the deterministic gate</h2>
 <p>This section closes the deferral from <a href="21-agent-applications.html" class="quarto-xref"><span>Chapter 21</span></a>: a computer-use agent that observes a screen, grounds a control, and acts — without ever handing the model raw authority to click arbitrary coordinates. The loop is observe, ground, <em>gate</em>, act, observe again, and the gate is deterministic code the model cannot talk past. We model the screen as an accessibility tree of elements, each with a label, a box, and a destructive flag, plus a revision and a content digest so we can detect change. A <strong>Set-of-Marks</strong> style overlay would give each element a speakable id — the model says “mark 2” instead of free coordinates — but the marks, the screenshot, and the element table must share one revision <span class="citation" data-cites="yang2023setofmark lu2024omniparser">(<a href="../references.html#ref-yang2023setofmark" role="doc-biblioref">Yang et al. 2023</a>; <a href="../references.html#ref-lu2024omniparser" role="doc-biblioref">Lu et al. 2025</a>)</span>.</p>
-<div id="9da825af" class="cell" data-execution_count="25">
+<div id="9f1ec34b" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> hashlib</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> json</span>
@@ -1730,7 +1730,7 @@ Figure&nbsp;29.7: Where does a normalized model coordinate actually land, and ho
 <span id="cb35-51"><a href="#cb35-51" aria-hidden="true" tabindex="-1"></a>    ))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Grounding turns a label into a proposal by mapping the model’s normalized point through <code>to_pixels</code> from the previous section — the coordinate mapping is now <em>exercised</em>, not asserted — and stamps the proposal with the screen digest it was made on.</p>
-<div id="9a4e223c" class="cell" data-execution_count="26">
+<div id="3a87a7e4" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> ground(screen: Screen, label: <span class="bu">str</span>, u: <span class="bu">int</span>, v: <span class="bu">int</span>) <span class="op">-&gt;</span> ClickProposal:</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Resolve a label to a click proposal via the coordinate mapping.</span></span>
@@ -1797,7 +1797,7 @@ Figure&nbsp;29.7: Where does a normalized model coordinate actually land, and ho
 <span id="cb36-64"><a href="#cb36-64" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> replace(screen, revision<span class="op">=</span>screen.revision <span class="op">+</span> <span class="dv">1</span>, elements<span class="op">=</span>moved)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now we drive the loop. The model grounds two controls — the safe “Save draft” and the destructive “Delete account” — and we push each proposal through the gate under four conditions.</p>
-<div id="c11cb4e1" class="cell" data-execution_count="27">
+<div id="314858a1" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>screen <span class="op">=</span> initial_screen()</span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>save <span class="op">=</span> ground(screen, <span class="st">"Save draft"</span>, u<span class="op">=</span><span class="dv">760</span>, v<span class="op">=</span><span class="dv">914</span>)</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>dele <span class="op">=</span> ground(screen, <span class="st">"Delete account"</span>, u<span class="op">=</span><span class="dv">905</span>, v<span class="op">=</span><span class="dv">914</span>)</span>
@@ -1855,7 +1855,7 @@ Figure&nbsp;29.8: What must happen between a VLM grounding a control and the run
 <section id="sec-ch29-eval" class="level2" data-number="29.8">
 <h2 data-number="29.8" class="anchored" data-anchor-id="sec-ch29-eval"><span class="header-section-number">29.8</span> Hallucination and owning the evaluation</h2>
 <p>A VLM can describe an object that is not on the page as fluently as a text model invents a citation, and a supplied image does not make the description grounded. <strong>POPE</strong> measures this directly: ask controlled yes/no questions about object presence — half about objects that are there, half about plausible objects that are not — and read the error structure, not just the accuracy <span class="citation" data-cites="li2023pope">(<a href="../references.html#ref-li2023pope" role="doc-biblioref">Li et al. 2023</a>)</span>. The signature failure is a <em>yes</em>-bias: a model that leans toward “yes, it’s there” scores high recall and low precision, and its yes-rate drifts above the true 0.5. We compute those numbers on a small answer set from a deliberately biased model.</p>
-<div id="9ce13843" class="cell" data-execution_count="28">
+<div id="89a69b73" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> pope_metrics(answers: <span class="bu">list</span>, gold: <span class="bu">list</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>:</span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Score object-presence answers the POPE way: accuracy plus its structure.</span></span>
@@ -1879,7 +1879,7 @@ Figure&nbsp;29.8: What must happen between a VLM grounding a control and the run
 <span id="cb39-21"><a href="#cb39-21" aria-hidden="true" tabindex="-1"></a>            <span class="st">"recall"</span>: <span class="bu">round</span>(tp <span class="op">/</span> (tp <span class="op">+</span> fn), <span class="dv">3</span>) <span class="cf">if</span> tp <span class="op">+</span> fn <span class="cf">else</span> <span class="fl">0.0</span>,</span>
 <span id="cb39-22"><a href="#cb39-22" aria-hidden="true" tabindex="-1"></a>            <span class="st">"yes_rate"</span>: <span class="bu">round</span>(<span class="bu">sum</span>(a <span class="op">==</span> <span class="st">"yes"</span> <span class="cf">for</span> a <span class="kw">in</span> answers) <span class="op">/</span> <span class="bu">len</span>(answers), <span class="dv">3</span>)}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="e94a8f6e" class="cell" data-execution_count="29">
+<div id="1412d290" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>gold <span class="op">=</span> [<span class="st">"yes"</span>, <span class="st">"no"</span>, <span class="st">"yes"</span>, <span class="st">"no"</span>, <span class="st">"yes"</span>, <span class="st">"no"</span>, <span class="st">"yes"</span>, <span class="st">"no"</span>]</span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>biased <span class="op">=</span> [<span class="st">"yes"</span>, <span class="st">"yes"</span>, <span class="st">"yes"</span>, <span class="st">"yes"</span>, <span class="st">"yes"</span>, <span class="st">"no"</span>, <span class="st">"yes"</span>, <span class="st">"yes"</span>]</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(pope_metrics(biased, gold))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>

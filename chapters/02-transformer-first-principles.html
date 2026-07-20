@@ -840,7 +840,7 @@ window.Quarto = {
 <h2 data-number="2.1" class="anchored" data-anchor-id="sec-ch02-bpe"><span class="header-section-number">2.1</span> A byte-pair tokenizer</h2>
 <p>A neural network consumes integers, not strings. The tokenizer defines the mapping between them, and that mapping fixes more than convenience: it determines the rows of the embedding table, the columns of the output head, and the unit in which context, cost, and throughput are measured. In <a href="01-operational-on-ramp.html#sec-ch01-context" class="quarto-xref"><span>Section 1.2</span></a> we trained a toy character-pair encoder to see why frequent strings become cheap; here we build the real thing — a byte-level BPE tokenizer of the kind production models actually freeze and ship <span class="citation" data-cites="sennrich2016neural">(<a href="../references.html#ref-sennrich2016neural" role="doc-biblioref">Sennrich et al. 2016</a>)</span>.</p>
 <p>We start from the corpus. It is the opening of <em>Alice’s Adventures in Wonderland</em> (Carroll, 1865), sliced to just over nine kilobytes and stored under <code>data/ch02/</code>.</p>
-<div id="90fd8698" class="cell" data-execution_count="1">
+<div id="75666b2b" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>corpus <span class="op">=</span> Path(<span class="st">"data/ch02/alice.txt"</span>).read_text(encoding<span class="op">=</span><span class="st">"utf-8"</span>)</span>
@@ -852,7 +852,7 @@ Alice was beginning to get very tired of sitting by her sister on the bank, and 
 </div>
 </div>
 <p>Note the two counts differ: the text contains curly quotation marks, and UTF-8 encodes each of those as three bytes. That detail decides our base vocabulary. If we started from characters we would need an inventory of every character we might ever meet — an open-ended set. If we start from <em>bytes</em>, the base vocabulary is exactly the 256 possible byte values, and every string in every language already has an encoding before we learn anything. There is no unknown-token case, ever. Byte-pair encoding then makes common strings cheaper: it repeatedly finds the most frequent adjacent pair of tokens and merges it into a new token. We record each learned rule in a small immutable value.</p>
-<div id="7fdf05d9" class="cell" data-execution_count="2">
+<div id="e53a9632" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -884,7 +884,7 @@ Alice was beginning to get very tired of sitting by her sister on the bank, and 
 <span id="cb3-29"><a href="#cb3-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> merged</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The tokenizer itself holds the merge list and the byte expansion of every token ID. Training is a loop: count adjacent pairs, pick the most frequent (with a deterministic tie-break, so two runs always learn the same vocabulary), rewrite the stream, repeat until the vocabulary reaches the requested size.</p>
-<div id="c2b89485" class="cell" data-execution_count="3">
+<div id="9b9f5143" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections <span class="im">import</span> Counter</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -972,7 +972,7 @@ Alice was beginning to get very tired of sitting by her sister on the bank, and 
 <span id="cb4-85"><a href="#cb4-85" aria-hidden="true" tabindex="-1"></a>        )</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We train it on the corpus, asking for a vocabulary of 512 — the 256 bytes plus 256 learned merges — and look at what it learned first.</p>
-<div id="3443d0fd" class="cell" data-execution_count="4">
+<div id="31a34acb" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>tokenizer <span class="op">=</span> BytePairTokenizer.train(corpus, vocab_size<span class="op">=</span><span class="dv">512</span>)</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"vocab_size = </span><span class="sc">{</span>tokenizer<span class="sc">.</span>vocab_size<span class="sc">}</span><span class="ss">"</span>)</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> merge <span class="kw">in</span> tokenizer.merges[:<span class="dv">8</span>]:</span>
@@ -991,7 +991,7 @@ Alice was beginning to get very tired of sitting by her sister on the bank, and 
 </div>
 </div>
 <p>The first merges are exactly what frequency predicts: <code>e</code> followed by space, <code>th</code>, spaced articles. Later merges build on earlier ones, so whole common words condense into single IDs. Encoding replays this history; decoding expands it back to the original bytes. We check the round trip on a string the tokenizer has never seen, including an emoji that exists nowhere in the corpus.</p>
-<div id="0d4d0626" class="cell" data-execution_count="5">
+<div id="565ffc65" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>probe <span class="op">=</span> <span class="st">"Alice waited by the rabbit-hole 🐇"</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>ids <span class="op">=</span> tokenizer.encode(probe)</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="bu">len</span>(probe.encode(<span class="st">'utf-8'</span>))<span class="sc">}</span><span class="ss"> bytes -&gt; </span><span class="sc">{</span><span class="bu">len</span>(ids)<span class="sc">}</span><span class="ss"> tokens"</span>)</span>
@@ -1004,7 +1004,7 @@ round trip exact: True</code></pre>
 </div>
 </div>
 <p>The familiar words compress to single high-numbered IDs, while the emoji falls back to its four raw bytes (the IDs below 256 at the end) — inefficient but never unrepresentable. That asymmetry is called <em>fertility</em>: the same byte count costs different token counts depending on how well the tokenizer’s training distribution matches the input. Chapter 5 measures fertility across languages at pretraining scale. On its own corpus, the tokenizer earns its keep:</p>
-<div id="a50c0ad2" class="cell" data-execution_count="6">
+<div id="45d91c88" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>stream <span class="op">=</span> tokenizer.encode(corpus)</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="bu">len</span>(corpus.encode(<span class="st">'utf-8'</span>))<span class="sc">}</span><span class="ss"> bytes -&gt; </span><span class="sc">{</span><span class="bu">len</span>(stream)<span class="sc">}</span><span class="ss"> tokens "</span></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"(</span><span class="sc">{</span><span class="bu">len</span>(corpus.encode(<span class="st">'utf-8'</span>)) <span class="op">/</span> <span class="bu">len</span>(stream)<span class="sc">:.2f}</span><span class="ss"> bytes/token)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1022,7 +1022,7 @@ p_\theta(x_{1:T})=\prod_{t=1}^{T}p_\theta\!\left(x_t\mid x_{1:t-1}\right),
 \tag{2.1}</span></span></p>
 <p>where <span class="math inline">\theta</span> is the set of all model parameters. A <strong>causal language model</strong> implements the right-hand side directly: one network that, given a prefix, outputs a distribution over the next token. Nothing about <a href="#eq-ch02-chainrule" class="quarto-xref">Equation&nbsp;<span>2.1</span></a> is an approximation — the factorization is exact for any distribution. The modeling assumption is only that one network with shared weights can represent every conditional.</p>
 <p>Training pairs each prefix with the token that actually followed it. From one contiguous token stream we can manufacture an aligned example at every position: the input at position <span class="math inline">t</span> is <span class="math inline">x_t</span>, and the label is <span class="math inline">x_{t+1}</span>. This is <strong>teacher forcing</strong> — during training every prefix comes from the real text, never from the model’s own (initially terrible) predictions. The alignment is easiest to trust after seeing it once with real IDs:</p>
-<div id="76005fd6" class="cell" data-execution_count="7">
+<div id="1086a5bb" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>window <span class="op">=</span> stream[:<span class="dv">9</span>]</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"input  -&gt; target"</span>)</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> current, nxt <span class="kw">in</span> <span class="bu">zip</span>(window, window[<span class="dv">1</span>:]):</span>
@@ -1041,7 +1041,7 @@ p_\theta(x_{1:T})=\prod_{t=1}^{T}p_\theta\!\left(x_t\mid x_{1:t-1}\right),
 </div>
 </div>
 <p>Every row is one training example, and an input window of <span class="math inline">T</span> tokens yields <span class="math inline">T</span> of them at once. The helper that draws such windows from a stream is four lines of indexing, and it is worth reading closely because an off-by-one here is the classic way to leak labels:</p>
-<div id="a9999e09" class="cell" data-execution_count="8">
+<div id="f91a765f" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1074,7 +1074,7 @@ p_\theta(x_{1:T})=\prod_{t=1}^{T}p_\theta\!\left(x_t\mid x_{1:t-1}\right),
 <span id="cb13-30"><a href="#cb13-30" aria-hidden="true" tabindex="-1"></a>    targets <span class="op">=</span> torch.stack([data[start <span class="op">+</span> <span class="dv">1</span> : start <span class="op">+</span> block_size <span class="op">+</span> <span class="dv">1</span>] <span class="cf">for</span> start <span class="kw">in</span> starts])</span>
 <span id="cb13-31"><a href="#cb13-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> inputs, targets</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="4d87bd57" class="cell" data-execution_count="9">
+<div id="ef10ea76" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>data <span class="op">=</span> torch.tensor(stream, dtype<span class="op">=</span>torch.<span class="bu">long</span>)</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>sampler <span class="op">=</span> torch.Generator().manual_seed(<span class="dv">11</span>)</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>inputs, targets <span class="op">=</span> next_token_batch(data, block_size<span class="op">=</span><span class="dv">8</span>, batch_size<span class="op">=</span><span class="dv">4</span>, generator<span class="op">=</span>sampler)</span>
@@ -1105,7 +1105,7 @@ O=AV,
 \tag{2.3}</span></span></p>
 <p>where <span class="math inline">A\in\mathbb{R}^{T\times T}</span> holds the attention weights (<span class="math inline">A_{ij}</span> is how much position <span class="math inline">i</span> draws from position <span class="math inline">j</span>), softmax is applied to each row, and <span class="math inline">d_k</span> is the width of each query and key. Every symbol except the <span class="math inline">\sqrt{d_k}</span> is forced by the intuition: dot products measure query-key match, softmax turns scores into a positive, sum-to-one mixture, and the matrix product <span class="math inline">AV</span> takes the mixture of values.</p>
 <p>So why divide by <span class="math inline">\sqrt{d_k}</span>? Because dot products grow with dimension. If query and key components are roughly independent with unit variance, their dot product is a sum of <span class="math inline">d_k</span> terms and its standard deviation is about <span class="math inline">\sqrt{d_k}</span>. We can watch this happen:</p>
-<div id="e56ae9a5" class="cell" data-execution_count="10">
+<div id="3d4b9e1f" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">0</span>)</span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> dim <span class="kw">in</span> (<span class="dv">4</span>, <span class="dv">64</span>, <span class="dv">256</span>):</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    queries, keys <span class="op">=</span> torch.randn(<span class="dv">10_000</span>, dim), torch.randn(<span class="dv">10_000</span>, dim)</span>
@@ -1119,7 +1119,7 @@ d_k= 256  std(q.k) =  16.13   sqrt(d_k) =  16.00   std(q.k/sqrt(d_k)) = 1.01</co
 </div>
 </div>
 <p>The measured standard deviation tracks <span class="math inline">\sqrt{d_k}</span> almost exactly, and dividing by it restores scale 1.0 at every width. The reason we care is what large scores do to softmax. Feed it scores at the spread a width-256 head would produce unscaled, and the distribution collapses:</p>
-<div id="0c5d0ba5" class="cell" data-execution_count="11">
+<div id="5ddb559e" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>torch.set_printoptions(precision<span class="op">=</span><span class="dv">2</span>, sci_mode<span class="op">=</span><span class="va">False</span>)</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>scores <span class="op">=</span> torch.randn(<span class="dv">6</span>, generator<span class="op">=</span>torch.Generator().manual_seed(<span class="dv">1</span>))</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"softmax at score scale  2:"</span>, torch.softmax(scores <span class="op">*</span> <span class="dv">2</span>, <span class="op">-</span><span class="dv">1</span>))</span>
@@ -1131,7 +1131,7 @@ softmax at score scale 16: tensor([0.65, 0.00, 0.00, 0.34, 0.00, 0.00])</code></
 </div>
 <p>At scale 16 nearly all mass sits on two entries and the rest are zero to two decimal places. A saturated softmax passes almost no gradient to the losing positions, so the model cannot learn to redistribute its attention. The <span class="math inline">\sqrt{d_k}</span> keeps scores in softmax’s responsive range regardless of head width. That is the entire derivation — <a href="#eq-ch02-attention" class="quarto-xref">Equation&nbsp;<span>2.3</span></a> is the intuition plus one variance correction.</p>
 <p>The implementation is <a href="#eq-ch02-attention" class="quarto-xref">Equation&nbsp;<span>2.3</span></a> line for line, returning the weights as well as the output so we can inspect them:</p>
-<div id="ec4c7d90" class="cell" data-execution_count="12">
+<div id="3a58fb34" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1166,7 +1166,7 @@ softmax at score scale 16: tensor([0.65, 0.00, 0.00, 0.34, 0.00, 0.00])</code></
 <span id="cb20-32"><a href="#cb20-32" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> weights <span class="op">@</span> value, weights</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>To see it produce something interpretable, we run a four-token example small enough to check by hand. Pretend the sequence is “The rabbit was late” and that the projections have already been learned. We write the query, key, and value rows ourselves, with a story: the query of “was” is looking for its subject, and the key of “rabbit” advertises “I am a noun”. Values are one-hot so that each position’s payload is recognizable in the output.</p>
-<div id="84ac3c75" class="cell" data-execution_count="13">
+<div id="eecf6e1b" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>tokens <span class="op">=</span> [<span class="st">"The"</span>, <span class="st">"rabbit"</span>, <span class="st">"was"</span>, <span class="st">"late"</span>]</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>queries <span class="op">=</span> torch.tensor([[<span class="fl">0.0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>],    <span class="co"># The: asks for nothing</span></span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>                        [<span class="fl">0.0</span>, <span class="dv">0</span>, <span class="dv">2</span>, <span class="dv">0</span>],    <span class="co"># rabbit: seeks a determiner</span></span>
@@ -1209,7 +1209,7 @@ output shape: (4, 4)</code></pre>
 <section id="sec-ch02-multihead" class="level2" data-number="2.4">
 <h2 data-number="2.4" class="anchored" data-anchor-id="sec-ch02-multihead"><span class="header-section-number">2.4</span> Multi-head attention and the causal mask</h2>
 <p>First, the bug. A team trains its first language model and the loss collapses within a few hundred steps to near zero, while generated text stays incoherent. The architecture has no causal mask: at position <span class="math inline">t</span>, attention can read position <span class="math inline">t+1</span> — which is, by the teacher-forcing construction of <a href="#sec-ch02-objective" class="quarto-xref"><span>Section 2.2</span></a>, the exact label the model is being scored on. The optimizer discovers the shortcut immediately. The loss is real arithmetic attached to an invalid information path, and every downstream number the run produced is worthless. The fix is the <strong>causal mask</strong>: position <span class="math inline">t</span> may attend to positions <span class="math inline">{1}</span> through <span class="math inline">t</span> and to nothing later. In <a href="#eq-ch02-attention" class="quarto-xref">Equation&nbsp;<span>2.3</span></a> this means forcing <span class="math inline">A_{ij}=0</span> whenever <span class="math inline">j&gt;i</span>, which we achieve by setting those scores to <span class="math inline">-\infty</span> before the softmax — an exponentiated <span class="math inline">-\infty</span> contributes zero mass. Applied to the worked example:</p>
-<div id="4d1cc306" class="cell" data-execution_count="14">
+<div id="d9c651f3" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>future <span class="op">=</span> torch.triu(torch.ones(<span class="dv">4</span>, <span class="dv">4</span>, dtype<span class="op">=</span>torch.<span class="bu">bool</span>), diagonal<span class="op">=</span><span class="dv">1</span>)</span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(future)</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>masked_output, masked_weights <span class="op">=</span> scaled_dot_product_attention(</span>
@@ -1229,7 +1229,7 @@ tensor([[1.00, 0.00, 0.00, 0.00],
 </div>
 <p>The upper triangle is exactly zero — those lookups no longer exist. Row 0 now has nowhere to look but itself, so its weight is 1.0 there; row 2 still finds “rabbit”, because its subject sits safely in the past. Each row renormalizes over what remains visible. The mask costs nothing to apply and is the single most important line in the model: with it, all <span class="math inline">T</span> positions can be trained in parallel on one window (each position sees precisely its own prefix) and generation cannot cheat because there is nothing ahead to read.</p>
 <p>The second upgrade is capacity. One attention map imposes one notion of relevance per layer: a single softmax over the prefix must simultaneously serve “find my subject”, “find the matching quotation mark”, and “copy the previous token”. <strong>Multi-head attention</strong> runs <span class="math inline">H</span> independent lookups in parallel, each in a subspace of width <span class="math inline">d_h=d/H</span>, then concatenates the <span class="math inline">H</span> outputs and mixes them with a final projection <span class="math inline">W_O</span>. The heads are not separate networks — they are slices of the same three projected tensors, computed in one batched matrix multiply. With that, plus two practical details, we can write the layer we will actually use. The details: we normalize queries and keys per head before the dot product (<strong>QK normalization</strong>, an RMS rescaling that keeps score magnitudes controlled over a long training run), and we accept an optional cache of past keys and values — idle until the final section, where it becomes the entire story.</p>
-<div id="5a54d3e3" class="cell" data-execution_count="15">
+<div id="7582bf9b" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> torch <span class="im">import</span> Tensor, nn</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1254,7 +1254,7 @@ tensor([[1.00, 0.00, 0.00, 0.00],
 <span id="cb25-22"><a href="#cb25-22" aria-hidden="true" tabindex="-1"></a>    n_layers: <span class="bu">int</span> <span class="op">=</span> <span class="dv">2</span></span>
 <span id="cb25-23"><a href="#cb25-23" aria-hidden="true" tabindex="-1"></a>    mlp_ratio: <span class="bu">float</span> <span class="op">=</span> <span class="dv">8</span> <span class="op">/</span> <span class="dv">3</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="a6d6eaf4" class="cell" data-execution_count="16">
+<div id="2694865b" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> CausalSelfAttention(nn.Module):</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Masked multi-head attention over a token sequence, cache-ready.</span></span>
@@ -1295,7 +1295,7 @@ tensor([[1.00, 0.00, 0.00, 0.00],
 <span id="cb26-38"><a href="#cb26-38" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.output(mixed), (key, value)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A shape trace confirms the plumbing: a batch of 2 sequences of 6 positions at width 64 goes in, the same shape comes out, and the returned cache holds one key and one value tensor per head per position.</p>
-<div id="bec9feec" class="cell" data-execution_count="17">
+<div id="7e5813ba" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">1</span>)</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>config <span class="op">=</span> GPTConfig(vocab_size<span class="op">=</span>tokenizer.vocab_size)</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>attention <span class="op">=</span> CausalSelfAttention(config)</span>
@@ -1310,7 +1310,7 @@ cached keys per layer: (2, 4, 6, 16)   (batch, heads, positions, head_dim)</code
 </div>
 </div>
 <p>And the property that matters more than any shape — the mask actually seals the future. We change the last position’s input and check that every earlier output is bit-for-bit unchanged:</p>
-<div id="093c92fb" class="cell" data-execution_count="18">
+<div id="d86f0bb5" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>x_changed <span class="op">=</span> x.clone()</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>x_changed[:, <span class="op">-</span><span class="dv">1</span>] <span class="op">=</span> torch.randn(<span class="dv">2</span>, config.d_model)</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>out_changed, _ <span class="op">=</span> attention(x_changed)</span>
@@ -1363,7 +1363,7 @@ Figure&nbsp;2.1: How does one block update the residual stream? Both sublayers r
 \operatorname{SwiGLU}(x)=W_{\text{down}}\big[\operatorname{SiLU}(W_{\text{gate}}\,x)\odot(W_{\text{value}}\,x)\big].
 \tag{2.5}</span></span></p>
 <p>The implementation fuses the gate and value projections into one matrix and splits the result, which is how production code writes it:</p>
-<div id="6bcca1cf" class="cell" data-execution_count="19">
+<div id="f77fde29" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> torch.nn <span class="im">import</span> functional <span class="im">as</span> F</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1388,7 +1388,7 @@ Figure&nbsp;2.1: How does one block update the residual stream? Both sublayers r
 <span id="cb31-22"><a href="#cb31-22" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.down(F.silu(gate) <span class="op">*</span> value)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The block is <a href="#eq-ch02-residual" class="quarto-xref">Equation&nbsp;<span>2.4</span></a> verbatim — two reads, two adds:</p>
-<div id="9fb19d1d" class="cell" data-execution_count="20">
+<div id="abad172e" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Block(nn.Module):</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One pre-norm transformer block: attention update, then FFN update.</span></span>
@@ -1411,7 +1411,7 @@ Figure&nbsp;2.1: How does one block update the residual stream? Both sublayers r
 <span id="cb32-20"><a href="#cb32-20" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> x <span class="op">+</span> <span class="va">self</span>.mlp(<span class="va">self</span>.mlp_norm(x)), present</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Running one freshly initialized block shows the additive design at work: with small random weights the updates are small, so the block starts life close to the identity function — a gentle default from which training can grow structure.</p>
-<div id="ee857bbc" class="cell" data-execution_count="21">
+<div id="374feb39" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">2</span>)</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>block <span class="op">=</span> Block(config)</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>stream_in <span class="op">=</span> torch.randn(<span class="dv">1</span>, <span class="dv">6</span>, config.d_model)</span>
@@ -1452,7 +1452,7 @@ Figure&nbsp;2.2: What happens between token IDs and a next-token distribution? E
 </div>
 </div>
 <p>One deliberate economy: the LM head reuses the embedding table. <strong>Weight tying</strong> sets <span class="math inline">W_{\text{head}}=E</span>, so the same row serves both as “the vector we read in when we see token <span class="math inline">v</span>” and “the direction we score against when predicting token <span class="math inline">v</span>” <span class="citation" data-cites="press2017tying">(<a href="../references.html#ref-press2017tying" role="doc-biblioref">Press and Wolf 2017</a>)</span>. It removes <span class="math inline">V\times d</span> parameters — a large fraction of a small model — and shares one token geometry between input and output.</p>
-<div id="7783aeae" class="cell" data-execution_count="22">
+<div id="4524b5a2" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TinyGPT(nn.Module):</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A decoder-only causal language model with a tied LM head.</span></span>
@@ -1520,7 +1520,7 @@ Figure&nbsp;2.2: What happens between token IDs and a next-token distribution? E
 <span id="cb35-65"><a href="#cb35-65" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> logits, loss, present</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We build it and run the two checks we earned earlier: the shape trace, and the <span class="math inline">\ln V</span> plumbing check from <a href="#sec-ch02-objective" class="quarto-xref"><span>Section 2.2</span></a>.</p>
-<div id="2659e9f4" class="cell" data-execution_count="23">
+<div id="cb4a2f61" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">20</span>)</span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>torch.set_num_threads(<span class="dv">1</span>)</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>model <span class="op">=</span> TinyGPT(config)</span>
@@ -1536,7 +1536,7 @@ initial loss = 6.318   ln(512) = 6.238</code></pre>
 </div>
 </div>
 <p>The initial loss lands within a tenth of <span class="math inline">\ln V</span> (the residue is initialization noise on a small evaluation batch): the untrained model is honestly clueless, predicting near-uniformly, with no label leaking in. Weight tying is also checkable rather than take-our-word-for-it — the head and the embedding are one tensor in storage, and untying would cost another <span class="math inline">V\times d</span> parameters:</p>
-<div id="a1515da3" class="cell" data-execution_count="24">
+<div id="d8907731" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>tied <span class="op">=</span> model.lm_head.weight.data_ptr() <span class="op">==</span> model.token_embedding.weight.data_ptr()</span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>total <span class="op">=</span> <span class="bu">sum</span>(p.numel() <span class="cf">for</span> p <span class="kw">in</span> model.parameters())</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>untied_extra <span class="op">=</span> config.vocab_size <span class="op">*</span> config.d_model</span>
@@ -1549,7 +1549,7 @@ tied: 139,776 params   untied would be: 172,544 (+23%)</code></pre>
 </div>
 </div>
 <p>Nearly a quarter more parameters, declined with one line. To see text rather than tensors we need a generation loop around the model: take the logits at the last position, choose a token, append it, repeat. Temperature works exactly as we measured in <a href="01-operational-on-ramp.html#sec-ch01-sampling" class="quarto-xref"><span>Section 1.3</span></a> — dividing logits before softmax to sharpen or flatten the draw — so we reuse it here without re-deriving it.</p>
-<div id="0d418d53" class="cell" data-execution_count="25">
+<div id="60e666be" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="at">@torch.inference_mode</span>()</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> generate(</span>
@@ -1603,7 +1603,7 @@ tied: 139,776 params   untied would be: 172,544 (+23%)</code></pre>
 <span id="cb40-51"><a href="#cb40-51" aria-hidden="true" tabindex="-1"></a>TinyGPT.generate <span class="op">=</span> generate</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>What does a freshly initialized model have to say? We ask it, honestly:</p>
-<div id="54a19c08" class="cell" data-execution_count="26">
+<div id="7f84232a" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>prompt <span class="op">=</span> torch.tensor([tokenizer.encode(<span class="st">"Alice "</span>)])</span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>untrained <span class="op">=</span> generate(model, prompt, <span class="dv">40</span>, temperature<span class="op">=</span><span class="fl">1.0</span>, seed<span class="op">=</span><span class="dv">1</span>)</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="bu">repr</span>(tokenizer.decode(untrained[<span class="dv">0</span>].tolist(), errors<span class="op">=</span><span class="st">"replace"</span>)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1687,7 +1687,7 @@ tied: 139,776 params   untied would be: 172,544 (+23%)</code></pre>
 <section id="sec-ch02-accounting" class="level2" data-number="2.7">
 <h2 data-number="2.7" class="anchored" data-anchor-id="sec-ch02-accounting"><span class="header-section-number">2.7</span> Counting parameters and FLOPs</h2>
 <p>Before training the model we should be able to predict its size and cost from the configuration alone — the habit that later chapters (5, 6, and 10) turn into capacity planning. The rules fall out of the shapes we just built. Each block carries <span class="math inline">{4d^2}</span> attention weights (three projections in the fused QKV plus the output) and <span class="math inline">{3dh}</span> FFN weights (the fused gate-and-value up projection plus the down projection). The tied embedding contributes <span class="math inline">Vd</span> once, the position table <span class="math inline">T_{\max}d</span>, and the norms a rounding error. We write it as a function so the claim is executable:</p>
-<div id="7bbe8770" class="cell" data-execution_count="27">
+<div id="e03d3230" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> param_breakdown(config: GPTConfig) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">int</span>]:</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Predict parameter counts per component from shapes alone.</span></span>
@@ -1726,7 +1726,7 @@ tied: 139,776 params   untied would be: 172,544 (+23%)</code></pre>
 <span id="cb43-36"><a href="#cb43-36" aria-hidden="true" tabindex="-1"></a>TinyGPT.parameter_count <span class="op">=</span> parameter_count</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The prediction has to match the built model exactly, or the mental model is wrong somewhere:</p>
-<div id="a59f6adc" class="cell" data-execution_count="28">
+<div id="2f569763" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>breakdown <span class="op">=</span> param_breakdown(config)</span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, count <span class="kw">in</span> breakdown.items():</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:32s}</span><span class="ss"> </span><span class="sc">{</span>count<span class="sc">:8,}</span><span class="ss">"</span>)</span>
@@ -1742,7 +1742,7 @@ matches the built model: True</code></pre>
 </div>
 </div>
 <p>It matches. Notice the shape of the budget at this scale: the embedding is almost a quarter of the model — small models are dominated by their vocabularies — while in a frontier model the <span class="math inline">L(4d^2+3dh)</span> block term grows quadratically with width and dwarfs everything else. Compute follows a similarly simple rule. Every weight in a matrix multiply costs one multiply and one add per token, so a forward pass costs about <span class="math inline">{2N_{\text{mm}}}</span> FLOPs per token, where <span class="math inline">N_{\text{mm}}</span> counts matmul weights (the embedding lookup is free — it is an index, not a product). Attention adds a term the parameter count cannot see: computing scores against <span class="math inline">T</span> keys and mixing <span class="math inline">T</span> values costs about <span class="math inline">{4Td}</span> per layer per token, growing with context rather than with weights.</p>
-<div id="34a6d572" class="cell" data-execution_count="29">
+<div id="2e4365dd" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> flops_per_token(config: GPTConfig, context_len: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">int</span>]:</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Estimate forward-pass FLOPs for one token at a given context length.</span></span>
@@ -1771,7 +1771,7 @@ matches the built model: True</code></pre>
 <span id="cb46-26"><a href="#cb46-26" aria-hidden="true" tabindex="-1"></a>        <span class="st">"total"</span>: weights <span class="op">+</span> attention_flops,</span>
 <span id="cb46-27"><a href="#cb46-27" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="f5328dae" class="cell" data-execution_count="30">
+<div id="ac92553e" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> context <span class="kw">in</span> (<span class="dv">1</span>, <span class="dv">128</span>):</span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a>    flops <span class="op">=</span> flops_per_token(config, context)</span>
 <span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>    share <span class="op">=</span> <span class="dv">100</span> <span class="op">*</span> flops[<span class="st">"attention"</span>] <span class="op">/</span> flops[<span class="st">"total"</span>]</span>
@@ -1826,7 +1826,7 @@ Figure&nbsp;2.3: Why is generating one token so much slower per FLOP than proces
 <section id="sec-ch02-training" class="level2" data-number="2.8">
 <h2 data-number="2.8" class="anchored" data-anchor-id="sec-ch02-training"><span class="header-section-number">2.8</span> Training: watch it learn</h2>
 <p>Everything is assembled; now we train it and watch. The optimizer is <strong>AdamW</strong>: Adam’s per-parameter step sizes from running moment estimates, with weight decay applied as a separate decoupled subtraction rather than mixed into the adaptive gradient — the difference that gives the W its name and makes decay behave like true regularization <span class="citation" data-cites="loshchilov2019decoupled">(<a href="../references.html#ref-loshchilov2019decoupled" role="doc-biblioref">Loshchilov and Hutter 2019</a>)</span>. The learning rate follows the standard shape: a brief linear <strong>warmup</strong> (large steps under empty moment estimates are dangerous), then a smooth <strong>cosine decay</strong> to a small floor. And we clip the global gradient norm at 1.0, which bounds the damage of any single bad batch without pretending to fix its cause.</p>
-<div id="3a2db567" class="cell" data-execution_count="32">
+<div id="eebcdc4e" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> lr_schedule(step: <span class="bu">int</span>, total_steps: <span class="bu">int</span>, peak: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the learning rate for one step of warmup-then-cosine decay.</span></span>
@@ -1850,7 +1850,7 @@ Figure&nbsp;2.3: Why is generating one token so much slower per FLOP than proces
 <span id="cb50-21"><a href="#cb50-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> peak <span class="op">*</span> (<span class="fl">0.1</span> <span class="op">+</span> <span class="fl">0.9</span> <span class="op">*</span> <span class="fl">0.5</span> <span class="op">*</span> (<span class="dv">1</span> <span class="op">+</span> math.cos(math.pi <span class="op">*</span> progress)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A loss number on data the model is training on cannot tell us about generalization, so we hold out the final 15% of the token stream untouched and evaluate on it periodically:</p>
-<div id="22f3247b" class="cell" data-execution_count="33">
+<div id="f9284cf0" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a>split <span class="op">=</span> <span class="bu">int</span>(<span class="fl">0.85</span> <span class="op">*</span> data.numel())</span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>train_stream, val_stream <span class="op">=</span> data[:split], data[split:]</span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"train: </span><span class="sc">{</span>train_stream<span class="sc">.</span>numel()<span class="sc">:,}</span><span class="ss"> tokens   validation: </span><span class="sc">{</span>val_stream<span class="sc">.</span>numel()<span class="sc">:,}</span><span class="ss"> tokens"</span>)</span>
@@ -1872,7 +1872,7 @@ Figure&nbsp;2.3: Why is generating one token so much slower per FLOP than proces
 </div>
 </div>
 <p>We also want to see what training changes <em>inside</em> the model, not just in its loss. The helper below recomputes one layer’s attention pattern for a prompt, and we snapshot it now, before any training, for comparison afterwards.</p>
-<div id="f9519549" class="cell" data-execution_count="34">
+<div id="1bb95a02" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a><span class="at">@torch.inference_mode</span>()</span>
 <span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> attention_weights(model: TinyGPT, token_ids: <span class="bu">list</span>[<span class="bu">int</span>], layer: <span class="bu">int</span> <span class="op">=</span> <span class="dv">0</span>) <span class="op">-&gt;</span> Tensor:</span>
@@ -1907,7 +1907,7 @@ Figure&nbsp;2.3: Why is generating one token so much slower per FLOP than proces
 <span id="cb53-32"><a href="#cb53-32" aria-hidden="true" tabindex="-1"></a>    mask <span class="op">=</span> torch.triu(torch.ones(steps, steps, dtype<span class="op">=</span>torch.<span class="bu">bool</span>), diagonal<span class="op">=</span><span class="dv">1</span>)</span>
 <span id="cb53-33"><a href="#cb53-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> scores.masked_fill(mask, <span class="bu">float</span>(<span class="st">"-inf"</span>)).softmax(dim<span class="op">=-</span><span class="dv">1</span>)[<span class="dv">0</span>]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="8d2e3e48" class="cell" data-execution_count="35">
+<div id="43e9d04b" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb54"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>probe_ids <span class="op">=</span> tokenizer.encode(<span class="st">"The rabbit-hole went straight on like a tunnel"</span>)</span>
 <span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a>weights_before <span class="op">=</span> attention_weights(model, probe_ids)</span>
 <span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"pattern shape:"</span>, <span class="bu">tuple</span>(weights_before.shape), <span class="st">" rows sum to"</span>,</span>
@@ -1917,7 +1917,7 @@ Figure&nbsp;2.3: Why is generating one token so much slower per FLOP than proces
 </div>
 </div>
 <p>Now the loop itself — deliberately plain PyTorch, because this exact sequence of calls (batch, schedule, zero, forward, backward, clip, step) reappears in every training chapter of this book. We record the training loss at every step, the held-out loss every 25, and freeze a generated sample at two checkpoints so we can watch the model’s voice change.</p>
-<div id="b9638843" class="cell" data-execution_count="36">
+<div id="3ea70daf" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb56"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a>optimizer <span class="op">=</span> torch.optim.AdamW(model.parameters(), lr<span class="op">=</span><span class="fl">3e-3</span>, weight_decay<span class="op">=</span><span class="fl">0.01</span>)</span>
 <span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a>sampler <span class="op">=</span> torch.Generator().manual_seed(<span class="dv">7</span>)</span>
 <span id="cb56-3"><a href="#cb56-3" aria-hidden="true" tabindex="-1"></a>total_steps, batch_size <span class="op">=</span> <span class="dv">400</span>, <span class="dv">16</span></span>
@@ -1950,7 +1950,7 @@ Figure&nbsp;2.3: Why is generating one token so much slower per FLOP than proces
 <span id="cb56-30"><a href="#cb56-30" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"held-out loss: minimum </span><span class="sc">{</span>best_val<span class="sc">:.3f}</span><span class="ss"> at step </span><span class="sc">{</span>best_step<span class="sc">}</span><span class="ss">, "</span></span>
 <span id="cb56-31"><a href="#cb56-31" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"then up to </span><span class="sc">{</span>val_points[<span class="op">-</span><span class="dv">1</span>][<span class="dv">1</span>]<span class="sc">:.3f}</span><span class="ss"> at step 400"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>400 steps in 24.3s (16 steps/s)
+<pre><code>400 steps in 22.7s (18 steps/s)
 train loss: 6.261 -&gt; 0.136 (mean of last 10)
 held-out loss: minimum 5.100 at step 75, then up to 7.143 at step 400</code></pre>
 </div>
@@ -1984,7 +1984,7 @@ Figure&nbsp;2.4: What does this training run actually demonstrate? Training loss
 </div>
 <p>Read <a href="#fig-ch02-loss" class="quarto-xref">Figure&nbsp;<span>2.4</span></a> the way an engineer reads any loss curve — as a set of questions. The first point checks initialization: training loss starts at the uniform baseline, so no label is leaking (a start far <em>below</em> <span class="math inline">\ln V</span> is the signature of the missing-mask bug from <a href="#sec-ch02-multihead" class="quarto-xref"><span>Section 2.4</span></a>). The early descent shows the whole gradient path works. Then the curves split: training loss keeps falling toward zero while held-out loss bottoms out before step 100 and turns upward. That divergence is overfitting in its purest form — our model has roughly 42 parameters per training token, so it can simply memorize the stream, and does. At pretraining scale the ratio is reversed by orders of magnitude (Chapter 5), which is why frontier base-model curves show the two losses moving together. The same diagnostic stance handles the other shapes you will meet: a flat curve at <span class="math inline">\ln V</span> means gradients are not reaching parameters; a spike mid-run means data, precision, or learning rate changed; a smooth curve with terrible samples means the objective and the hope were never aligned.</p>
 <p>The samples tell the same story in prose. Here is the model at step 100 and at step 400, and the untrained byte soup from <a href="#sec-ch02-decoder" class="quarto-xref"><span>Section 2.6</span></a> for comparison:</p>
-<div id="8dfe7d4b" class="cell" data-execution_count="38">
+<div id="827a0cfb" class="cell" data-execution_count="38">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb59"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"step 100:"</span>, <span class="bu">repr</span>(snapshots[<span class="dv">100</span>]))</span>
 <span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"step 400:"</span>, <span class="bu">repr</span>(snapshots[<span class="dv">400</span>]))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1993,7 +1993,7 @@ step 400: 'Alice think it so _ the Dinah; t much out of the cover.\n\nAlice thin
 </div>
 </div>
 <p>The step-100 sample is this book’s version of d2l’s famous <code>'it has in the the the'</code>: word-shaped fragments with real spacing — <code>in her</code>, <code>see</code>, <code>th the s</code> — and no meaning anywhere. The model has learned the <em>texture</em> of English (which merges tend to follow which) but none of its structure. By step 400 the output reads like Carroll, and that is exactly the problem: it reads like Carroll because it largely <em>is</em> Carroll — <code>think it so _very_ much out of the</code> is a span of the training text, complete with Gutenberg’s underscore italics, spliced awkwardly onto “Alice”. Greedy decoding makes the memorization plainest:</p>
-<div id="cd820366" class="cell" data-execution_count="39">
+<div id="70616f4e" class="cell" data-execution_count="39">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb61"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a>finished <span class="op">=</span> generate(model, prompt, <span class="dv">40</span>, temperature<span class="op">=</span><span class="fl">0.0</span>)</span>
 <span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"greedy:"</span>, <span class="bu">repr</span>(tokenizer.decode(finished[<span class="dv">0</span>].tolist(), errors<span class="op">=</span><span class="st">"replace"</span>)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -2035,7 +2035,7 @@ Figure&nbsp;2.5: What did training do to attention? Before training (left), a la
 <h2 data-number="2.9" class="anchored" data-anchor-id="sec-ch02-kv-cache"><span class="header-section-number">2.9</span> Generation and the KV cache</h2>
 <p>Look back at the generation loop in <code>generate</code>: without caching, producing token <span class="math inline">t+1</span> feeds all <span class="math inline">t</span> existing tokens through every layer again. But their keys and values cannot have changed — the causal mask guarantees that earlier positions never see later ones, so their projections are frozen the moment they are computed. Recomputing them is pure waste. The <strong>KV cache</strong> stores, per layer, the keys and values of every position seen so far; each new step then projects only the newest token, appends its key and value, and attends its single query over the whole cache. That is precisely what <code>CausalSelfAttention</code> does when <code>past</code> is not <code>None</code>, and the absolute-position masking we wrote there makes the cached path compute the same function as the full one.</p>
 <p>“The same function” is a testable claim, not a slogan. We generate greedily both ways and compare, then push a single token through the cached path against a full recomputation and measure the worst logit disagreement:</p>
-<div id="7b5c0989" class="cell" data-execution_count="41">
+<div id="44f6a5fb" class="cell" data-execution_count="41">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb64"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a>with_cache <span class="op">=</span> generate(model, prompt, <span class="dv">40</span>, use_cache<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a>without_cache <span class="op">=</span> generate(model, prompt, <span class="dv">40</span>, use_cache<span class="op">=</span><span class="va">False</span>)</span>
 <span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"identical greedy tokens:"</span>, torch.equal(with_cache, without_cache))</span>
@@ -2056,13 +2056,13 @@ max |cached - full| logit gap: 4.8e-06</code></pre>
 \text{cache bytes} = 2\,B\,L\,T\,d\,s,
 \tag{2.6}</span></span></p>
 <p>with batch <span class="math inline">B</span>, <span class="math inline">L</span> layers, <span class="math inline">T</span> cached positions, model width <span class="math inline">d</span> (keys and values each store <span class="math inline">H\,d_h=d</span> scalars per layer per position — hence the 2), and <span class="math inline">s</span> bytes per scalar. Both claims are checkable on our toy, so we check them. We extend a prefix 100 times; at each length we time a cached step and a full recomputation (taking the best of five runs each, the standard defense against timer noise at millisecond scale) and read the cache’s true storage from its tensors:</p>
-<div id="cf13ed7e" class="cell" data-execution_count="42">
+<div id="47f3deb4" class="cell" data-execution_count="42">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb66"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> kv_cache_bytes(cache: <span class="bu">list</span>[LayerCache]) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb66-3"><a href="#cb66-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the storage bytes occupied by all cached keys and values."""</span></span>
 <span id="cb66-4"><a href="#cb66-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(t.numel() <span class="op">*</span> t.element_size() <span class="cf">for</span> pair <span class="kw">in</span> cache <span class="cf">for</span> t <span class="kw">in</span> pair)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="d6b679ed" class="cell" data-execution_count="43">
+<div id="f81d1c5b" class="cell" data-execution_count="43">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb67"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> best_of(runs: <span class="bu">int</span>, call) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the fastest of several timed calls, in milliseconds."""</span></span>
 <span id="cb67-3"><a href="#cb67-3" aria-hidden="true" tabindex="-1"></a>    times <span class="op">=</span> []</span>
@@ -2092,8 +2092,8 @@ max |cached - full| logit gap: 4.8e-06</code></pre>
 <span id="cb67-27"><a href="#cb67-27" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"full forward:  </span><span class="sc">{</span>full_ms[<span class="dv">0</span>]<span class="sc">:.2f}</span><span class="ss"> ms at prefix </span><span class="sc">{</span>prefix_lengths[<span class="dv">0</span>]<span class="sc">}</span><span class="ss">, "</span></span>
 <span id="cb67-28"><a href="#cb67-28" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>full_ms[<span class="op">-</span><span class="dv">1</span>]<span class="sc">:.2f}</span><span class="ss"> ms at prefix </span><span class="sc">{</span>prefix_lengths[<span class="op">-</span><span class="dv">1</span>]<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>cached step:   0.45 ms at prefix 2, 0.46 ms at prefix 101
-full forward:  0.47 ms at prefix 2, 1.38 ms at prefix 101</code></pre>
+<pre><code>cached step:   0.63 ms at prefix 2, 0.63 ms at prefix 101
+full forward:  0.66 ms at prefix 2, 1.48 ms at prefix 101</code></pre>
 </div>
 </div>
 <div id="cell-fig-ch02-decode-latency" class="cell" data-execution_count="44">
@@ -2122,7 +2122,7 @@ Figure&nbsp;2.6: What work does the cache actually avoid? The full-recomputation
 </div>
 </div>
 <p>The uncached cost more than doubles across a hundred tokens of prefix — every step re-pays for the whole past — while the cached line is flat to within measurement noise. That flatness deserves an honest caveat rather than a cheer: the cached step’s <span class="math inline">O(t)</span> attention term is present in the code, but at <span class="math inline">d=64</span> it amounts to a few tens of thousands of FLOPs — microseconds, invisible next to the fixed projection cost. At production scale, with tens of thousands of cached positions across dozens of layers, that same term and the cache’s memory footprint come to dominate the step — which is why “KV caching makes decoding <span class="math inline">O(1)</span>” is a claim to correct, not repeat. Storage tells its side of the story with perfect predictability:</p>
-<div id="7d4e23e0" class="cell" data-execution_count="45">
+<div id="e17de688" class="cell" data-execution_count="45">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb70"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb70-1"><a href="#cb70-1" aria-hidden="true" tabindex="-1"></a>slope <span class="op">=</span> (cache_sizes[<span class="op">-</span><span class="dv">1</span>] <span class="op">-</span> cache_sizes[<span class="dv">0</span>]) <span class="op">//</span> (prefix_lengths[<span class="op">-</span><span class="dv">1</span>] <span class="op">-</span> prefix_lengths[<span class="dv">0</span>])</span>
 <span id="cb70-2"><a href="#cb70-2" aria-hidden="true" tabindex="-1"></a>predicted <span class="op">=</span> <span class="dv">2</span> <span class="op">*</span> <span class="dv">1</span> <span class="op">*</span> config.n_layers <span class="op">*</span> config.d_model <span class="op">*</span> <span class="dv">4</span></span>
 <span id="cb70-3"><a href="#cb70-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"measured growth: </span><span class="sc">{</span>slope<span class="sc">}</span><span class="ss"> bytes/token   "</span></span>
@@ -2155,7 +2155,7 @@ Figure&nbsp;2.7: Does cache storage follow the formula? Measured bytes climb by 
 </div>
 </div>
 <p>Every cached token costs 1,024 bytes here — <a href="#eq-ch02-kvbytes" class="quarto-xref">Equation&nbsp;<span>2.6</span></a> with our constants, verified against the tensors themselves. Substitute a production configuration into the same formula and the number stops being cute; Chapter 3 does that arithmetic and then spends most of its pages on the architectural responses (grouped and compressed KV heads, sliding windows) that exist to shrink it. Finally, the end-to-end payoff at our scale:</p>
-<div id="6e134b3c" class="cell" data-execution_count="47">
+<div id="81068a22" class="cell" data-execution_count="47">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb73"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb73-1"><a href="#cb73-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> use_cache <span class="kw">in</span> (<span class="va">True</span>, <span class="va">False</span>):</span>
 <span id="cb73-2"><a href="#cb73-2" aria-hidden="true" tabindex="-1"></a>    tick <span class="op">=</span> time.perf_counter()</span>
 <span id="cb73-3"><a href="#cb73-3" aria-hidden="true" tabindex="-1"></a>    generate(model, torch.tensor([tokenizer.encode(<span class="st">"Alice was "</span>)]), <span class="dv">110</span>,</span>
@@ -2163,8 +2163,8 @@ Figure&nbsp;2.7: Does cache storage follow the formula? Measured bytes climb by 
 <span id="cb73-5"><a href="#cb73-5" aria-hidden="true" tabindex="-1"></a>    seconds <span class="op">=</span> time.perf_counter() <span class="op">-</span> tick</span>
 <span id="cb73-6"><a href="#cb73-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"use_cache=</span><span class="sc">{</span><span class="bu">str</span>(use_cache)<span class="sc">:5s}</span><span class="ss">: </span><span class="sc">{</span><span class="dv">110</span> <span class="op">/</span> seconds<span class="sc">:6.0f}</span><span class="ss"> tokens/s"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>use_cache=True :   1914 tokens/s
-use_cache=False:    994 tokens/s</code></pre>
+<pre><code>use_cache=True :   1451 tokens/s
+use_cache=False:    872 tokens/s</code></pre>
 </div>
 </div>
 <p>A solid speedup from a dictionary of tensors and zero change in output — and the gap widens with every token of prefix, every layer, and every unit of width. This measurement, more than any diagram, is why every serving stack in Chapter 10 is organized around keeping, sharing, and paging these caches.</p>

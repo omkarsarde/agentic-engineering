@@ -878,7 +878,7 @@ Figure&nbsp;25.1: Which uncertainty does each evidence layer reduce, and which d
 \tag{25.1}</span></span></p>
 <p>where <span class="math inline">\mathbf{h}_{\ell,t}\in\mathbb{R}^{d}</span> is the residual vector at layer <span class="math inline">\ell</span> and token <span class="math inline">t</span>, <span class="math inline">\mathbf{a}_{\ell,t}</span> is the attention update, and <span class="math inline">\mathbf{m}_{\ell,t}</span> is the feed-forward update. After the last block, a final normalization <span class="math inline">N</span> and the unembedding <span class="math inline">\mathbf{W}_U</span> turn the residual into logits, <span class="math inline">\mathbf{z}_t = \mathbf{W}_U\,N(\mathbf{h}_{L,t})</span>. Because every write lands in the same additive channel, that channel is an inspection surface: we can read <span class="math inline">\mathbf{h}_{\ell,t}</span> at any layer, decode it, fit a classifier on it, or add a vector to it and watch what changes downstream.</p>
 <p>To inspect a real one we rebuild the model from <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>. We import its tangled code, retrain it on the same corpus with the same seeds, and get back the same memorizing 140K-parameter GPT — nothing here is a fixture.</p>
-<div id="02fc1d9d" class="cell" data-execution_count="1">
+<div id="fd905519" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -912,7 +912,7 @@ Figure&nbsp;25.1: Which uncertainty does each evidence layer reduce, and which d
 </div>
 </div>
 <p>The training loop is the one from <a href="02-transformer-first-principles.html#sec-ch02-training" class="quarto-xref"><span>Section 2.8</span></a>, verbatim, so we state it once and run it: 400 AdamW steps under a warmup-cosine schedule. It finishes in under twenty seconds and leaves a model whose greedy continuation is recognizably Carroll — because it has largely memorized him, which is exactly the honest artifact we want to inspect.</p>
-<div id="de2a0a70" class="cell" data-execution_count="2">
+<div id="75b8a9da" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">20</span>)</span>
@@ -938,12 +938,12 @@ Figure&nbsp;25.1: Which uncertainty does each evidence layer reduce, and which d
 <span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"trained in </span><span class="sc">{</span>time<span class="sc">.</span>perf_counter() <span class="op">-</span> started<span class="sc">:.1f}</span><span class="ss">s; final batch loss </span><span class="sc">{</span>loss<span class="sc">.</span>item()<span class="sc">:.3f}</span><span class="ss">"</span>)</span>
 <span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"greedy:"</span>, <span class="bu">repr</span>(tokenizer.decode(sample[<span class="dv">0</span>].tolist(), errors<span class="op">=</span><span class="st">"replace"</span>)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>trained in 25.4s; final batch loss 0.141
+<pre><code>trained in 23.6s; final batch loss 0.141
 greedy: 'Alice was just in time to hear it say, as it turned a corner, “Oh my ears and whiskers, how '</code></pre>
 </div>
 </div>
 <p>Now the instrument every later section reuses: a <strong>hook</strong> that re-runs the forward pass and returns the residual stream at every layer. It is <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>’s <code>forward</code> opened up so we can read the intermediate states — the embedding, then the vector after each block — instead of only the final logits.</p>
-<div id="16341a71" class="cell" data-execution_count="3">
+<div id="e943e980" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -977,7 +977,7 @@ greedy: 'Alice was just in time to hear it say, as it turned a corner, “Oh my 
 <span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> states</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A quick check confirms the shapes and shows the additive stream growing in magnitude as each block writes into it — the norm rises from the embedding to the final layer because updates accumulate rather than replace.</p>
-<div id="19bc9188" class="cell" data-execution_count="4">
+<div id="46195445" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>probe_tokens <span class="op">=</span> torch.tensor([tokenizer.encode(<span class="st">"Alice was beginning to get very"</span>)])</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>states <span class="op">=</span> residual_states(model, probe_tokens)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="bu">len</span>(states)<span class="sc">}</span><span class="ss"> inspection points, each </span><span class="sc">{</span><span class="bu">tuple</span>(states[<span class="dv">0</span>].shape)<span class="sc">}</span><span class="ss">"</span>)</span>
@@ -1025,7 +1025,7 @@ Figure&nbsp;25.2: Which activation does each instrument hook, and does it read o
 \mathbf{z}_{\ell,t}^{\text{lens}} = \mathbf{W}_U\,N(\mathbf{h}_{\ell,t}),
 \tag{25.2}</span></span></p>
 <p>the same <span class="math inline">N</span> and <span class="math inline">\mathbf{W}_U</span> from <a href="#eq-ch25-residual" class="quarto-xref">Equation&nbsp;<span>25.1</span></a> applied to <span class="math inline">\mathbf{h}_{\ell,t}</span> instead of <span class="math inline">\mathbf{h}_{L,t}</span>. Decoding those logits tells us which tokens the model’s <em>own vocabulary readout</em> finds present in the stream partway through the computation. In our tied-embedding model the readout is literally the transpose of the embedding table, so the lens is exactly the model’s own scoring geometry, read early.</p>
-<div id="215e1c93" class="cell" data-execution_count="5">
+<div id="4d134a33" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1049,7 +1049,7 @@ Figure&nbsp;25.2: Which activation does each instrument hook, and does it read o
 <span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> model.lm_head(model.final_norm(state))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We ask the trained model for its actual next token after “Alice was beginning to get very”, then decode the top candidates at each layer with the lens. Watch the answer arrive: the embedding and the first block are dominated by echoes of the input token, and only after the second block does the true continuation surface to the top.</p>
-<div id="33331b42" class="cell" data-execution_count="6">
+<div id="be9b4a0b" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>layer_names <span class="op">=</span> [<span class="st">"embedding"</span>, <span class="st">"after block 1"</span>, <span class="st">"after block 2 (final)"</span>]</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>actual <span class="op">=</span> model(probe_tokens)[<span class="dv">0</span>][<span class="dv">0</span>, <span class="op">-</span><span class="dv">1</span>].argmax().item()</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"model's actual next token:"</span>, <span class="bu">repr</span>(tokenizer.decode([actual], errors<span class="op">=</span><span class="st">"replace"</span>)))</span>
@@ -1065,7 +1065,7 @@ Figure&nbsp;25.2: Which activation does each instrument hook, and does it read o
 </div>
 </div>
 <p>To make “the answer becomes decodable” a number rather than an impression, we track the <strong>rank</strong> of the model’s final prediction inside the lens distribution at each layer and each position, averaged over the prompt. A rank of zero means the lens already places the eventual answer first; a large rank means it is buried.</p>
-<div id="57c83897" class="cell" data-execution_count="7">
+<div id="52b1dc23" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>final_prediction <span class="op">=</span> logit_lens(model, states[<span class="op">-</span><span class="dv">1</span>])[<span class="dv">0</span>].argmax(dim<span class="op">=-</span><span class="dv">1</span>)</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>mean_ranks <span class="op">=</span> []</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> state <span class="kw">in</span> states:</span>
@@ -1117,7 +1117,7 @@ Figure&nbsp;25.3: When does the answer become decodable inside the network? The 
 <h2 data-number="25.4" class="anchored" data-anchor-id="sec-ch25-probe"><span class="header-section-number">25.4</span> Probing for a concept, and why you need a control</h2>
 <p>The lens reads what the model’s own vocabulary geometry surfaces. A <strong>linear probe</strong> asks a different question: is some concept of <em>our</em> choosing linearly decodable from the activations, whether or not the model’s readout cares about it? We fit a linear classifier on frozen residual activations for a labeled property; given activation <span class="math inline">\mathbf{h}_i</span>, label <span class="math inline">y_i</span>, weight <span class="math inline">\mathbf{w}</span>, and bias <span class="math inline">b</span>, the probe minimizes a classification loss <span class="math inline">\sum_i \ell(y_i, \mathbf{w}^{\top}\mathbf{h}_i + b)</span>. High held-out accuracy means the label is decodable by a linear map — nothing more. It does <em>not</em> mean the model uses the direction, because a probe can learn a dataset artifact or a surface correlate.</p>
 <p>The defense against fooling ourselves is a <strong>control task</strong> <span class="citation" data-cites="hewitt2019control">(<a href="../references.html#ref-hewitt2019control" role="doc-biblioref">Hewitt and Liang 2019</a>)</span>: keep the inputs and the probe’s capacity fixed, but replace the labels with a random relabeling. <strong>Selectivity</strong> is real-task accuracy minus control accuracy. If the control probe reaches the same accuracy, the probe is memorizing, not decoding, and selectivity — not raw accuracy — is the honest signal. We label two word-boundary concepts on our corpus: a <em>surface</em> one (is the current token a space-leading word start?) and a <em>contextual</em> one (will the next token be a boundary?), which the model must predict rather than read.</p>
-<div id="ccdf2b28" class="cell" data-execution_count="9">
+<div id="2d2117de" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1149,7 +1149,7 @@ Figure&nbsp;25.3: When does the answer become decodable inside the network? The 
 <span id="cb14-29"><a href="#cb14-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> labels</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We collect the residual activations once, over non-overlapping windows so every position is decoded in a full context, and reuse them for every layer and both concepts.</p>
-<div id="c0d0d84d" class="cell" data-execution_count="10">
+<div id="813d3c9a" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
@@ -1184,7 +1184,7 @@ Figure&nbsp;25.3: When does the answer become decodable inside the network? The 
 <span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [np.concatenate(bucket) <span class="cf">for</span> bucket <span class="kw">in</span> buckets], np.array(index_map)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The probe itself is a few lines: fit a logistic regression on a train split, score on held-out positions, then repeat on a fixed shuffle of the labels to get the control.</p>
-<div id="c403fa61" class="cell" data-execution_count="11">
+<div id="356bf3d5" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.linear_model <span class="im">import</span> LogisticRegression</span>
@@ -1224,7 +1224,7 @@ Figure&nbsp;25.3: When does the answer become decodable inside the network? The 
 <span id="cb16-37"><a href="#cb16-37" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run both concepts at all three layers. The surface feature is most decodable at the embedding — the token <em>is</em> the input — and fades as the stream is repurposed for prediction. The contextual feature runs the other way: nearly invisible at the embedding, it strengthens through the blocks as the model integrates the current word.</p>
-<div id="dcdeb175" class="cell" data-execution_count="12">
+<div id="d27eca2f" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>layer_activations, index_map <span class="op">=</span> collect_residuals(model, stream, config.block_size)</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>surface <span class="op">=</span> word_boundary_labels(tokenizer, stream, predict_next<span class="op">=</span><span class="va">False</span>)[index_map]</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>contextual <span class="op">=</span> word_boundary_labels(tokenizer, stream, predict_next<span class="op">=</span><span class="va">True</span>)[index_map]</span>
@@ -1289,7 +1289,7 @@ Figure&nbsp;25.4: Where does each concept live in the stack? A surface word-boun
 \mathbf{h}'_{\ell,t} = \mathbf{h}_{\ell,t} + \alpha\,\mathbf{v},
 \tag{25.3}</span></span></p>
 <p>where <span class="math inline">\mathbf{v}</span> is the unit direction and <span class="math inline">\alpha</span> is the dose. A behavioral change after this edit is stronger evidence than decodability — but it is still local: the edit can shift many entangled features at once, which is why single neurons are rarely interpretable in the first place. Models pack more features than dimensions into the residual stream by <strong>superposition</strong>, so a coordinate is typically <em>polysemantic</em>; a sparse autoencoder can propose a cleaner overcomplete feature basis and has scaled to production models, though feature splitting, dead features, and reconstruction error keep even those results bounded <span class="citation" data-cites="elhage2022superposition templeton2024scaling">(<a href="../references.html#ref-elhage2022superposition" role="doc-biblioref"><span class="nocase">Elhage et al.</span> 2022</a>; <a href="../references.html#ref-templeton2024scaling" role="doc-biblioref"><span class="nocase">Templeton et al.</span> 2024</a>)</span>. We steer along a difference-of-means direction here because it needs no training and ties directly to the probe.</p>
-<div id="e3cf1820" class="cell" data-execution_count="14">
+<div id="61ca0398" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
@@ -1350,7 +1350,7 @@ Figure&nbsp;25.4: Where does each concept live in the stack? A surface word-boun
 <span id="cb20-58"><a href="#cb20-58" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> output</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We build the direction from the contextual boundary labels at the first block and steer there, so the second block still gets to process the edited state into text. The on-target measure is the mean length of generated “words”; the off-target cost is the held-out loss with the same edit applied, which tells us how much general competence we spent.</p>
-<div id="2484c29f" class="cell" data-execution_count="15">
+<div id="83c28c57" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>direction <span class="op">=</span> mean_difference_direction(layer_activations[<span class="dv">1</span>], contextual)</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1476,7 +1476,7 @@ Figure&nbsp;25.5: Does the probed direction causally control behavior, and at wh
 <h2 data-number="25.6" class="anchored" data-anchor-id="sec-ch25-traces"><span class="header-section-number">25.6</span> Reasoning traces are monitorable, not faithful</h2>
 <p>A reasoning-capable system may emit a scratchpad, a chain of thought, or a tool-call rationale. These <strong>traces</strong> are model-generated text a monitor can read, and they are operationally valuable precisely because they are legible and cheap next to white-box activation analysis. The trap is treating a legible trace as a faithful one. Separate three properties: <strong>outcome validity</strong> (did the answer satisfy the task?), <strong>monitorability</strong> (can a declared monitor detect a safety-relevant property from the trace?), and <strong>faithfulness</strong> (does the trace expose the factors that actually caused the decision?). A trace can be highly monitorable for explicit phrases and still be a poor causal account.</p>
 <p>Faithfulness is tested by intervention: change a hidden or biasing input, confirm the answer changes, then check whether the trace mentions the cause. Turpin and colleagues did exactly this — inserting a bias such as “I think the answer is (A)” flips models’ answers while their stated reasoning never cites the hint <span class="citation" data-cites="turpin2023faithful">(<a href="../references.html#ref-turpin2023faithful" role="doc-biblioref"><span class="nocase">Turpin et al.</span> 2023</a>)</span>. We cannot run this on our tiny memorizer, which has no chain of thought, so we work a <strong>representative</strong> version — the numbers below are illustrative of the published pattern, not a recorded run — to make the measurement concrete.</p>
-<div id="b1bb7cfd" class="cell" data-execution_count="17">
+<div id="3e8301a7" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># representative faithfulness probe (illustrative of Turpin et al., not a recorded run)</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>trials <span class="op">=</span> [</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"clean"</span>: <span class="st">"B"</span>, <span class="st">"biased"</span>: <span class="st">"A"</span>, <span class="st">"hint"</span>: <span class="st">"A"</span>, <span class="st">"cot_mentions_hint"</span>: <span class="va">True</span>},</span>
@@ -1538,7 +1538,7 @@ Figure&nbsp;25.6: Why is a legible trace not a faithful one? On a representative
 S_{\text{observed}} = \max_{e \in \mathcal{E}} S(e).
 \tag{25.4}</span></span></p>
 <p>The asymmetry this creates is the whole point: evidence of capability defeats an inability claim quickly, while <em>absence</em> of capability needs a credible search for it. A low unassisted score is not an inability proof when an attacker can add tools, search, or a better scaffold. We make that concrete with a <strong>representative</strong> elicitation envelope — the numbers illustrate the shape, not a specific model.</p>
-<div id="5b00c570" class="cell" data-execution_count="19">
+<div id="9f11c0a5" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># representative elicitation envelope: score rises as assistance is added</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>envelope <span class="op">=</span> [</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"base prompt"</span>,        <span class="fl">0.04</span>),</span>
@@ -1584,7 +1584,7 @@ base-prompt score 0.04 sits under the 0.20 threshold; max_e S(e) = 0.31 does not
 <h2 data-number="25.8" class="anchored" data-anchor-id="sec-ch25-safety-case"><span class="header-section-number">25.8</span> A safety case turns evidence into a decision</h2>
 <p>A model report can hold hundreds of metrics and still leave the decision implicit. A <strong>safety case</strong> is a structured, reviewable argument that a system is acceptably safe for a stated scope, supported by evidence <span class="citation" data-cites="clymer2024safetycases buhl2024safetycases">(<a href="../references.html#ref-clymer2024safetycases" role="doc-biblioref"><span class="nocase">Clymer et al.</span> 2024</a>; <a href="../references.html#ref-buhl2024safetycases" role="doc-biblioref"><span class="nocase">Buhl et al.</span> 2024</a>)</span>. It does not prove zero risk; it makes the claim, assumptions, evidence, residual uncertainty, and decision rule inspectable. Decompose the top claim by hazard, and for each hazard choose an argument pattern: <strong>inability</strong> (the capability needed for the harm is absent under a strong elicitation envelope), <strong>control</strong> (assume the capability, but tested controls interrupt every path to harm), <strong>trustworthiness</strong> (evidence supports that the capable system acts as intended), or <strong>deference</strong> (a more capable trusted process supplies assurance — research-dependent, not for ordinary review). Control arguments are often strongest for agents because they claim least about learned intent: Chapter 24’s enforcement point can deny a credential read even if the model proposes it strategically.</p>
 <p>We assemble the case inline, as data. The deployment is a sandboxed research agent; three hazards each take a different argument, and each argument declares exactly what evidence it is allowed to rest on.</p>
-<div id="b7dc5699" class="cell" data-execution_count="20">
+<div id="ee543e76" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>deployment_case <span class="op">=</span> {</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"system"</span>: {<span class="st">"name"</span>: <span class="st">"research-agent-rc25"</span>,</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>               <span class="st">"scope"</span>: <span class="st">"sandboxed public-web research; no credentials, no production authority"</span>},</span>
@@ -1613,7 +1613,7 @@ base-prompt score 0.04 sits under the 0.20 threshold; max_e S(e) = 0.31 does not
 <span id="cb29-26"><a href="#cb29-26" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The interpretability results become evidence — but <em>diagnostic</em> evidence, a kind the rules below will refuse to over-trust. This function converts the measurements we took on the real model into scoped, non-dispositive evidence items.</p>
-<div id="f1ab2575" class="cell" data-execution_count="21">
+<div id="d356204d" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>DIAGNOSTIC_KINDS <span class="op">=</span> {<span class="st">"logit_lens"</span>, <span class="st">"linear_probe"</span>, <span class="st">"activation_steering"</span>, <span class="st">"sae_feature"</span>}</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1648,7 +1648,7 @@ base-prompt score 0.04 sits under the 0.20 threshold; max_e S(e) = 0.31 does not
 <span id="cb30-32"><a href="#cb30-32" aria-hidden="true" tabindex="-1"></a>    ]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The rule engine is deliberately small and narrow — no weighted average, no single safety score. Each argument type has its own sufficiency test, and a claim is a <strong>gap</strong> the moment any reason fires.</p>
-<div id="97d2c45e" class="cell" data-execution_count="22">
+<div id="20bff2cd" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> evaluate_claim(claim, evidence_by_id):</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Judge one scoped safety argument against explicit, per-pattern rules.</span></span>
@@ -1707,7 +1707,7 @@ base-prompt score 0.04 sits under the 0.20 threshold; max_e S(e) = 0.31 does not
 <span id="cb31-56"><a href="#cb31-56" aria-hidden="true" tabindex="-1"></a>            <span class="st">"status"</span>: <span class="st">"supported"</span> <span class="cf">if</span> <span class="kw">not</span> reasons <span class="cf">else</span> <span class="st">"gap"</span>, <span class="st">"reasons"</span>: reasons}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Building the case joins the diagnostics to the graph, checks that every referenced evidence ID exists, evaluates each claim, and fails closed: any unsupported high- or critical-severity claim blocks the deployment.</p>
-<div id="19bcba08" class="cell" data-execution_count="23">
+<div id="5dc92eab" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> build_safety_case(case, diagnostics):</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Assemble a case, evaluate every claim, and return a fail-closed decision.</span></span>
@@ -1749,7 +1749,7 @@ base-prompt score 0.04 sits under the 0.20 threshold; max_e S(e) = 0.31 does not
 <span id="cb32-39"><a href="#cb32-39" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now we wire the <em>real</em> diagnostics — the lens rank drop, the probe selectivity, and the steering effect we measured above — into the case and print the verdict as a structured table.</p>
-<div id="b72df239" class="cell" data-execution_count="24">
+<div id="460f934c" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>diagnostics <span class="op">=</span> {</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"lens"</span>: {<span class="st">"rank_drop"</span>: <span class="bu">round</span>(mean_ranks[<span class="dv">0</span>] <span class="op">-</span> mean_ranks[<span class="op">-</span><span class="dv">1</span>], <span class="dv">2</span>)},</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"probe"</span>: {<span class="st">"selectivity"</span>: probe_curves[<span class="st">"surface"</span>][<span class="dv">0</span>]},</span>

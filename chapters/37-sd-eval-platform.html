@@ -879,7 +879,7 @@ Table&nbsp;37.1: The eval platform restated with numbers, each row naming the de
 <section id="sec-ch37-numbers" class="level2" data-number="37.2">
 <h2 data-number="37.2" class="anchored" data-anchor-id="sec-ch37-numbers"><span class="header-section-number">37.2</span> The numbers first</h2>
 <p>Numbers before boxes. The measurement family has one classic numeric trap, and it is the analogue of the KV-heads trap in serving: <strong>gate on Cohen’s <span class="math inline">{\kappa}</span>, not raw agreement.</strong> A judge that agrees with humans 90 percent of the time sounds calibrated until you notice the set is 90 percent pass — a judge that says “pass” to everything scores the same and has measured nothing. We import the calculator that says so, reusing Chapter 22’s <code>cohen_kappa</code> (the owner of judge calibration, <a href="22-evaluation.html#sec-ch22-judge" class="quarto-xref"><span>Section 22.3</span></a>) rather than rebuilding it, alongside the back-of-envelope toolkit from Chapter 33.</p>
-<div id="dfce3c3a" class="cell" data-execution_count="1">
+<div id="272092c5" class="cell" data-execution_count="1">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
@@ -913,7 +913,7 @@ Table&nbsp;37.1: The eval platform restated with numbers, each row naming the de
 </div>
 </div>
 <p>Eighty-five percent agreement, kappa exactly zero: the raw number was lying and kappa says so in one figure. That is the sentence to say aloud in move 2 — the same way a serving candidate says “GQA caches KV heads, not query heads.” Next, the money. A judge grade is one cheap model call; we price the tiers with the toolkit’s <code>cost_per_query</code>.</p>
-<div id="aacbc1e2" class="cell" data-execution_count="2">
+<div id="f6e68e55" class="cell" data-execution_count="2">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>judge <span class="op">=</span> sd.TokenPrice(input_per_million<span class="op">=</span><span class="fl">3.00</span>, output_per_million<span class="op">=</span><span class="fl">15.00</span>)</span>

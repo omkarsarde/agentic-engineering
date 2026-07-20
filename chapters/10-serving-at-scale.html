@@ -874,7 +874,7 @@ Figure&nbsp;10.1: Which serving component can change a request’s latency or st
 </div>
 </div>
 <p>To see goodput and throughput diverge we build a small slot-based simulator. Requests arrive as a Poisson process at rate <code>rate</code>; the server holds <code>slots</code> decode streams and advances one step per unit time; a waiting request queues until a slot frees. Its queue wait is a proxy for TTFT. This is the systems analogue of training a model and plotting the loss: we drive the mechanism with a synthetic workload and read the curve it produces.</p>
-<div id="6b43d303" class="cell" data-execution_count="1">
+<div id="1a74edb5" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -925,7 +925,7 @@ Figure&nbsp;10.1: Which serving component can change a request’s latency or st
 <span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The pool’s capacity is <code>slots / mean_service</code> = 8 / 20 = 0.4 requests per step. We sweep from well below to twice that and print the two rates side by side.</p>
-<div id="a61f1c4e" class="cell" data-execution_count="2">
+<div id="519a7f54" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>capacity <span class="op">=</span> <span class="dv">8</span> <span class="op">/</span> <span class="fl">20.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>rates <span class="op">=</span> [<span class="bu">round</span>(capacity <span class="op">*</span> f, <span class="dv">3</span>) <span class="cf">for</span> f <span class="kw">in</span> (<span class="fl">0.3</span>, <span class="fl">0.5</span>, <span class="fl">0.7</span>, <span class="fl">0.85</span>, <span class="fl">1.0</span>, <span class="fl">1.15</span>, <span class="fl">1.35</span>, <span class="fl">1.6</span>, <span class="fl">2.0</span>)]</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>knee <span class="op">=</span> sweep_load(rates)</span>
@@ -1000,7 +1000,7 @@ Figure&nbsp;10.2: Why does goodput fall while throughput keeps rising? Throughpu
 U_{\text{static}}=\frac{\sum_{i=1}^{B}L_i}{B\max_i L_i},
 \tag{10.2}</span></span></p>
 <p>the useful request-steps over the slots held while the longest member runs. Length skew drives it down. <strong>Continuous batching</strong>, also called iteration-level or in-flight batching, makes admission a per-step decision: after each decode step the scheduler removes finished requests and admits waiting ones into the freed slots <span class="citation" data-cites="yu2022orca">(<a href="../references.html#ref-yu2022orca" role="doc-biblioref">Yu et al. 2022</a>)</span>. We implement both policies and compare them on one burst of twelve requests into four slots.</p>
-<div id="0f358212" class="cell" data-execution_count="4">
+<div id="81393978" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>REQUEST_LENGTHS <span class="op">=</span> [<span class="dv">2</span>, <span class="dv">12</span>, <span class="dv">4</span>, <span class="dv">10</span>, <span class="dv">3</span>, <span class="dv">9</span>, <span class="dv">5</span>, <span class="dv">8</span>, <span class="dv">6</span>, <span class="dv">7</span>, <span class="dv">2</span>, <span class="dv">11</span>]</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1031,7 +1031,7 @@ U_{\text{static}}=\frac{\sum_{i=1}^{B}L_i}{B\max_i L_i},
 <span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>            <span class="st">"utilization"</span>: <span class="bu">sum</span>(lengths) <span class="op">/</span> (batch_size <span class="op">*</span> elapsed)}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The continuous scheduler keeps a waiting queue and refills a slot the instant its request completes, so a finished short request is immediately replaced rather than leaving a hole.</p>
-<div id="819be0c1" class="cell" data-execution_count="5">
+<div id="e42976f7" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> continuous_schedule(lengths, batch_size):</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Refill each decode slot as soon as its current request completes.</span></span>
@@ -1067,7 +1067,7 @@ U_{\text{static}}=\frac{\sum_{i=1}^{B}L_i}{B\max_i L_i},
 <span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a>            <span class="st">"utilization"</span>: used <span class="op">/</span> (batch_size <span class="op">*</span> step)}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Goodput needs an SLO test per request. We charge time to first token as the admission step plus one, and time per output token as elapsed steps over tokens produced. With a TTFT budget of 16 steps and a TPOT budget of 1.05, we count how many requests qualify under each policy.</p>
-<div id="a093da71" class="cell" data-execution_count="6">
+<div id="6e6f7875" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> goodput(schedule, lengths, ttft_slo<span class="op">=</span><span class="dv">16</span>, tpot_slo<span class="op">=</span><span class="fl">1.05</span>):</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Count requests meeting both latency SLOs, and the per-step goodput.</span></span>
@@ -1093,7 +1093,7 @@ U_{\text{static}}=\frac{\sum_{i=1}^{B}L_i}{B\max_i L_i},
 <span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"qualified"</span>: qualified, <span class="st">"per_step"</span>: qualified <span class="op">/</span> schedule[<span class="st">"makespan_steps"</span>]}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run both policies on the burst and print makespan, utilization, and goodput.</p>
-<div id="68018425" class="cell" data-execution_count="7">
+<div id="08fe4eb8" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>static <span class="op">=</span> static_schedule(REQUEST_LENGTHS, <span class="dv">4</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>continuous <span class="op">=</span> continuous_schedule(REQUEST_LENGTHS, <span class="dv">4</span>)</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, sched <span class="kw">in</span> ((<span class="st">"static"</span>, static), (<span class="st">"continuous"</span>, continuous)):</span>
@@ -1107,7 +1107,7 @@ U_{\text{static}}=\frac{\sum_{i=1}^{B}L_i}{B\max_i L_i},
 </div>
 </div>
 <p>Continuous batching finishes the burst in 26 steps instead of 32, lifts utilization from 0.62 to 0.76, and — the number that matters — qualifies all twelve requests instead of eight. To see <em>why</em> four requests fail under static batching, print their admission steps.</p>
-<div id="5e814b56" class="cell" data-execution_count="8">
+<div id="342fd2b5" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"static admission steps:    "</span>, static[<span class="st">"starts"</span>])</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"continuous admission steps:"</span>, continuous[<span class="st">"starts"</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1162,7 +1162,7 @@ Figure&nbsp;10.3: How does continuous batching fill the holes a fixed batch leav
 </div>
 </div>
 <p>Continuous batching solves the <em>compute</em> holes. Variable length also strands <em>memory</em>: if every slot reserves a KV region sized for the longest possible sequence, short requests waste most of it. Memory becomes schedulable when the KV cache is <strong>paged</strong>. A request sees logical KV blocks in token order; a block table maps them to noncontiguous physical frames allocated only as tokens arrive <span class="citation" data-cites="kwon2023vllm">(<a href="../references.html#ref-kwon2023vllm" role="doc-biblioref"><span class="nocase">Kwon et al.</span> 2023</a>)</span>. We measure the waste directly, comparing a naive allocator that reserves <code>max_len</code> per sequence against a paged allocator that reserves whole blocks.</p>
-<div id="01f3c69f" class="cell" data-execution_count="10">
+<div id="df676cb8" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1192,7 +1192,7 @@ Figure&nbsp;10.3: How does continuous batching fill the holes a fixed batch leav
 <span id="cb13-27"><a href="#cb13-27" aria-hidden="true" tabindex="-1"></a>            <span class="st">"naive_over_paged"</span>: naive <span class="op">/</span> paged}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We drive it with a realistic mix of live sequence lengths against a 256-token maximum and 16-token blocks.</p>
-<div id="dd55e3f6" class="cell" data-execution_count="11">
+<div id="e9af81e7" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>live <span class="op">=</span> [<span class="dv">17</span>, <span class="dv">5</span>, <span class="dv">130</span>, <span class="dv">44</span>, <span class="dv">9</span>, <span class="dv">88</span>, <span class="dv">3</span>, <span class="dv">61</span>, <span class="dv">200</span>, <span class="dv">12</span>, <span class="dv">150</span>, <span class="dv">7</span>]</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>frag <span class="op">=</span> kv_fragmentation(live, block_size<span class="op">=</span><span class="dv">16</span>, max_len<span class="op">=</span><span class="dv">256</span>)</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"tokens live: </span><span class="sc">{</span>frag[<span class="st">'used'</span>]<span class="sc">}</span><span class="ss">"</span>)</span>
@@ -1247,7 +1247,7 @@ Figure&nbsp;10.4: How can two sequences share an immutable prefix without contig
 <h2 data-number="10.3" class="anchored" data-anchor-id="sec-ch10-prefix-cache"><span class="header-section-number">10.3</span> Prefix caching pays off past a hit-rate threshold</h2>
 <p>An agent sends the same system instructions, tool schemas, and policy text on every turn. Recomputing their keys and values each time is pure waste — unless one request changed a timestamp near the front of the prompt, in which case the reuse silently misses. A different deployment gets frequent hits but accidentally lets two tenants share a prefix entry. Prefix caching is valuable only when <em>identity</em>, <em>placement</em>, and <em>economics</em> are all correct.</p>
 <p>A <strong>prefix cache</strong> keeps KV blocks after their request finishes so a later request with the exact same token prefix and model state can skip that prefill. “Exact” is mechanical: semantically equal text with different token IDs is a miss, and equal token IDs computed under a different model, tokenizer, template, or adapter are not interchangeable. The cache key must cover every input that changes the KV values. We hash the token IDs and bind them to the revisions that produced them.</p>
-<div id="77984851" class="cell" data-execution_count="12">
+<div id="3438ab89" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> hashlib</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> json</span>
@@ -1289,7 +1289,7 @@ Figure&nbsp;10.4: How can two sequences share an immutable prefix without contig
 <span id="cb16-39"><a href="#cb16-39" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> CacheKey(tenant, model, tokenizer, template, adapter, digest[:<span class="dv">16</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The same prefix reuses within a tenant and refuses to reuse across tenants.</p>
-<div id="557cd361" class="cell" data-execution_count="13">
+<div id="96d6707e" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>prefix <span class="op">=</span> <span class="bu">list</span>(<span class="bu">range</span>(<span class="dv">45</span>))</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>same <span class="op">=</span> make_cache_key(<span class="st">"tenant-a"</span>, prefix) <span class="op">==</span> make_cache_key(<span class="st">"tenant-a"</span>, prefix)</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>cross <span class="op">=</span> make_cache_key(<span class="st">"tenant-a"</span>, prefix) <span class="op">==</span> make_cache_key(<span class="st">"tenant-b"</span>, prefix)</span>
@@ -1305,7 +1305,7 @@ different tenant, same prefix -&gt; reuse: False</code></pre>
 r &gt; \frac{C_w - C}{C - C_r}.
 \tag{10.3}</span></span></p>
 <p>Rather than a single break-even count, the more useful production view is the <em>steady-state</em> one: at hit rate <span class="math inline">h</span>, each request pays <span class="math inline">C_r</span> with probability <span class="math inline">h</span> and <span class="math inline">C_w</span> with probability <span class="math inline">{1-h}</span>. We plot that effective cost against the baseline of always recomputing.</p>
-<div id="03953f1a" class="cell" data-execution_count="14">
+<div id="a5648c21" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_breakeven(compute, write, read):</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the future reuses a cache write needs to beat recomputation.</span></span>
@@ -1344,7 +1344,7 @@ r &gt; \frac{C_w - C}{C - C_r}.
 <span id="cb19-36"><a href="#cb19-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (<span class="dv">1</span> <span class="op">-</span> hit_rate) <span class="op">*</span> write <span class="op">+</span> hit_rate <span class="op">*</span> read</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We sweep the hit rate and find where the cached cost first drops below the recompute baseline.</p>
-<div id="44e4ded3" class="cell" data-execution_count="15">
+<div id="b8624be5" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>hits <span class="op">=</span> [i <span class="op">/</span> <span class="dv">40</span> <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">41</span>)]</span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>costs <span class="op">=</span> [effective_cost(h) <span class="cf">for</span> h <span class="kw">in</span> hits]</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>crossing <span class="op">=</span> (<span class="fl">1.25</span> <span class="op">-</span> <span class="fl">1.0</span>) <span class="op">/</span> (<span class="fl">1.25</span> <span class="op">-</span> <span class="fl">0.10</span>)          <span class="co"># cost(h) == baseline of 1.0</span></span>
@@ -1391,7 +1391,7 @@ Figure&nbsp;10.5: When does a prefix cache actually save money? Effective per-re
 \sum_x q(x)\,a(x)=\sum_x \min(p(x),q(x))=1-\operatorname{TV}(p,q),
 \tag{10.4}</span></span></p>
 <p>one minus the total-variation distance between draft and target. We implement one draw and verify the identity empirically over 40,000 samples.</p>
-<div id="1de74b5f" class="cell" data-execution_count="17">
+<div id="bbe53306" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> random</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1440,7 +1440,7 @@ Figure&nbsp;10.5: When does a prefix cache actually save money? Effective per-re
 <span id="cb23-46"><a href="#cb23-46" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> categorical([value <span class="op">/</span> mass <span class="cf">for</span> value <span class="kw">in</span> residual], rng), <span class="va">False</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We draw 40,000 samples and check the empirical acceptance and the emitted distribution against the target.</p>
-<div id="fdcc63c3" class="cell" data-execution_count="18">
+<div id="fc0ac632" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>target, draft <span class="op">=</span> [<span class="fl">0.52</span>, <span class="fl">0.28</span>, <span class="fl">0.15</span>, <span class="fl">0.05</span>], [<span class="fl">0.42</span>, <span class="fl">0.32</span>, <span class="fl">0.18</span>, <span class="fl">0.08</span>]</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>counts, accepts, rng <span class="op">=</span> [<span class="dv">0</span>] <span class="op">*</span> <span class="dv">4</span>, <span class="dv">0</span>, random.Random(<span class="dv">731</span>)</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">40_000</span>):</span>
@@ -1461,7 +1461,7 @@ total variation of emitted vs target: 0.00365  (exact =&gt; ~0)</code></pre>
 E(\alpha,\gamma)=\sum_{k=0}^{\gamma}\alpha^{k}=\frac{1-\alpha^{\gamma+1}}{1-\alpha}.
 \tag{10.5}</span></span></p>
 <p>Speedup is those accepted tokens divided by the <em>added</em> work: one target verification plus <span class="math inline">\gamma</span> draft steps, each costing some fraction of a target step. When the fleet is idle the draft is nearly free; under contention the draft competes for the same accelerator and its per-token cost rises.</p>
-<div id="e9090de6" class="cell" data-execution_count="19">
+<div id="f072fa82" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> expected_accepted_tokens(alpha, block):</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Expected tokens accepted per verification for a draft block (@eq-ch10-spectokens).</span></span>
@@ -1495,7 +1495,7 @@ E(\alpha,\gamma)=\sum_{k=0}^{\gamma}\alpha^{k}=\frac{1-\alpha^{\gamma+1}}{1-\alp
 <span id="cb26-31"><a href="#cb26-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> expected_accepted_tokens(alpha, block) <span class="op">/</span> (<span class="dv">1</span> <span class="op">+</span> block <span class="op">*</span> draft_cost)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We compare the idle-fleet and saturated-fleet regimes across a range of acceptance rates.</p>
-<div id="4f38217c" class="cell" data-execution_count="20">
+<div id="44205e16" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> a <span class="kw">in</span> (<span class="fl">0.6</span>, <span class="fl">0.75</span>, <span class="fl">0.85</span>, <span class="fl">0.9</span>, <span class="fl">0.95</span>):</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>    low <span class="op">=</span> speculative_speedup(a, <span class="dv">4</span>, draft_cost<span class="op">=</span><span class="fl">0.05</span>)</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    saturated <span class="op">=</span> speculative_speedup(a, <span class="dv">4</span>, draft_cost<span class="op">=</span><span class="fl">0.85</span>)</span>
@@ -1546,7 +1546,7 @@ Figure&nbsp;10.6: How does speculative decoding trade compute for serial steps? 
 q_i=\operatorname{clip}(\operatorname{round}(x_i/s),\,-Q,\,Q),\qquad \hat{x}_i=s\,q_i.
 \tag{10.6}</span></span></p>
 <p>We apply this to a real model: the tiny GPT trained in <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>. First we retrain a small one on a structured toy corpus so its next-token accuracy is measurable, then we quantize its weights and read the damage honestly.</p>
-<div id="7dce315d" class="cell" data-execution_count="22">
+<div id="f6d03b87" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>sys.path.insert(<span class="dv">0</span>, <span class="st">"code/ch02"</span>)</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> _generated <span class="im">as</span> ch02              <span class="co"># the TinyGPT we built in Chapter 2</span></span>
@@ -1567,7 +1567,7 @@ q_i=\operatorname{clip}(\operatorname{round}(x_i/s),\,-Q,\,Q),\qquad \hat{x}_i=s
 </div>
 </div>
 <p>We train for 250 steps — enough for the toy model to learn the corpus’s rigid structure — and record its held-out next-token accuracy in full precision.</p>
-<div id="18d80b55" class="cell" data-execution_count="23">
+<div id="96f99196" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">0</span>)</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>model <span class="op">=</span> ch02.TinyGPT(config)</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>optimizer <span class="op">=</span> torch.optim.AdamW(model.parameters(), lr<span class="op">=</span><span class="fl">3e-3</span>)</span>
@@ -1590,7 +1590,7 @@ q_i=\operatorname{clip}(\operatorname{round}(x_i/s),\,-Q,\,Q),\qquad \hat{x}_i=s
 </div>
 </div>
 <p>Now the quantizer. We quantize every two-dimensional weight per row with <a href="#eq-ch10-symquant" class="quarto-xref">Equation&nbsp;<span>10.6</span></a>, load the result into a fresh model, and compare. Because the represented values are the dequantized <span class="math inline">\hat{x}</span>, this measures exactly the numerical error a weight-only integer kernel would incur.</p>
-<div id="42a0686d" class="cell" data-execution_count="24">
+<div id="495388e4" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1641,7 +1641,7 @@ q_i=\operatorname{clip}(\operatorname{round}(x_i/s),\,-Q,\,Q),\qquad \hat{x}_i=s
 <span id="cb34-48"><a href="#cb34-48" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> fp32, quant</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We size the model, then run the int8 and int4 ladder: quantize every weight, reload, and read accuracy, KL divergence from the full-precision distribution, and maximum logit drift.</p>
-<div id="3ff7f3a5" class="cell" data-execution_count="25">
+<div id="55e40675" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>reference_probs <span class="op">=</span> reference_logits.softmax(<span class="op">-</span><span class="dv">1</span>)</span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>fp32_bytes, _ <span class="op">=</span> model_storage(model, <span class="dv">8</span>)</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"full precision: </span><span class="sc">{</span>fp32_bytes<span class="sc">}</span><span class="ss"> bytes, accuracy </span><span class="sc">{</span>reference_acc<span class="sc">:.3f}</span><span class="ss">"</span>)</span>
@@ -1669,7 +1669,7 @@ int4: accuracy 0.601  KL 0.0026  max logit drift 1.317  7.42x smaller</code></pr
 </div>
 <p>Per-row int8 is nearly lossless at this scale: accuracy is unchanged, the KL divergence from the full-precision distribution is essentially zero, and the model is 3.9 times smaller. Int4 is where “validation problem” earns its name — the same model loses accuracy and its logits drift by several units, all from halving the width again. The lesson is not that int8 is safe and int4 is not in general; it is that <em>only measurement tells you</em>, and the metric that moved (a tool-selection task) may not be the one you watched (perplexity).</p>
 <p>Outliers are why finer granularity helps. A single large value in a block forces a coarse scale on all its neighbors. We show this with a 256-value vector carrying two planted outliers, quantized to four bits at three block sizes.</p>
-<div id="b2c78e69" class="cell" data-execution_count="26">
+<div id="cf382e3a" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> quantize_blockwise(values, bits, block_size):</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Symmetric integer quantization applied independently to each block.</span></span>
@@ -1695,7 +1695,7 @@ int4: accuracy 0.601  KL 0.0026  max logit drift 1.317  7.42x smaller</code></pr
 <span id="cb37-23"><a href="#cb37-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> restored, rmse</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We build a 256-value signal, plant two outliers, and quantize it to four bits at three block sizes.</p>
-<div id="29feb359" class="cell" data-execution_count="27">
+<div id="9572b402" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>signal <span class="op">=</span> [<span class="dv">2</span> <span class="op">*</span> math.sin(i <span class="op">/</span> <span class="dv">11</span>) <span class="op">+</span> <span class="fl">0.3</span> <span class="op">*</span> math.cos(i <span class="op">/</span> <span class="dv">3</span>) <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">256</span>)]</span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>signal[<span class="dv">47</span>], signal[<span class="dv">181</span>] <span class="op">=</span> <span class="fl">38.0</span>, <span class="op">-</span><span class="fl">29.0</span></span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>blocks <span class="op">=</span> [(bs, quantize_blockwise(signal, <span class="dv">4</span>, bs)[<span class="dv">1</span>], <span class="dv">4</span> <span class="op">+</span> <span class="dv">16</span> <span class="op">/</span> bs) <span class="cf">for</span> bs <span class="kw">in</span> (<span class="dv">16</span>, <span class="dv">64</span>, <span class="dv">256</span>)]</span>
@@ -1741,7 +1741,7 @@ Figure&nbsp;10.7: Why does a finer quantization block survive an outlier? Left: 
 <section id="sec-ch10-constrained" class="level2" data-number="10.6">
 <h2 data-number="10.6" class="anchored" data-anchor-id="sec-ch10-constrained"><span class="header-section-number">10.6</span> Constrained decoding masks the tokens a grammar forbids</h2>
 <p>Callers want structured output — JSON that parses, an enum value, a schema-valid object. <strong>Constrained decoding</strong> guarantees it by construction: at each step the runtime advances a parser, computes which tokens can continue a valid parse, masks the rest to probability zero, renormalizes, and samples. A finite-state machine covers regular constraints (fixed choices, lexical patterns); a context-free grammar adds a stack for nested structures <span class="citation" data-cites="dong2024xgrammar">(<a href="../references.html#ref-dong2024xgrammar" role="doc-biblioref">Dong et al. 2024</a>)</span>. The mechanics are a mask and a renormalization; if illegal tokens hold mass <span class="math inline">m</span>, masking removes <span class="math inline">m</span> and the survivors are rescaled to sum to one.</p>
-<div id="f4103df0" class="cell" data-execution_count="29">
+<div id="8db095ae" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> constrained_distribution(probs, allowed):</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Mask disallowed tokens to zero and renormalize the survivors.</span></span>
@@ -1767,7 +1767,7 @@ Figure&nbsp;10.7: Why does a finer quantization block survive an outlier? Left: 
 <span id="cb41-23"><a href="#cb41-23" aria-hidden="true" tabindex="-1"></a>            <span class="st">"removed_mass"</span>: <span class="dv">1</span> <span class="op">-</span> kept}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A toy three-token distribution shows the mechanics: forbid one token and the survivors renormalize.</p>
-<div id="fd11be57" class="cell" data-execution_count="30">
+<div id="949edf19" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>toy <span class="op">=</span> constrained_distribution([<span class="fl">0.60</span>, <span class="fl">0.25</span>, <span class="fl">0.15</span>], {<span class="dv">1</span>, <span class="dv">2</span>})</span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"toy: removed </span><span class="sc">{</span>toy[<span class="st">'removed_mass'</span>]<span class="sc">:.2f}</span><span class="ss"> of the mass, "</span></span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"renormalized sums to </span><span class="sc">{</span><span class="bu">sum</span>(toy[<span class="st">'distribution'</span>])<span class="sc">:.3f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1776,7 +1776,7 @@ Figure&nbsp;10.7: Why does a finer quantization block survive an outlier? Left: 
 </div>
 </div>
 <p>The toy vector removes 0.60 of the mass and rebalances the rest. The genuinely hard part is not the mask but tokenization: the parser reasons about <em>characters</em>, while the model emits <em>tokens</em>, and one token can span several characters, split a delimiter, or cross a grammar transition. We see this directly in the tokenizer we just trained.</p>
-<div id="898179a0" class="cell" data-execution_count="31">
+<div id="ad546715" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>sample <span class="op">=</span> <span class="st">"the red cup has value 8 ."</span></span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>pieces <span class="op">=</span> [tokenizer.token_bytes[i].decode(<span class="st">"latin-1"</span>) <span class="cf">for</span> i <span class="kw">in</span> tokenizer.encode(sample)]</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="bu">len</span>(sample)<span class="sc">}</span><span class="ss"> characters -&gt; </span><span class="sc">{</span><span class="bu">len</span>(pieces)<span class="sc">}</span><span class="ss"> tokens:"</span>)</span>
@@ -1787,7 +1787,7 @@ Figure&nbsp;10.7: Why does a finer quantization block survive an outlier? Left: 
 </div>
 </div>
 <p>A single token, <code>"p has value "</code>, bundles the tail of one word with three whole words — a “must emit a digit next” rule cannot be enforced by picking “digit tokens” alone, because the model’s natural continuations hide digits inside larger tokens. Now we apply a real grammar mask to the real model. After the prompt <code>the red apple has value</code>, the grammar requires a bare digit; we intersect that with the model’s actual next-token logits.</p>
-<div id="a17f839b" class="cell" data-execution_count="32">
+<div id="17f67b30" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>digit_tokens <span class="op">=</span> [i <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(tokenizer.vocab_size)</span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> tokenizer.token_bytes[i].decode(<span class="st">"latin-1"</span>).isdigit()]</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>context <span class="op">=</span> torch.tensor([tokenizer.encode(<span class="st">"the red apple has value "</span>)])</span>
@@ -1842,7 +1842,7 @@ Figure&nbsp;10.8: How does a grammar mask turn a parser state into an allowed-to
 \Delta I+\Delta S &gt; T_{KV}+T_R+T_Q+T_F,
 \tag{10.7}</span></span></p>
 <p>and note that <span class="math inline">T_{KV}\ge M_{KV}/B_{\text{eff}}</span>: moving more KV bytes across a slower path can erase the gain. We apply the inequality to two fixtures.</p>
-<div id="e0a3f1d3" class="cell" data-execution_count="33">
+<div id="0eeaccfc" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb48"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> disaggregation_decision(kv_gib, interference_saved_ms, bandwidth_gibps<span class="op">=</span><span class="fl">200.0</span>,</span>
 <span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>                            coordination_ms<span class="op">=</span><span class="fl">2.8</span>):</span>
@@ -1870,7 +1870,7 @@ Figure&nbsp;10.8: How does a grammar mask turn a parser state into an allowed-to
 <span id="cb48-25"><a href="#cb48-25" aria-hidden="true" tabindex="-1"></a>            <span class="st">"disaggregate"</span>: interference_saved_ms <span class="op">&gt;</span> overhead_ms}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We apply it to a small-KV short prompt and a large-KV long prompt.</p>
-<div id="1ff0eb88" class="cell" data-execution_count="34">
+<div id="d90cbef6" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, kv, saved <span class="kw">in</span> ((<span class="st">"short prompt"</span>, <span class="fl">0.25</span>, <span class="fl">3.0</span>), (<span class="st">"long prompt"</span>, <span class="fl">4.0</span>, <span class="fl">35.0</span>)):</span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>    d <span class="op">=</span> disaggregation_decision(kv, saved)</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">: saves </span><span class="sc">{</span>saved<span class="sc">}</span><span class="ss"> ms, pays </span><span class="sc">{</span>d[<span class="st">'overhead_ms'</span>]<span class="sc">:.2f}</span><span class="ss"> ms "</span></span>
@@ -1962,7 +1962,7 @@ Figure&nbsp;10.9: Where does a disaggregated request pay coordination and KV-tra
 </table>
 <p>Mixture-of-experts serving is the case where these interact hardest: expert parallelism spreads expert weights across devices, but sparse activation lowers arithmetic, <em>not</em> the all-to-all communication or the expert storage, and a hot expert sets the batch’s step time. Benchmark the actual topology; an oversubscribed interconnect erases the arithmetic saving.</p>
 <p><strong>Multi-LoRA</strong> tenancy shares the expensive base <span class="math inline">xW</span> while applying per-tenant low-rank <span class="math inline">xAB</span> terms on the fly, so one replica serves thousands of adapters without a merged weight matrix per tenant; grouped kernels batch the heterogeneous adapter terms <span class="citation" data-cites="sheng2024slora">(<a href="../references.html#ref-sheng2024slora" role="doc-biblioref">Sheng et al. 2024</a>)</span>. But sharing a base model, process, accelerator, or cache widens the security boundary, and the sharpest serving-specific risk is a <em>timing side channel</em>: a cache hit is fast and a miss is slow, so if the cache key omits the tenant, one tenant can detect another’s prefix by timing a lookup. We demonstrate the leak and its fix.</p>
-<div id="c868a19d" class="cell" data-execution_count="35">
+<div id="3dd0b8cd" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> shared_prefix_leak(include_tenant):</span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Show whether a prefix cache leaks cross-tenant presence by hit timing.</span></span>
@@ -1990,7 +1990,7 @@ Figure&nbsp;10.9: Where does a disaggregated request pay coordination and KV-tra
 <span id="cb51-25"><a href="#cb51-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"probe_hit"</span>: hit, <span class="st">"leaked_presence"</span>: hit}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run both key policies and see which one lets tenant A detect tenant B’s prefix.</p>
-<div id="c4f634bb" class="cell" data-execution_count="36">
+<div id="a1681715" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb52"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> policy <span class="kw">in</span> (<span class="va">False</span>, <span class="va">True</span>):</span>
 <span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a>    result <span class="op">=</span> shared_prefix_leak(include_tenant<span class="op">=</span>policy)</span>
 <span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a>    label <span class="op">=</span> <span class="st">"tenant-scoped key"</span> <span class="cf">if</span> policy <span class="cf">else</span> <span class="st">"prefix-only key"</span></span>
@@ -2003,7 +2003,7 @@ Figure&nbsp;10.9: Where does a disaggregated request pay coordination and KV-tra
 </div>
 <p>With a prefix-only key, tenant A’s probe hits tenant B’s entry and the timing reveals presence; the tenant-scoped key makes it a miss and closes the channel. This is one demonstrated control; the full threat model — residual KV recovery from unscrubbed device memory <span class="citation" data-cites="sorensen2024leftoverlocals">(<a href="../references.html#ref-sorensen2024leftoverlocals" role="doc-biblioref">Sorensen and Khlaaf 2024</a>)</span>, adapter integrity and authorization, cache zeroization on cancellation and crash, encrypted remote KV, and accelerator attestation — belongs to <a href="24-agent-security.html" class="quarto-xref"><span>Chapter 24</span></a>, which serving must implement but does not own. The minimum serving contract is: tenant-scoped keys over every revision, quotas on KV bytes and adapters, and explicit zeroization on release.</p>
 <p>To measure a real endpoint against these mechanics, an OpenAI-compatible route gives interface portability. The seam below times first content and inter-event gaps; it is a measurement probe, not a load generator, and it is the one cell in this chapter that needs a network.</p>
-<div id="b0a2de52" class="cell" data-execution_count="37">
+<div id="5165e638" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb54"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time, urllib.request</span>
 <span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> profile_endpoint(base_url, model, prompt, max_tokens<span class="op">=</span><span class="dv">64</span>):</span>
@@ -2027,7 +2027,7 @@ Figure&nbsp;10.9: Where does a disaggregated request pay coordination and KV-tra
 \Delta p\,V &gt; \Delta n\,c_n + \Delta h\,c_h + D,
 \tag{10.8}</span></span></p>
 <p>where <span class="math inline">\Delta p</span> is the gain in task success, <span class="math inline">V</span> its value, <span class="math inline">\Delta n</span> the extra tokens at unit cost <span class="math inline">c_n</span>, <span class="math inline">\Delta h</span> the added KV holding time at capacity shadow price <span class="math inline">c_h</span>, and <span class="math inline">D</span> the harm from delay. The shadow price <span class="math inline">c_h</span> rises near the goodput knee, so the right budget is load-aware. We measure the value side with a toy reasoner whose accuracy follows the coverage law of <a href="08-reasoning-test-time-compute.html" class="quarto-xref"><span>Chapter 8</span></a>: more thinking means more sampled candidates and a higher chance of hitting the answer — until an overthinking tail, where the model second-guesses a found answer.</p>
-<div id="f0c50c37" class="cell" data-execution_count="38">
+<div id="24783588" class="cell" data-execution_count="38">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb55"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb55-2"><a href="#cb55-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> budget_forcing_sweep(budgets, trials<span class="op">=</span><span class="dv">4000</span>, candidates<span class="op">=</span><span class="dv">40</span>, tokens_per_thought<span class="op">=</span><span class="dv">8</span>,</span>
 <span id="cb55-3"><a href="#cb55-3" aria-hidden="true" tabindex="-1"></a>                         derail_rate<span class="op">=</span><span class="fl">0.0016</span>, seed<span class="op">=</span><span class="dv">0</span>):</span>
@@ -2067,7 +2067,7 @@ Figure&nbsp;10.9: Where does a disaggregated request pay coordination and KV-tra
 <span id="cb55-37"><a href="#cb55-37" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We sweep a range of budgets and print accuracy and its per-token efficiency.</p>
-<div id="d34066fa" class="cell" data-execution_count="39">
+<div id="db5cb4fb" class="cell" data-execution_count="39">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb56"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a>sweep <span class="op">=</span> budget_forcing_sweep([<span class="dv">32</span>, <span class="dv">64</span>, <span class="dv">128</span>, <span class="dv">256</span>, <span class="dv">384</span>, <span class="dv">512</span>, <span class="dv">768</span>])</span>
 <span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="st">'budget'</span><span class="sc">:&gt;7}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'accuracy'</span><span class="sc">:&gt;9}</span><span class="ss"> </span><span class="sc">{</span><span class="st">'acc/1k tokens'</span><span class="sc">:&gt;14}</span><span class="ss">"</span>)</span>
 <span id="cb56-3"><a href="#cb56-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> row <span class="kw">in</span> sweep:</span>

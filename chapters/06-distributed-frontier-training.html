@@ -839,7 +839,7 @@ window.Quarto = {
 <section id="sec-ch06-ledger" class="level2" data-number="6.1">
 <h2 data-number="6.1" class="anchored" data-anchor-id="sec-ch06-ledger"><span class="header-section-number">6.1</span> The memory ledger of one training step</h2>
 <p>Everything in this chapter prices some resource against a model configuration, so we start by writing the configuration down. The fields are the ones that determine parameter count and activation size; the two instances are the shapes of two widely trained open models, which lets us check our arithmetic against published numbers instead of against our own assumptions.</p>
-<div id="d67a40d3" class="cell" data-execution_count="1">
+<div id="a1ab1b27" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -896,7 +896,7 @@ window.Quarto = {
 <span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>LLAMA_70B <span class="op">=</span> TrainingConfig(<span class="st">"70B-class"</span>, <span class="dv">8192</span>, <span class="dv">80</span>, <span class="dv">64</span>, <span class="dv">8</span>, <span class="dv">28672</span>, <span class="dv">128256</span>, <span class="dv">4096</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>From shapes to parameters is bookkeeping we already did once for a toy model in <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>; here we redo it with grouped-query attention so that the calculator reproduces real checkpoints, not just round numbers.</p>
-<div id="5de97518" class="cell" data-execution_count="2">
+<div id="54e33c7d" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> param_count(cfg: TrainingConfig) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">int</span>]:</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Count parameters per component from the configuration's shapes.</span></span>
@@ -924,7 +924,7 @@ window.Quarto = {
 <span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="st">"attention"</span>: attention, <span class="st">"ffn"</span>: ffn, <span class="st">"embeddings"</span>: embeddings, <span class="st">"total"</span>: total}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Does the bookkeeping survive contact with reality? Run it on both configurations:</p>
-<div id="ad127423" class="cell" data-execution_count="3">
+<div id="0f416bd0" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> cfg <span class="kw">in</span> (LLAMA_7B, LLAMA_70B):</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    counts <span class="op">=</span> param_count(cfg)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    parts <span class="op">=</span> {name: <span class="ss">f"</span><span class="sc">{</span>value <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss">B"</span> <span class="cf">for</span> name, value <span class="kw">in</span> counts.items()}</span>
@@ -945,7 +945,7 @@ M_{\text{state}}
 = 16 \ \text{bytes},
 \tag{6.1}</span></span></p>
 <p>so a model of <span class="math inline">P</span> parameters carries <span class="math inline">{16}P</span> bytes of persistent optimizer-visible state before a single activation exists. We encode the recipe as data so we can swap it later, and the ledger as a function so we can shard it later.</p>
-<div id="8d791b20" class="cell" data-execution_count="4">
+<div id="1fa06bd2" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>PRECISION_RECIPES <span class="op">=</span> {</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"fp32"</span>: {<span class="st">"weights"</span>: <span class="dv">4</span>, <span class="st">"gradients"</span>: <span class="dv">4</span>, <span class="st">"master weights"</span>: <span class="dv">0</span>, <span class="st">"Adam moments"</span>: <span class="dv">8</span>},</span>
@@ -984,7 +984,7 @@ M_{\text{state}}
 <span id="cb5-36"><a href="#cb5-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ledger</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run it for the 7B configuration under both precision recipes and watch for the surprise:</p>
-<div id="374866fb" class="cell" data-execution_count="5">
+<div id="437721d1" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>P_7B <span class="op">=</span> param_count(LLAMA_7B)[<span class="st">"total"</span>]</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> recipe <span class="kw">in</span> (<span class="st">"fp32"</span>, <span class="st">"mixed"</span>):</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    ledger <span class="op">=</span> state_ledger(P_7B, recipe)</span>
@@ -1005,7 +1005,7 @@ mixed GiB: {'weights': '  12.6', 'gradients': '  12.6', 'master weights': '  25.
 A_{\text{layer}} \approx 34\,s\,b\,h \;+\; 5\,a\,s^{2}\,b \ \text{bytes}.
 \tag{6.2}</span></span></p>
 <p>The first term collects the linear-layer inputs, norms, and activation functions — every tensor of shape <span class="math inline">s \times b \times h</span> the layer touches, and there are about seventeen of them at two bytes each. The second term is the attention matrix itself: scores and softmax weights of shape <span class="math inline">a \times s \times s</span> per sequence, the quadratic culprit from <a href="03-attention-position-long-context.html" class="quarto-xref"><span>Chapter 3</span></a>. A fused attention kernel such as FlashAttention <span class="citation" data-cites="dao2022flashattention">(<a href="../references.html#ref-dao2022flashattention" role="doc-biblioref">Dao et al. 2022</a>)</span> never materializes that matrix — it recomputes score tiles on the fly during backward — which deletes the second term entirely. Full activation checkpointing goes further: save <em>only</em> each block’s input (<span class="math inline">{2}\,s\,b\,h</span> bytes), throw everything else away, and recompute the block’s forward pass from that input when backward needs it. Three policies, one function:</p>
-<div id="759868d2" class="cell" data-execution_count="6">
+<div id="d92776d1" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> activation_bytes_per_layer(cfg: TrainingConfig, microbatch: <span class="bu">int</span>, policy: <span class="bu">str</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Price the tensors autograd saves per layer under a memory policy.</span></span>
@@ -1038,7 +1038,7 @@ A_{\text{layer}} \approx 34\,s\,b\,h \;+\; 5\,a\,s^{2}\,b \ \text{bytes}.
 <span id="cb8-30"><a href="#cb8-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"unknown activation policy: </span><span class="sc">{</span>policy<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Price the 7B configuration under each policy, one 4,096-token sequence per device:</p>
-<div id="6594afbc" class="cell" data-execution_count="7">
+<div id="d0add5ed" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> policy <span class="kw">in</span> (<span class="st">"materialize scores"</span>, <span class="st">"fused attention"</span>, <span class="st">"full recompute"</span>):</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    per_layer <span class="op">=</span> activation_bytes_per_layer(LLAMA_7B, <span class="dv">1</span>, policy)</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> per_layer <span class="op">*</span> LLAMA_7B.n_layers</span>
@@ -1051,7 +1051,7 @@ full recompute       0.031 GiB/layer     1.0 GiB for 32 layers</code></pre>
 </div>
 <p>Read the totals against the 100.4 GiB of state. Naive attention would add 97 GiB of activations <em>for a single sequence per device</em> — at sequence length 4,096, the score matrices alone rival the optimizer. The fused kernel cuts that to 17 GiB, and full recomputation to about 1 GiB, at the price of roughly one extra forward pass — about a third more compute per step, since backward costs about twice forward. That trade, FLOPs for bytes, is the first knob every large run turns.</p>
 <p>A formula this load-bearing should be checked against reality at least once. We reuse the <code>TinyGPT</code> we trained in <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>, and count the saved bytes directly: <code>torch.autograd.graph.saved_tensors_hooks</code> lets us intercept every tensor autograd stashes for backward, so we can measure the true activation footprint of a forward/backward pass — first plain, then with <code>torch.utils.checkpoint</code> wrapping each block.</p>
-<div id="43500205" class="cell" data-execution_count="8">
+<div id="9a2f2112" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_chapter_module(chapter: <span class="bu">str</span>, name: <span class="bu">str</span>):</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Import an earlier chapter's tangled teaching module by path.</span></span>
@@ -1081,7 +1081,7 @@ full recompute       0.031 GiB/layer     1.0 GiB for 32 layers</code></pre>
 <span id="cb11-27"><a href="#cb11-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> module</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>With the loader in hand, we instantiate a slightly-scaled-up TinyGPT — four layers, width 128 — as our measurement subject:</p>
-<div id="5632c14b" class="cell" data-execution_count="9">
+<div id="213e5663" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>ch02 <span class="op">=</span> load_chapter_module(<span class="st">"ch02"</span>, <span class="st">"ch02_generated"</span>)</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>tiny_config <span class="op">=</span> ch02.GPTConfig(vocab_size<span class="op">=</span><span class="dv">256</span>, block_size<span class="op">=</span><span class="dv">128</span>, d_model<span class="op">=</span><span class="dv">128</span>, n_heads<span class="op">=</span><span class="dv">4</span>, n_layers<span class="op">=</span><span class="dv">4</span>, mlp_ratio<span class="op">=</span><span class="dv">4</span>)</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">6</span>)</span>
@@ -1092,7 +1092,7 @@ full recompute       0.031 GiB/layer     1.0 GiB for 32 layers</code></pre>
 </div>
 </div>
 <p>The measurement itself runs the model’s blocks by hand so we can flip checkpointing on and off, with a hook that adds up bytes as autograd saves tensors:</p>
-<div id="d638a63a" class="cell" data-execution_count="10">
+<div id="841871fd" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> measure_saved_bytes(model, tokens: torch.Tensor, targets: torch.Tensor, checkpoint_blocks: <span class="bu">bool</span>) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Measure the bytes autograd saves during one forward/backward pass.</span></span>
@@ -1134,7 +1134,7 @@ full recompute       0.031 GiB/layer     1.0 GiB for 32 layers</code></pre>
 <span id="cb14-39"><a href="#cb14-39" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> saved</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run it both ways on the same batch and compare what autograd actually kept:</p>
-<div id="5c21a955" class="cell" data-execution_count="11">
+<div id="dc3ffc81" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">6</span>)</span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>tokens <span class="op">=</span> torch.randint(tiny_config.vocab_size, (<span class="dv">4</span>, tiny_config.block_size))</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>targets <span class="op">=</span> torch.roll(tokens, <span class="op">-</span><span class="dv">1</span>, dims<span class="op">=</span><span class="dv">1</span>)</span>
@@ -1190,7 +1190,7 @@ Figure&nbsp;6.1: Where does the memory actually go? Modeled activation totals fo
 <section id="sec-ch06-zero" class="level2" data-number="6.3">
 <h2 data-number="6.3" class="anchored" data-anchor-id="sec-ch06-zero"><span class="header-section-number">6.3</span> Sharding the state: ZeRO and FSDP</h2>
 <p>Data parallelism is the oldest scaling move: give every device a full replica of the model, feed each a different slice of the batch, and all-reduce the gradients so every replica applies the same update. It multiplies throughput, and it multiplies nothing else — each of <span class="math inline">n</span> replicas still holds all <span class="math inline">{16}P</span> bytes. The observation behind ZeRO <span class="citation" data-cites="rajbhandari2020zero">(<a href="../references.html#ref-rajbhandari2020zero" role="doc-biblioref">Rajbhandari et al. 2020</a>)</span> is that this replication is almost entirely waste: the optimizer states, gradients, and even the weights are <em>identical</em> across replicas, so each replica could own just <span class="math inline">{1/n}</span>-th of them and borrow the rest when needed. Each ZeRO stage removes one class of replication, and our <code>state_ledger</code> already knows how, via its <code>zero_stage</code> argument:</p>
-<div id="9319dec1" class="cell" data-execution_count="13">
+<div id="13d0d966" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> stage <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">4</span>):</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> state_ledger(P_7B, <span class="st">"mixed"</span>, zero_stage<span class="op">=</span>stage, shards<span class="op">=</span><span class="dv">8</span>)[<span class="st">"total"</span>]</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    label <span class="op">=</span> (<span class="st">"replicated (DDP)"</span>, <span class="st">"ZeRO-1"</span>, <span class="st">"ZeRO-2"</span>, <span class="st">"ZeRO-3 / FSDP"</span>)[stage]</span>
@@ -1285,7 +1285,7 @@ Figure&nbsp;6.3: When do full parameters exist on a ZeRO-3 rank? One block’s l
 <h2 data-number="6.4" class="anchored" data-anchor-id="sec-ch06-tp-pp"><span class="header-section-number">6.4</span> Splitting the computation: tensor and pipeline parallelism</h2>
 <p>ZeRO shards <em>storage</em>, but every device still executes every layer. Two situations break that: a layer’s computation is too big for one device to finish in acceptable time, or — at 70B and beyond — even the sharded state plus one gathered block strains memory. Then we split the computation itself, and the two classic cuts slice in orthogonal directions: <strong>tensor parallelism</strong> splits <em>within</em> each layer, <strong>pipeline parallelism</strong> splits <em>across</em> layers.</p>
 <p>Tensor parallelism <span class="citation" data-cites="shoeybi2019megatron">(<a href="../references.html#ref-shoeybi2019megatron" role="doc-biblioref">Shoeybi et al. 2019</a>)</span> rests on one matrix identity. Split a feed-forward block’s up-projection by <em>columns</em> across two devices and each device computes half the hidden features — no communication needed, because each output column depends on all of the input, which both devices hold. Then split the down-projection by <em>rows</em>: each device consumes exactly the hidden half it already has, and produces a <em>partial sum</em> of the full output. One all-reduce adds the partials. The nonlinearity between the two matmuls applies elementwise to each half, so it never forces communication. We can verify the identity in a few lines:</p>
-<div id="3e7d6fb3" class="cell" data-execution_count="15">
+<div id="e1b9f55b" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> tensor_parallel_ffn(</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    x: torch.Tensor, w_up: torch.Tensor, w_down: torch.Tensor, shards: <span class="bu">int</span></span>
@@ -1315,7 +1315,7 @@ Figure&nbsp;6.3: When do full parameters exist on a ZeRO-3 rank? One block’s l
 <span id="cb21-27"><a href="#cb21-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> torch.stack(partials).<span class="bu">sum</span>(dim<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Check it against the unsharded computation:</p>
-<div id="4b19336f" class="cell" data-execution_count="16">
+<div id="5976b987" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>torch.manual_seed(<span class="dv">0</span>)</span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> torch.randn(<span class="dv">4</span>, <span class="dv">256</span>)</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>w_up, w_down <span class="op">=</span> torch.randn(<span class="dv">256</span>, <span class="dv">1024</span>) <span class="op">/</span> <span class="dv">16</span>, torch.randn(<span class="dv">1024</span>, <span class="dv">256</span>) <span class="op">/</span> <span class="dv">32</span></span>
@@ -1329,7 +1329,7 @@ Figure&nbsp;6.3: When do full parameters exist on a ZeRO-3 rank? One block’s l
 </div>
 </div>
 <p>The sharded and unsharded results agree to float round-off — the split is exact in exact arithmetic. Attention shards the same way (heads split naturally by columns), so a full Transformer layer costs two all-reduces in forward and two in backward. That frequency is tensor parallelism’s defining constraint: the collectives sit on the critical path of <em>every layer</em>, so the payloads better be on the fastest links you own. How much traffic?</p>
-<div id="85304f70" class="cell" data-execution_count="17">
+<div id="146cf8e7" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> tp_comm_bytes_per_layer(cfg: TrainingConfig, microbatch: <span class="bu">int</span>, tp: <span class="bu">int</span>, scalar_bytes: <span class="bu">int</span> <span class="op">=</span> <span class="dv">2</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Estimate per-device tensor-parallel traffic for one layer's fwd+bwd.</span></span>
@@ -1355,7 +1355,7 @@ Figure&nbsp;6.3: When do full parameters exist on a ZeRO-3 rank? One block’s l
 <span id="cb24-23"><a href="#cb24-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="dv">4</span> <span class="op">*</span> <span class="dv">2</span> <span class="op">*</span> (tp <span class="op">-</span> <span class="dv">1</span>) <span class="op">/</span> tp <span class="op">*</span> payload</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Price an 8-way split of the 7B model:</p>
-<div id="c9c41bd3" class="cell" data-execution_count="18">
+<div id="21cd470c" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>per_layer <span class="op">=</span> tp_comm_bytes_per_layer(LLAMA_7B, <span class="dv">1</span>, <span class="dv">8</span>)</span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"tp=8 on the 7B: </span><span class="sc">{</span>per_layer <span class="op">/</span> GIB<span class="sc">:.3f}</span><span class="ss"> GiB/layer/microbatch, "</span></span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>per_layer <span class="op">*</span> LLAMA_7B<span class="sc">.</span>n_layers <span class="op">/</span> GIB<span class="sc">:.1f}</span><span class="ss"> GiB per microbatch across 32 layers"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1369,7 +1369,7 @@ Figure&nbsp;6.3: When do full parameters exist on a ZeRO-3 rank? One block’s l
 f_{\text{bubble}} = \frac{S - 1}{m + S - 1},
 \tag{6.3}</span></span></p>
 <p>the fraction of each device’s time spent waiting <span class="citation" data-cites="huang2019gpipe">(<a href="../references.html#ref-huang2019gpipe" role="doc-biblioref">Huang et al. 2019</a>)</span>. Rather than trust the formula, we simulate the schedule that production systems actually run — one-forward-one-backward, or 1F1B <span class="citation" data-cites="narayanan2021efficient">(<a href="../references.html#ref-narayanan2021efficient" role="doc-biblioref">Narayanan et al. 2021</a>)</span>, which interleaves each microbatch’s backward as early as dependencies allow to bound how many activations a stage holds. First, the order of operations each stage executes:</p>
-<div id="331b24a6" class="cell" data-execution_count="19">
+<div id="5429a265" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> one_f1b_order(stage: <span class="bu">int</span>, stages: <span class="bu">int</span>, microbatches: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">int</span>]]:</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the (kind, microbatch) sequence a 1F1B stage executes.</span></span>
@@ -1399,7 +1399,7 @@ f_{\text{bubble}} = \frac{S - 1}{m + S - 1},
 <span id="cb27-27"><a href="#cb27-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ops</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Then a small discrete-event simulator: an operation starts when its stage is free <em>and</em> its dependency has finished — a forward needs the previous stage’s forward of the same microbatch, a backward needs the next stage’s backward plus its own forward.</p>
-<div id="48dc2a4a" class="cell" data-execution_count="20">
+<div id="1b375481" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> simulate_pipeline(</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    stages: <span class="bu">int</span>, microbatches: <span class="bu">int</span>, forward_time: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>, backward_time: <span class="bu">float</span> <span class="op">=</span> <span class="fl">2.0</span></span>
@@ -1458,7 +1458,7 @@ f_{\text{bubble}} = \frac{S - 1}{m + S - 1},
 <span id="cb28-56"><a href="#cb28-56" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> events, makespan, <span class="fl">1.0</span> <span class="op">-</span> busy <span class="op">/</span> makespan</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the check — the simulator measures idleness from its own timeline, the formula predicts it:</p>
-<div id="641f31a7" class="cell" data-execution_count="21">
+<div id="bf18ae25" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> pipeline_bubble_fraction(stages: <span class="bu">int</span>, microbatches: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Closed-form 1F1B fill-and-drain bubble fraction for balanced stages."""</span></span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (stages <span class="op">-</span> <span class="dv">1</span>) <span class="op">/</span> (microbatches <span class="op">+</span> stages <span class="op">-</span> <span class="dv">1</span>)</span>
@@ -1511,7 +1511,7 @@ Figure&nbsp;6.4: Why are pipeline devices idle, and where? The simulated 1F1B ti
 <section id="sec-ch06-plan" class="level2" data-number="6.5">
 <h2 data-number="6.5" class="anchored" data-anchor-id="sec-ch06-plan"><span class="header-section-number">6.5</span> Composing a plan: the parallelism simulator</h2>
 <p>We now hold all the parts: state sharding, activation policies, tensor splits, pipeline schedules. A real cluster forces one decision that uses them all — given <span class="math inline">G</span> devices and a model, choose degrees <span class="math inline">t \times S \times n = G</span> for tensor, pipeline, and data parallelism. The axes multiply device count, and they compete: every device granted to tensor or pipeline parallelism is a device not granted to data parallelism, and — less spoken — every data-parallel replica <em>takes microbatches away from the pipeline</em>, because a fixed global batch divided over more replicas leaves fewer microbatches per pipeline to amortize the bubble. Composition is where the arithmetic earns its keep, so we make it a function.</p>
-<div id="fb019176" class="cell" data-execution_count="23">
+<div id="432588ed" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> evaluate_plan(</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    cfg: TrainingConfig, tp: <span class="bu">int</span>, pp: <span class="bu">int</span>, dp: <span class="bu">int</span>, <span class="op">*</span>,</span>
@@ -1567,7 +1567,7 @@ Figure&nbsp;6.4: Why are pipeline devices idle, and where? The simulated 1F1B ti
 <span id="cb32-53"><a href="#cb32-53" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A companion enumerates the legal factorizations — tensor degree bounded by the node, pipeline degree dividing the layer count, data degree dividing the batch — and prints the sieve as a table:</p>
-<div id="8d830818" class="cell" data-execution_count="24">
+<div id="6f44503d" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plan_table(cfg: TrainingConfig, devices: <span class="bu">int</span>, global_batch: <span class="bu">int</span>, <span class="op">**</span>kwargs) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">dict</span>]:</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Evaluate and print every legal (tp, pp, dp) layout for a cluster.</span></span>
@@ -1604,7 +1604,7 @@ Figure&nbsp;6.4: Why are pipeline devices idle, and where? The simulated 1F1B ti
 <span id="cb33-34"><a href="#cb33-34" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>First, our 7B model on a single 8-device node:</p>
-<div id="0812cdad" class="cell" data-execution_count="25">
+<div id="1bb4d69a" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>plans_7b <span class="op">=</span> plan_table(LLAMA_7B, devices<span class="op">=</span><span class="dv">8</span>, global_batch<span class="op">=</span><span class="dv">64</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>plan             state   act  total fits  bubble  DP-comm  TP-comm  PP-comm
@@ -1621,7 +1621,7 @@ tp=8 pp=1 dp=1    12.6   0.2   12.7  yes   0.0%     0.0    448.0     0.0</code><
 </div>
 </div>
 <p>At 7B on eight devices, <em>everything</em> fits — and the table says why the boring plan wins. Pure data parallelism (<code>tp=1 pp=1 dp=8</code>) needs 36 GiB per device and moves 22 GiB of gradients per step, all of it overlappable behind backward. Every tensor-parallel alternative buys memory we do not need with traffic we cannot afford — 448 GiB per device per step at <code>tp=8</code>, twenty times the data-parallel bill, on the critical path. The right answer at this scale is a sentence: shard the optimizer, replicate the rest. Now watch the same sieve at 70B on 64 devices:</p>
-<div id="6b123ef1" class="cell" data-execution_count="26">
+<div id="2268b302" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>plans_70b <span class="op">=</span> plan_table(LLAMA_70B, devices<span class="op">=</span><span class="dv">64</span>, global_batch<span class="op">=</span><span class="dv">128</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>plan             state   act  total fits  bubble  DP-comm  TP-comm  PP-comm
@@ -1645,7 +1645,7 @@ tp=8 pp=8 dp=1    16.4   0.8   17.2  yes   5.2%     0.0    560.0    16.0</code><
 </div>
 <p>The top of the table is a graveyard. One- and two-way model sharding fails outright — 70.6B parameters at 16 bytes cannot reach 80 GiB with ZeRO-1 sharding the rest — and four-way survives only in its tensor-parallel form (<code>tp=4 pp=1 dp=16</code>), at 79.5 of 80 GiB, a fit that one allocator hiccup erases. Model parallelism has stopped being optional. Among the real survivors the trade is legible: <code>tp=1 pp=8 dp=8</code> fits at 51 GiB with no tensor traffic but a 30% bubble (its 8 replicas leave each pipeline only 16 microbatches); <code>tp=8 pp=2 dp=4</code> runs a 3% bubble but pays 560 GiB of within-node collective traffic; <code>tp=8 pp=1 dp=8</code> deletes the bubble entirely and lets ZeRO absorb the rest. Production Megatron-style recipes for this scale sit exactly in that corner — tensor parallel to the node width, a shallow pipeline, data parallel for the remainder <span class="citation" data-cites="narayanan2021efficient">(<a href="../references.html#ref-narayanan2021efficient" role="doc-biblioref">Narayanan et al. 2021</a>)</span> — and now we can say why in numbers rather than folklore. Raising <code>zero_stage</code> or the global batch in the call above shifts the frontier; the exercises push on both knobs.</p>
 <p>Two more axes exist, and at this depth we price rather than build them. <strong>Context parallelism</strong> shards the <em>sequence</em> — for the million-token training runs of <a href="03-attention-position-long-context.html" class="quarto-xref"><span>Chapter 3</span></a>, no single device can hold even one sequence’s activations — circulating key/value blocks around a ring <span class="citation" data-cites="liu2023ring">(<a href="../references.html#ref-liu2023ring" role="doc-biblioref">Liu et al. 2023</a>)</span> or transposing sequence shards into head shards with all-to-alls <span class="citation" data-cites="jacobs2023deepspeed">(<a href="../references.html#ref-jacobs2023deepspeed" role="doc-biblioref">Jacobs et al. 2023</a>)</span>. <strong>Expert parallelism</strong> places different MoE experts (<a href="04-moe-efficient-architectures.html" class="quarto-xref"><span>Chapter 4</span></a>) on different devices, turning routing into a token-shuffling all-to-all in each direction, with a payload we can price in one line:</p>
-<div id="0af7923e" class="cell" data-execution_count="27">
+<div id="dfcf7271" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> expert_dispatch_bytes(</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    tokens: <span class="bu">int</span>, d_model: <span class="bu">int</span>, top_k: <span class="bu">int</span>, scalar_bytes: <span class="bu">int</span> <span class="op">=</span> <span class="dv">2</span>, off_device_fraction: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.875</span></span>
@@ -1671,7 +1671,7 @@ tp=8 pp=8 dp=1    16.4   0.8   17.2  yes   5.2%     0.0    560.0    16.0</code><
 <span id="cb38-23"><a href="#cb38-23" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="dv">2</span> <span class="op">*</span> tokens <span class="op">*</span> d_model <span class="op">*</span> top_k <span class="op">*</span> scalar_bytes <span class="op">*</span> off_device_fraction</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>One worked number makes the pressure concrete:</p>
-<div id="e280fbd2" class="cell" data-execution_count="28">
+<div id="819ae071" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>payload <span class="op">=</span> expert_dispatch_bytes(tokens<span class="op">=</span><span class="dv">8</span> <span class="op">*</span> <span class="dv">8192</span>, d_model<span class="op">=</span><span class="dv">4096</span>, top_k<span class="op">=</span><span class="dv">8</span>)</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"MoE dispatch+combine, 8 sequences of 8K tokens, top-8: </span><span class="sc">{</span>payload <span class="op">/</span> GIB<span class="sc">:.1f}</span><span class="ss"> GiB per layer per step"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1701,7 +1701,7 @@ tp=8 pp=8 dp=1    16.4   0.8   17.2  yes   5.2%     0.0    560.0    16.0</code><
 \tag{6.4}</span></span></p>
 <p>where <span class="math inline">q</span> is observed tokens per second, <span class="math inline">F_{\text{token}}</span> is the model’s FLOPs per trained token, <span class="math inline">G</span> is device count, and <span class="math inline">F_{\text{peak}}</span> is one device’s peak FLOP rate <span class="citation" data-cites="chowdhery2023palm">(<a href="../references.html#ref-chowdhery2023palm" role="doc-biblioref"><span class="nocase">Chowdhery et al.</span> 2023</a>)</span>. The numerator counts only <em>useful</em> work — recomputation from checkpointing does not count, which is the difference between MFU and its sibling HFU (hardware FLOPs utilization, which counts everything executed; checkpointing raises HFU while leaving MFU flat, so quoting HFU flatters). For a dense Transformer, <span class="math inline">F_{\text{token}} \approx 6N</span> for <span class="math inline">N</span> parameters — <span class="math inline">{2}N</span> in the forward pass and <span class="math inline">{4}N</span> in backward, the accounting from <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a>.</p>
 <p>Every term of <a href="#eq-ch06-mfu" class="quarto-xref">Equation&nbsp;<span>6.4</span></a> is measurable, so we measure them all — at toy scale, on this machine’s CPU, with the honesty that implies. First the denominator. Vendor peak numbers are marketing-adjacent; a <em>measured</em> roofline is one matmul away:</p>
-<div id="37a59eb0" class="cell" data-execution_count="29">
+<div id="8868229e" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> measured_matmul_flops(n: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1024</span>, repeats: <span class="bu">int</span> <span class="op">=</span> <span class="dv">8</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Measure this machine's achieved matmul FLOP rate.</span></span>
@@ -1728,15 +1728,15 @@ tp=8 pp=8 dp=1    16.4   0.8   17.2  yes   5.2%     0.0    560.0    16.0</code><
 <span id="cb41-24"><a href="#cb41-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="dv">2</span> <span class="op">*</span> n<span class="op">**</span><span class="dv">3</span> <span class="op">*</span> repeats <span class="op">/</span> (time.perf_counter() <span class="op">-</span> start)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run it and keep the number — it is the ceiling everything below gets judged against:</p>
-<div id="b4af2256" class="cell" data-execution_count="30">
+<div id="b6d93c93" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>roofline <span class="op">=</span> measured_matmul_flops()</span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"measured matmul roofline on this CPU: </span><span class="sc">{</span>roofline <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.0f}</span><span class="ss"> GFLOP/s"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>measured matmul roofline on this CPU: 161 GFLOP/s</code></pre>
+<pre><code>measured matmul roofline on this CPU: 187 GFLOP/s</code></pre>
 </div>
 </div>
 <p>Now the numerator: a real training loop on the <a href="02-transformer-first-principles.html" class="quarto-xref"><span>Chapter 2</span></a> <code>TinyGPT</code> from earlier, timed, with its per-token FLOPs taken from Chapter 2’s own accounting function rather than assumed:</p>
-<div id="6d3b2f67" class="cell" data-execution_count="31">
+<div id="9cc274d1" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>optimizer <span class="op">=</span> torch.optim.AdamW(tiny.parameters(), lr<span class="op">=</span><span class="fl">3e-4</span>)</span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>batch <span class="op">=</span> torch.randint(tiny_config.vocab_size, (<span class="dv">8</span>, tiny_config.block_size))</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>step_targets <span class="op">=</span> torch.roll(batch, <span class="op">-</span><span class="dv">1</span>, dims<span class="op">=</span><span class="dv">1</span>)</span>
@@ -1758,8 +1758,8 @@ tp=8 pp=8 dp=1    16.4   0.8   17.2  yes   5.2%     0.0    560.0    16.0</code><
 <span id="cb44-19"><a href="#cb44-19" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"tokens/s </span><span class="sc">{</span>tokens_per_s<span class="sc">:8,.0f}</span><span class="ss">   achieved </span><span class="sc">{</span>tokens_per_s <span class="op">*</span> train_flops_per_token <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:6.1f}</span><span class="ss"> GFLOP/s"</span>)</span>
 <span id="cb44-20"><a href="#cb44-20" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"toy MFU against the measured roofline: </span><span class="sc">{</span>mfu<span class="sc">:.1%}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>tokens/s   12,424   achieved   90.4 GFLOP/s
-toy MFU against the measured roofline: 56.1%</code></pre>
+<pre><code>tokens/s   13,244   achieved   96.3 GFLOP/s
+toy MFU against the measured roofline: 51.6%</code></pre>
 </div>
 </div>
 <p>The absolute numbers are this laptop’s and will differ on yours; the <em>shape</em> of the result is the lesson. Even a clean, single-device toy loop — no communication, no bubble, no stragglers — converts only a modest fraction of its own measured matmul rate into model FLOPs, because small kernels, Python overhead, optimizer updates, and everything that is not a matmul dilute the mix. Frontier systems fight for every point of this ratio at cluster scale: 40% is a normal victory for large dense runs, and MegaScale’s 55.2% for a 175B model on 12,288 GPUs was a publishable result <span class="citation" data-cites="jiang2024megascale">(<a href="../references.html#ref-jiang2024megascale" role="doc-biblioref"><span class="nocase">Jiang et al.</span> 2024</a>)</span>. When your measured MFU is 22% and last week it was 41%, <a href="#eq-ch06-mfu" class="quarto-xref">Equation&nbsp;<span>6.4</span></a> is the differential diagnosis: <span class="math inline">q</span> fell (stragglers, data stalls), or you changed <span class="math inline">F_{\text{token}}</span> accounting (recomputation sneaked into the numerator), or the fleet grew without the throughput following (bubble, collectives). The formula does not fix anything; it tells you which section of this chapter to reread.</p>
@@ -1770,7 +1770,7 @@ toy MFU against the measured roofline: 56.1%</code></pre>
 <p><strong>Muon</strong> treats a weight <em>matrix</em> as a matrix, not a bag of scalars. Adam rescales each coordinate independently; Muon takes the momentum matrix and approximately <em>orthogonalizes</em> it (a few Newton–Schulz iterations that push all singular values toward one) before applying it as the update <span class="citation" data-cites="jordan2024muon">(<a href="../references.html#ref-jordan2024muon" role="doc-biblioref">Jordan et al. 2024</a>)</span>. The intuition: a gradient matrix concentrated in one dominant direction updates a few directions hard and starves the rest; the orthogonalized update advances <em>all</em> directions of the momentum’s row/column space at a uniform rate, which in practice lets hidden matrices take larger stable steps. The systems dividend is in our ledger: Muon’s state is one momentum matrix where Adam keeps two moment estimates, so the 8-byte “Adam moments” line in <code>state_ledger</code> becomes 4 for every matrix it covers, before any quantization (embeddings and vectors stay on Adam). Speedrun-style testbeds — small fixed-data GPT training races — are where such claims get their first honest paired-baseline test, and where Muon first beat tuned AdamW; frontier adoption followed with recipe-level changes (update scaling, clipping) that remain optimizer-specific.</p>
 <p><strong>muP</strong> — maximal update parameterization — answers a different scaling question: why does the best learning rate <em>change</em> when you widen the model, forcing a fresh sweep at every scale? Standard parameterizations let per-layer update magnitudes drift with width; muP rescales initialization variances, learning rates, and the output logits by explicit powers of width so that feature-learning dynamics stay width-invariant <span class="citation" data-cites="yang2022tensor">(<a href="../references.html#ref-yang2022tensor" role="doc-biblioref">Yang et al. 2022</a>)</span>. The payoff is <em>hyperparameter transfer</em>: tune the learning rate on a cheap proxy model, then reuse it at target width — turning the <a href="05-scaling-laws-pretraining-data.html" class="quarto-xref"><span>Chapter 5</span></a> proxy ladder from a hopeful extrapolation into a designed one. Transfer holds within an architecture family and optimizer regime, not across arbitrary changes; teams verify it on one intermediate width before trusting it at the target.</p>
 <p><strong>WSD</strong> — warmup-stable-decay — restructures the learning-rate schedule around an operational fact: cosine decay bakes the total token budget into every step’s rate, so a run cannot honestly stop early or late — the checkpoint at 60% of a cosine schedule is <em>not</em> the model a 60%-budget cosine would have produced. WSD instead holds a long flat plateau after warmup and attaches a short sharp decay at the end <span class="citation" data-cites="hu2024minicpm">(<a href="../references.html#ref-hu2024minicpm" role="doc-biblioref"><span class="nocase">Hu et al.</span> 2024</a>)</span>. The plateau checkpoint is budget-agnostic: branch a decay off it at any point and you get a well-trained model for that budget, keep the trunk running and you preserve the option of more. For frontier teams whose token budgets move with data availability and mid-run evals, that option is worth real money. The schedule is ten lines:</p>
-<div id="76519c57" class="cell" data-execution_count="32">
+<div id="dec8e250" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> wsd_multiplier(</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>    step: <span class="bu">int</span>, total_steps: <span class="bu">int</span>, warmup_fraction: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.05</span>, decay_fraction: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.15</span></span>
@@ -1801,7 +1801,7 @@ toy MFU against the measured roofline: 56.1%</code></pre>
 <span id="cb46-28"><a href="#cb46-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">max</span>(<span class="fl">0.0</span>, (total_steps <span class="op">-</span> step <span class="op">-</span> <span class="dv">1</span>) <span class="op">/</span> decay)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Sample it at five points of a thousand-step run — ramp, plateau, decay:</p>
-<div id="6f37a833" class="cell" data-execution_count="33">
+<div id="42c5afcb" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>([<span class="bu">round</span>(wsd_multiplier(step, <span class="dv">1000</span>), <span class="dv">2</span>) <span class="cf">for</span> step <span class="kw">in</span> (<span class="dv">0</span>, <span class="dv">24</span>, <span class="dv">500</span>, <span class="dv">900</span>, <span class="dv">999</span>)])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[0.02, 0.5, 1.0, 0.66, 0.0]</code></pre>
@@ -1858,7 +1858,7 @@ w(I) = \frac{C_s}{I} + \frac{I}{2M} + \frac{R}{M},
 I^{*} = \sqrt{2\,C_s\,M}.
 \tag{6.6}</span></span></p>
 <p>Every input is something we can now compute. The checkpoint payload comes from our own ledger — weights, master weights, and moments; gradients need not persist. MTBF comes from the published failure data, scaled to cluster size: failures arrive per-device, so a cluster’s MTBF is the per-device MTBF divided by device count.</p>
-<div id="5cbec171" class="cell" data-execution_count="35">
+<div id="954a7c5a" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> checkpoint_waste(interval_s: <span class="bu">float</span>, save_s: <span class="bu">float</span>, mtbf_s: <span class="bu">float</span>, restart_s: <span class="bu">float</span> <span class="op">=</span> <span class="fl">300.0</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the fraction of cluster time wasted by a checkpoint policy.</span></span>
@@ -1887,7 +1887,7 @@ I^{*} = \sqrt{2\,C_s\,M}.
 <span id="cb50-26"><a href="#cb50-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> math.sqrt(<span class="dv">2</span> <span class="op">*</span> save_s <span class="op">*</span> mtbf_s)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Feed it inputs computed from our own artifacts rather than assumed:</p>
-<div id="fce0ae24" class="cell" data-execution_count="36">
+<div id="a57ace26" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a>ledger <span class="op">=</span> state_ledger(P_7B, <span class="st">"mixed"</span>)</span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>payload <span class="op">=</span> ledger[<span class="st">"total"</span>] <span class="op">-</span> ledger[<span class="st">"gradients"</span>]</span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>save_seconds <span class="op">=</span> payload <span class="op">/</span> (<span class="dv">3</span> <span class="op">*</span> GIB)  <span class="co"># illustrative 3 GiB/s effective write path</span></span>
@@ -1899,7 +1899,7 @@ I^{*} = \sqrt{2\,C_s\,M}.
 </div>
 </div>
 <p>Eighty-eight gibibytes per save, thirty seconds of stall, and a per-device MTBF of about six device-years — a number that sounds comfortable until you multiply by a fleet. Now the policy, computed for a 1,024-device version of our 7B run and for a Llama-scale 16,384-device job:</p>
-<div id="b442d9d7" class="cell" data-execution_count="37">
+<div id="a6f157a9" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> devices <span class="kw">in</span> (<span class="dv">1_024</span>, <span class="dv">16_384</span>):</span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>    mtbf <span class="op">=</span> device_mtbf <span class="op">/</span> devices</span>
 <span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a>    best <span class="op">=</span> young_interval(save_seconds, mtbf)</span>
@@ -1955,7 +1955,7 @@ H = \frac{6ND}{F_{\text{peak}}\, u \cdot 3600},
 T_{\text{days}} = \frac{H}{24\,G},
 \tag{6.7}</span></span></p>
 <p>so buying more devices buys <em>calendar time</em>, never fewer device-hours; only <span class="math inline">u</span> — the MFU-times-goodput product this chapter has been building — changes what the compute costs. Money is device-hours times a price; power is fleet size times per-device draw times the facility overhead factor PUE (total facility power over IT power, ~1.1–1.4). As code:</p>
-<div id="d653d145" class="cell" data-execution_count="39">
+<div id="2e00c68d" class="cell" data-execution_count="39">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb56"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> run_economics(</span>
 <span id="cb56-3"><a href="#cb56-3" aria-hidden="true" tabindex="-1"></a>    params: <span class="bu">float</span>, tokens: <span class="bu">float</span>, devices: <span class="bu">int</span>, <span class="op">*</span>,</span>
@@ -1997,7 +1997,7 @@ T_{\text{days}} = \frac{H}{24\,G},
 <span id="cb56-39"><a href="#cb56-39" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We evaluate it for three named-scale runs — parameter and token budgets shaped like Llama 2 7B, Llama 3 70B, and Llama 3 405B, with fleet sizes in their reported ranges:</p>
-<div id="ab49ceec" class="cell" data-execution_count="40">
+<div id="d3341987" class="cell" data-execution_count="40">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb57"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a>runs <span class="op">=</span> [</span>
 <span id="cb57-2"><a href="#cb57-2" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"7B on 2T tokens"</span>, <span class="fl">6.74e9</span>, <span class="fl">2.0e12</span>, <span class="dv">1_024</span>),</span>
 <span id="cb57-3"><a href="#cb57-3" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"70B on 15T tokens"</span>, <span class="fl">70.6e9</span>, <span class="fl">15.0e12</span>, <span class="dv">16_384</span>),</span>
@@ -2022,7 +2022,7 @@ T_{\text{days}} = \frac{H}{24\,G},
 \operatorname{CRF} = \frac{r\,(1+r)^{L}}{(1+r)^{L} - 1},
 \tag{6.8}</span></span></p>
 <p>for discount rate <span class="math inline">r</span> and life <span class="math inline">L</span> years: annualized cost equals CRF times the capital outlay, and the effective hourly rate divides by the hours you actually <em>use</em>.</p>
-<div id="d967b5f1" class="cell" data-execution_count="41">
+<div id="1029de8b" class="cell" data-execution_count="41">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb59"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> capital_recovery_factor(rate: <span class="bu">float</span>, years: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb59-3"><a href="#cb59-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the annuity factor that annualizes a capital purchase.</span></span>
@@ -2043,7 +2043,7 @@ T_{\text{days}} = \frac{H}{24\,G},
 <span id="cb59-18"><a href="#cb59-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rate <span class="op">*</span> growth <span class="op">/</span> (growth <span class="op">-</span> <span class="dv">1</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>At a 12% discount rate over a four-year life, with an illustrative all-in system price of $45k per installed device and energy at eight cents per kWh:</p>
-<div id="cadaaae6" class="cell" data-execution_count="42">
+<div id="5dd8b030" class="cell" data-execution_count="42">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb60"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb60-1"><a href="#cb60-1" aria-hidden="true" tabindex="-1"></a>crf <span class="op">=</span> capital_recovery_factor(<span class="fl">0.12</span>, <span class="dv">4</span>)</span>
 <span id="cb60-2"><a href="#cb60-2" aria-hidden="true" tabindex="-1"></a>system_cost, energy_at_full <span class="op">=</span> <span class="fl">45_000.0</span>, <span class="fl">1.4</span> <span class="op">*</span> <span class="fl">1.2</span> <span class="op">*</span> <span class="dv">8_766</span> <span class="op">*</span> <span class="fl">0.08</span></span>
 <span id="cb60-3"><a href="#cb60-3" aria-hidden="true" tabindex="-1"></a>annualized <span class="op">=</span> crf <span class="op">*</span> system_cost</span>

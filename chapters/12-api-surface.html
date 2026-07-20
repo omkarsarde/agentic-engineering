@@ -841,7 +841,7 @@ window.Quarto = {
 <h2 data-number="12.1" class="anchored" data-anchor-id="sec-ch12-wire"><span class="header-section-number">12.1</span> A request and a response on the wire</h2>
 <p>A chat-completions request is, underneath every SDK, an HTTP <code>POST</code> to <code>/v1/chat/completions</code>. Its body names a model and carries an ordered <code>messages</code> list; it may also carry sampling controls, an output schema, and tool declarations. The response carries one or more choices, each with an assistant message and a <strong>finish reason</strong>, plus a usage block that accounts for tokens. We use this OpenAI-compatible shape as a teaching language because local servers implement it and its five load-bearing ideas transfer to every provider: ordered input, typed output parts, correlation identifiers, a terminal reason, and usage. “Compatible” does not mean identical; provider deltas live in the dated section at the end.</p>
 <p>We start the artifact with <code>chat()</code>. It builds the JSON body, sends it through an injected <em>transport</em>, and extracts exactly the fields a caller must inspect. The transport seam is the whole trick that keeps this chapter offline: the production transport is <code>httpx.post</code>; the teaching transport is a scripted stub we can read.</p>
-<div id="51a5c31e" class="cell" data-execution_count="1">
+<div id="3b95d3db" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -932,7 +932,7 @@ window.Quarto = {
 <span id="cb1-88"><a href="#cb1-88" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the teaching transport. It is deliberately not a language model and makes no attempt to be one: it holds a queue of assistant turns and plays them back in order, wrapping each in the same wire envelope a real server returns. Because its script is right here in the source, every output we print is one you can trace to a line you can read. That is exactly the property a real model denies us, and exactly the property that makes it a good place to learn the boundary.</p>
-<div id="95f90599" class="cell" data-execution_count="2">
+<div id="88ba4b5c" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ScriptedModel:</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A deterministic, offline stand-in for a chat-completions server.</span></span>
@@ -978,7 +978,7 @@ window.Quarto = {
 <span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a>        }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>With both halves in hand we can watch one round trip. We script a single terse answer, send a two-message conversation, and print both the body that left on the wire and the dict the caller reads back.</p>
-<div id="742f6065" class="cell" data-execution_count="3">
+<div id="15605feb" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>stub <span class="op">=</span> ScriptedModel([</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    ({<span class="st">"role"</span>: <span class="st">"assistant"</span>, <span class="st">"content"</span>: <span class="st">"Order O-0042 shipped on the 3rd."</span>}, <span class="st">"stop"</span>),</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>])</span>
@@ -1028,7 +1028,7 @@ RESPONSE the caller reads back:
 </div>
 </div>
 <p>Read the two payloads against each other. The request is an ordered list of typed turns plus a decoding policy — nothing is hidden in prose. The response is not a string: it is a message, a <code>finish_reason</code> of <code>stop</code> (the server saw one of its terminal conditions), a <code>usage</code> block we can reconcile against our own token counting, and a <code>request_id</code> we can log. The stub let us see the shape offline; against a real server the <em>same</em> <code>chat()</code> call returns the <em>same</em> fields, which is the whole point — the boundary is the contract, not the server. The cell below issues that call against any local OpenAI-compatible endpoint. It needs a network and a served model, so it does not run in the book; the block after it shows a representative response.</p>
-<div id="78ea054d" class="cell" data-execution_count="4">
+<div id="a9c3c9b8" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>real <span class="op">=</span> chat(<span class="st">"http://localhost:8000"</span>, <span class="st">"your-model-id"</span>, messages)</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(real[<span class="st">"finish_reason"</span>], real[<span class="st">"usage"</span>])</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(real[<span class="st">"message"</span>][<span class="st">"content"</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1042,7 +1042,7 @@ Order O-0042 shipped on July 3rd and is out for delivery.</code></pre>
 <section id="sec-ch12-messages" class="level2" data-number="12.2">
 <h2 data-number="12.2" class="anchored" data-anchor-id="sec-ch12-messages"><span class="header-section-number">12.2</span> Messages compile into tokens</h2>
 <p>An API message is structured input. Its <code>role</code> says who produced the turn; its <code>content</code> may be a string, <code>null</code>, or a list of typed blocks. Four roles carry the teaching shape: <code>system</code> holds caller-controlled operating instructions, <code>user</code> holds user input, <code>assistant</code> preserves model output including tool-call proposals, and <code>tool</code> carries an application-produced result correlated to one proposal. The trap is assuming <code>message["content"]</code> is always a string. It is not, and the two turns below prove it: an assistant turn can carry <code>content: null</code> beside a <code>tool_calls</code> array, and a multimodal user turn can carry a list of parts.</p>
-<div id="3ac28338" class="cell" data-execution_count="5">
+<div id="22d5fcda" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>assistant_tool_turn <span class="op">=</span> {</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"role"</span>: <span class="st">"assistant"</span>,</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"content"</span>: <span class="va">None</span>,</span>
@@ -1084,7 +1084,7 @@ first content part type: text</code></pre>
 </div>
 <p>Walking typed parts is more robust than grabbing “the first string that looks like an answer.” Notice too that the function <code>arguments</code> arrive as a JSON <em>string</em>, not a parsed object — a detail that bites in <a href="#sec-ch12-tool-loop" class="quarto-xref"><span>Section 12.8</span></a>.</p>
 <p>Roles are not words the network reads by magic. Before inference the server applies the checkpoint’s <strong>chat template</strong>: a tokenizer-owned program that renders messages and tool metadata into one token sequence with role markers. Different checkpoints use different markers, whitespace, and order, so the <em>same</em> message list becomes <em>different</em> prompt tokens under different templates. This is why the template is part of the model’s application binary interface, not plumbing. We make the point with a toy renderer and a toy token counter — both stand-ins for the real <code>apply_chat_template</code>, but enough to show the effect.</p>
-<div id="3544defa" class="cell" data-execution_count="6">
+<div id="36866b7e" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> render_chat_template(messages: <span class="bu">list</span>[Message], template: <span class="bu">dict</span>[<span class="bu">str</span>, Any]) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Render messages into one prompt string using a template's role markers.</span></span>
@@ -1115,7 +1115,7 @@ first content part type: text</code></pre>
 <span id="cb9-28"><a href="#cb9-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">len</span>(re.findall(<span class="vs">r"</span><span class="dv">\w</span><span class="op">+</span><span class="cf">|</span><span class="pp">[^</span><span class="dv">\w\s</span><span class="pp">]</span><span class="vs">"</span>, text))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We render one conversation through two templates and count. The messages are byte-for-byte identical; only the markers differ.</p>
-<div id="5edef069" class="cell" data-execution_count="7">
+<div id="e364076e" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>convo <span class="op">=</span> [</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"role"</span>: <span class="st">"system"</span>, <span class="st">"content"</span>: <span class="st">"Be terse."</span>},</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: <span class="st">"Where is O-0042?"</span>},</span>
@@ -1140,7 +1140,7 @@ plain          -&gt; 15 tokens</code></pre>
 </div>
 <p>Identical messages, different token counts. That is why token budgeting must use the model’s own template and tokenizer, and why you reconcile your local count against the server’s reported <code>prompt_tokens</code>: a delta usually means a template mismatch, server-added tool instructions, or a different tokenizer revision — none of which a character count would ever surface. In production the count comes from the model’s own tokenizer via <code>tokenizer.apply_chat_template(messages, tools=..., add_generation_prompt=True)</code>, which the offline demo above stands in for; the reconciliation discipline is identical.</p>
 <p>Some templates also support <strong>assistant prefilling</strong>: the caller supplies a partial final assistant turn and the model continues it. It steers a prefix, but it is not a portable structured-output guarantee — a template may or may not distinguish “start a new assistant message” from “continue the last one,” and a hosted surface may reject it. Our stub simply continues the seeded prefix so the mechanism is visible:</p>
-<div id="76c49b37" class="cell" data-execution_count="8">
+<div id="85d89253" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>prefill_messages <span class="op">=</span> [</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: <span class="st">"Give the refund decision as JSON."</span>},</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"role"</span>: <span class="st">"assistant"</span>, <span class="st">"content"</span>: <span class="st">'{"action": "'</span>},  <span class="co"># seed the prefix</span></span>
@@ -1161,7 +1161,7 @@ plain          -&gt; 15 tokens</code></pre>
 <p>The caller does not merely send prose; it sends a decoding policy, and that policy belongs in versioned request configuration, not hidden in a prompt. <a href="01-operational-on-ramp.html" class="quarto-xref"><span>Chapter 1</span></a> and <a href="09-inference-behavior.html" class="quarto-xref"><span>Chapter 9</span></a> derived the policy; here we record its API consequences. For logits <span class="math inline">z_i</span> and temperature <span class="math inline">T&gt;0</span>, the next-token distribution is <span id="eq-ch12-softmax"><span class="math display">
 p_i(T)=\frac{\exp(z_i/T)}{\sum_j \exp(z_j/T)}.
 \tag{12.1}</span></span> Smaller <span class="math inline">T</span> concentrates mass; larger <span class="math inline">T</span> spreads it. <strong>Nucleus sampling</strong> then keeps the smallest probability-ranked prefix whose cumulative mass reaches <code>top_p</code> and renormalizes over it. The consequence people misread is that <code>top_p=0.7</code> does not keep 70 percent of the vocabulary — it keeps however many tokens are needed to <em>reach</em> 0.7 of the mass, which depends entirely on the distribution’s shape.</p>
-<div id="6e62d2d7" class="cell" data-execution_count="9">
+<div id="24b55924" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> nucleus(probs: <span class="bu">list</span>[<span class="bu">float</span>], top_p: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">int</span>]:</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the token indices nucleus (top_p) sampling keeps, most likely first.</span></span>
@@ -1188,7 +1188,7 @@ p_i(T)=\frac{\exp(z_i/T)}{\sum_j \exp(z_j/T)}.
 <span id="cb14-24"><a href="#cb14-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> kept</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We take two distributions over the same vocabulary. One is peaked (the model is confident); one is nearly flat (the model is unsure). The same <code>top_p=0.7</code> cuts them very differently.</p>
-<div id="836eff4a" class="cell" data-execution_count="10">
+<div id="c19764ae" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>peaked <span class="op">=</span> [<span class="fl">0.60</span>, <span class="fl">0.25</span>, <span class="fl">0.10</span>, <span class="fl">0.03</span>, <span class="fl">0.02</span>]</span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>flat <span class="op">=</span> [<span class="dv">1</span> <span class="op">/</span> <span class="dv">12</span>] <span class="op">*</span> <span class="dv">12</span></span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, probs <span class="kw">in</span> ((<span class="st">"peaked"</span>, peaked), (<span class="st">"flat"</span>, flat)):</span>
@@ -1232,7 +1232,7 @@ Figure&nbsp;12.1: Why is top_p not a fixed count? The same top_p=0.7 cut (dashed
 </div>
 </div>
 <p>Two more controls round out the request contract, and both are about <em>stopping</em>, not correctness. A <strong>stop sequence</strong> truncates generation at the first match; it is a string trigger, not a guarantee of a valid object. We can demonstrate the trigger directly:</p>
-<div id="6b9f565c" class="cell" data-execution_count="12">
+<div id="11b94320" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> apply_stop(text: <span class="bu">str</span>, stops: <span class="bu">list</span>[<span class="bu">str</span>]) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Truncate text at the first stop sequence that occurs, if any."""</span></span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    hits <span class="op">=</span> [text.find(s) <span class="cf">for</span> s <span class="kw">in</span> stops <span class="cf">if</span> s <span class="kw">in</span> text]</span>
@@ -1313,7 +1313,7 @@ Figure&nbsp;12.2: What does each guarantee level fail to catch? Every rung admit
 </div>
 </div>
 <p>Level 3 deserves a sentence of mechanism because it is the one people over-trust. A decoding engine compiles the schema into a grammar or state machine and, before each token, masks continuations that cannot lead to a legal output <span class="citation" data-cites="willard2023outlines dong2024xgrammar">(<a href="../references.html#ref-willard2023outlines" role="doc-biblioref">Willard and Louf 2023</a>; <a href="../references.html#ref-dong2024xgrammar" role="doc-biblioref">Dong et al. 2024</a>)</span>. The model still scores the surviving tokens. If both a real id <code>O-0042</code> and a nonexistent <code>O-9042</code> match the string pattern, the grammar permits both — constraint moves validation earlier without turning a language model into a database. Level 4 is different in kind: it runs inside your release boundary, chooses the JSON Schema draft and validator version, checks values against current state, and returns a typed failure when the budget ends. The artifact requests level-3 conformance with a strict schema, then owns level 4 itself.</p>
-<div id="135189cf" class="cell" data-execution_count="13">
+<div id="7cbd3946" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> schema_response_format(name: <span class="bu">str</span>, schema: <span class="bu">dict</span>[<span class="bu">str</span>, Any]) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, Any]:</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Build the OpenAI-compatible strict JSON-Schema request block.</span></span>
@@ -1344,7 +1344,7 @@ Figure&nbsp;12.2: What does each guarantee level fail to catch? Every rung admit
 <span id="cb20-28"><a href="#cb20-28" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>To see the three failure modes as <em>data</em>, we script one stub output per level and print them. These are the exact strings a level-1, level-2, and level-3 surface might emit on a hard ticket — manufactured here so the boundary has something concrete to reject.</p>
-<div id="5efc061e" class="cell" data-execution_count="14">
+<div id="7458b753" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>level_outputs <span class="op">=</span> {</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"1 prompt-only"</span>: <span class="st">'Here is the result: '</span></span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">'{"ticket_id":"T-004","action":"refund","order_id":"O-0004",'</span></span>
@@ -1375,7 +1375,7 @@ level 3 schema:
 <p>Constrained decoding is not free. A JSON Schema is a language and a decoding engine implements only some of it; recursion, references, unions, numeric bounds, and string formats each need compiler support, so a schema valid under Draft 2020-12 can be silently under-enforced by a provider <span class="citation" data-cites="geng2025jsonschemabench">(<a href="../references.html#ref-geng2025jsonschemabench" role="doc-biblioref"><span class="nocase">Geng et al.</span> 2025</a>)</span>. That is the <strong>schema-coverage gap</strong>, and you close it by testing the exact schema against the exact engine at deploy time. But there is a second, subtler cost that shows up even when coverage is perfect. Masking reshapes the distribution. If <span class="math inline">C</span> is the set of tokens still legal after the current prefix, the constrained distribution is <span id="eq-ch12-mask"><span class="math display">
 p_i^{C}=\frac{p_i\,\mathbf{1}[i\in C]}{\sum_j p_j\,\mathbf{1}[j\in C]},
 \tag{12.2}</span></span> where <span class="math inline">p_i</span> is the model’s unconstrained probability for token <span class="math inline">i</span>, the indicator is one only for legal tokens, and the denominator renormalizes the survivors. When the token the model most wanted is illegal — because the schema forbids the free-text reasoning it planned, or because the true answer lies outside the grammar — that mass is not redistributed to a better answer; it is simply diverted. We can measure exactly how much.</p>
-<div id="d08dde65" class="cell" data-execution_count="15">
+<div id="3ffabd41" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> constrained_renormalize(probs: <span class="bu">list</span>[<span class="bu">float</span>], legal: <span class="bu">set</span>[<span class="bu">int</span>]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Apply @eq-ch12-mask: zero illegal tokens and renormalize the survivors.</span></span>
@@ -1403,7 +1403,7 @@ p_i^{C}=\frac{p_i\,\mathbf{1}[i\in C]}{\sum_j p_j\,\mathbf{1}[j\in C]},
 <span id="cb23-25"><a href="#cb23-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="fl">0.0</span> <span class="cf">if</span> intended <span class="kw">in</span> legal <span class="cf">else</span> probs[intended]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Consider the first token after a prompt. The model’s top choice is to start reasoning in prose; a strict grammar requires the object to open with <code>{</code> immediately. We measure the tax in that case and in a benign one where the model’s top choice is already legal.</p>
-<div id="5ebb2d31" class="cell" data-execution_count="16">
+<div id="9bb5b266" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>tokens <span class="op">=</span> [<span class="st">"Here"</span>, <span class="st">"{"</span>, <span class="st">"The"</span>, <span class="st">"Sure"</span>, <span class="st">"Note"</span>]</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>reasoning_first <span class="op">=</span> [<span class="fl">0.45</span>, <span class="fl">0.08</span>, <span class="fl">0.25</span>, <span class="fl">0.12</span>, <span class="fl">0.10</span>]   <span class="co"># model wants to reason first</span></span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>object_first <span class="op">=</span> [<span class="fl">0.10</span>, <span class="fl">0.55</span>, <span class="fl">0.15</span>, <span class="fl">0.10</span>, <span class="fl">0.10</span>]      <span class="co"># model already wants "{"</span></span>
@@ -1454,7 +1454,7 @@ Figure&nbsp;12.3: What does the constraint tax cost when the wanted token is ill
 <section id="sec-ch12-validation" class="level2" data-number="12.6">
 <h2 data-number="12.6" class="anchored" data-anchor-id="sec-ch12-validation"><span class="header-section-number">12.6</span> The validation you own</h2>
 <p>The application boundary has two jobs the model cannot do for it. <strong>Structural validation</strong> checks types, required fields, enum membership, patterns, and ranges. <strong>Semantic validation</strong> checks facts and policy the schema cannot know: whether the order exists, whether the actor may refund it, whether the amount matches the ticket. We build the layer as a bounded loop: parse the first object, gather one specific complaint, feed only that complaint back, and stop after a fixed budget with a typed failure rather than a half-valid dict.</p>
-<div id="155a2901" class="cell" data-execution_count="18">
+<div id="2afb0ed2" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> StructuredOutputFailed(<span class="pp">RuntimeError</span>):</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""No valid application object was obtained within the attempt budget."""</span></span>
@@ -1515,7 +1515,7 @@ Figure&nbsp;12.3: What does the constraint tax cost when the wanted token is ill
 <span id="cb27-58"><a href="#cb27-58" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> semantic_check(value) <span class="cf">if</span> semantic_check <span class="cf">else</span> <span class="va">None</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The loop itself calls the model, checks the candidate, and either accepts, complains and retries, or gives up. Only the model call is retried — parsing an extraction changes no account state, so it is safe to recompute; an <em>effect</em> would not be, which is why <a href="26-production-platform.html" class="quarto-xref"><span>Chapter 26</span></a> owns durable execution.</p>
-<div id="05850adc" class="cell" data-execution_count="19">
+<div id="1e821c52" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> extract(</span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    invoke: Callable[..., <span class="bu">dict</span>[<span class="bu">str</span>, Any]],</span>
@@ -1571,7 +1571,7 @@ Figure&nbsp;12.3: What does the constraint tax cost when the wanted token is ill
 <span id="cb28-53"><a href="#cb28-53" aria-hidden="true" tabindex="-1"></a>    <span class="cf">raise</span> StructuredOutputFailed(<span class="ss">f"no valid object after </span><span class="sc">{</span>max_attempts<span class="sc">}</span><span class="ss"> attempts"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The semantic check is the part the schema cannot express — whether an order actually exists in application state. It is the layer <a href="#sec-ch12-spectrum" class="quarto-xref"><span>Section 12.4</span></a> called level 4.</p>
-<div id="b391a038" class="cell" data-execution_count="20">
+<div id="3557fa74" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>KNOWN_ORDERS <span class="op">=</span> {<span class="ss">f"O-</span><span class="sc">{</span>i<span class="sc">:04d}</span><span class="ss">"</span> <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">51</span>)}</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1588,7 +1588,7 @@ Figure&nbsp;12.3: What does the constraint tax cost when the wanted token is ill
 <span id="cb29-14"><a href="#cb29-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">None</span> <span class="cf">if</span> value[<span class="st">"order_id"</span>] <span class="kw">in</span> KNOWN_ORDERS <span class="cf">else</span> <span class="st">"order_id does not exist"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the payoff the boundary was built for: a real repair trace. We script a stub that first emits the level-2 candidate (a stray <code>note</code> field) and then, after being told exactly what failed, emits a clean object. Watch the complaint route through and the accepted record print.</p>
-<div id="1ee19de4" class="cell" data-execution_count="21">
+<div id="7a11a391" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>repair_stub <span class="op">=</span> ScriptedModel([</span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>    ({<span class="st">"role"</span>: <span class="st">"assistant"</span>, <span class="st">"content"</span>:</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>      <span class="st">'{"ticket_id":"T-011","action":"refund","order_id":"O-0011",'</span></span>
@@ -1644,7 +1644,7 @@ Figure&nbsp;12.4: Where does a bounded repair loop stop trusting model output? E
 </div>
 <p>Repair is not always the right fallback. A syntax slip is locally repairable; an unknown order id may need a fresh state read or a clarification; a refusal should stay a typed refusal, not be bullied through repeated prompts. Treat the complaint class as a routing signal, not an invitation to loop.</p>
 <p>With the loop in hand we can run the small experiment that gives the chapter its one data figure. Fifty synthetic tickets, three guarantee levels with their characteristic flaws injected, and the level-4 loop over the level-2 stream. The failure injection is a visible function, so nothing is hidden.</p>
-<div id="1fe866eb" class="cell" data-execution_count="22">
+<div id="8eac790d" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_tickets(count: <span class="bu">int</span> <span class="op">=</span> <span class="dv">50</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">dict</span>[<span class="bu">str</span>, Any]]:</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Build source-traceable but deliberately messy refund tickets.</span></span>
@@ -1750,7 +1750,7 @@ Figure&nbsp;12.4: Where does a bounded repair loop stop trusting model output? E
 <span id="cb32-103"><a href="#cb32-103" aria-hidden="true" tabindex="-1"></a>        <span class="st">"tokens_per_success"</span>: <span class="bu">sum</span>(e.total_tokens <span class="cf">for</span> e <span class="kw">in</span> extractions) <span class="op">/</span> count,</span>
 <span id="cb32-104"><a href="#cb32-104" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="cd094763" class="cell" data-execution_count="23">
+<div id="0f33f282" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>report <span class="op">=</span> run_validity_experiment()</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> level, rate <span class="kw">in</span> report[<span class="st">"validity"</span>].items():</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"level </span><span class="sc">{</span>level<span class="sc">}</span><span class="ss">: </span><span class="sc">{</span>rate<span class="sc">:.0%}</span><span class="ss"> schema-valid"</span>)</span>
@@ -1804,7 +1804,7 @@ Figure&nbsp;12.5: How do stronger guarantees change validity, and what survives 
 <section id="sec-ch12-schema-design" class="level2" data-number="12.7">
 <h2 data-number="12.7" class="anchored" data-anchor-id="sec-ch12-schema-design"><span class="header-section-number">12.7</span> Designing schemas models can’t misuse</h2>
 <p>A schema is two things at once: a machine contract the validator enforces and context the model reads. Both jobs pull toward the same design rule — make invalid states unrepresentable — and the rule is best shown, not asserted. Take two versions of the refund schema. A loose one uses a free-form <code>decision</code> string and allows extra properties; a strict one uses an enum and forbids them. We feed both the <em>same</em> sloppy candidate and watch them disagree.</p>
-<div id="3919b1f3" class="cell" data-execution_count="25">
+<div id="02f51518" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>loose_schema <span class="op">=</span> {</span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"type"</span>: <span class="st">"object"</span>,</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"properties"</span>: {<span class="st">"decision"</span>: {<span class="st">"type"</span>: <span class="st">"string"</span>}, <span class="st">"amount_cents"</span>: {<span class="st">"type"</span>: <span class="st">"integer"</span>}},</span>
@@ -1837,7 +1837,7 @@ strict schema rejects: 'Refund!!' is not one of ['refund', 'deny', 'escalate']</
 <section id="sec-ch12-tool-loop" class="level2" data-number="12.8">
 <h2 data-number="12.8" class="anchored" data-anchor-id="sec-ch12-tool-loop"><span class="header-section-number">12.8</span> A tool call is a proposal, not an execution</h2>
 <p>A tool declaration tells the model which action <em>shape</em> it may propose. It grants no credentials, calls no function, authorizes no effect. One complete round trip takes at least two model requests: the application sends messages plus declarations; the model returns an assistant turn with a call id, tool name, and arguments as a JSON string, finishing with <code>tool_calls</code>; the application parses, validates, and authorizes those arguments and either runs or refuses; it appends the original assistant turn and a <code>tool</code> result carrying the <em>same</em> call id; and it sends the second request, from which the model can finally answer. The invariant to hold without qualification: <strong>the provider never calls your tool.</strong> Your code owns the only execution arrow. We build the loop to admit exactly one proposal, validate its arguments before touching the handler, and correlate the result by id.</p>
-<div id="1ae0808f" class="cell" data-execution_count="26">
+<div id="e43dada6" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> assert_all_calls_answered(calls: <span class="bu">list</span>[<span class="bu">dict</span>], results: <span class="bu">list</span>[Message]) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Require every proposal id to be answered by exactly one result id.</span></span>
@@ -1903,7 +1903,7 @@ strict schema rejects: 'Refund!!' is not one of ['refund', 'deny', 'escalate']</
 <span id="cb38-63"><a href="#cb38-63" aria-hidden="true" tabindex="-1"></a>                  parallel_tool_calls<span class="op">=</span><span class="va">False</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We script the two-turn exchange and print the intermediate <code>tool_calls</code> structure and the correlated <code>tool</code> message, so the correlation is visible rather than described.</p>
-<div id="3d753ad7" class="cell" data-execution_count="27">
+<div id="1ad48827" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>LOOKUP_TOOL <span class="op">=</span> {</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"type"</span>: <span class="st">"function"</span>,</span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"function"</span>: {</span>
@@ -1976,7 +1976,7 @@ Figure&nbsp;12.6: Who actually invokes a tool, and how is its result correlated 
 </div>
 </div>
 <p>Three variations change the boundary, and each is a worked example rather than a table row. First, <strong>forcing</strong> with <code>tool_choice</code> changes which shapes the decoder may emit; the request body differs concretely:</p>
-<div id="dcf55211" class="cell" data-execution_count="28">
+<div id="be64e4a3" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>choices <span class="op">=</span> [<span class="st">"auto"</span>, <span class="st">"required"</span>,</span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>           {<span class="st">"type"</span>: <span class="st">"function"</span>, <span class="st">"function"</span>: {<span class="st">"name"</span>: <span class="st">"lookup_order"</span>}}, <span class="st">"none"</span>]</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> choice <span class="kw">in</span> choices:</span>
@@ -1993,7 +1993,7 @@ tool_choice=none             -&gt; sent on the wire: 'none'</code></pre>
 </div>
 </div>
 <p>Use forcing to express a route contract — a classifier endpoint may <code>require</code> one tool, a stage after an irreversible effect may set <code>none</code> to block another proposal — not to rescue a weak description. Second, <strong>parallel calls</strong> are parallel <em>proposals</em>, each with its own id, and completion order need not match proposal order. The rule is to correlate by id, never by list position:</p>
-<div id="d868273d" class="cell" data-execution_count="29">
+<div id="9385e683" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>proposals <span class="op">=</span> [</span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"id"</span>: <span class="st">"call_a"</span>, <span class="st">"function"</span>: {<span class="st">"name"</span>: <span class="st">"lookup_order"</span>, <span class="st">"arguments"</span>: <span class="st">'{"order_id":"O-0001"}'</span>}},</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"id"</span>: <span class="st">"call_b"</span>, <span class="st">"function"</span>: {<span class="st">"name"</span>: <span class="st">"lookup_order"</span>, <span class="st">"arguments"</span>: <span class="st">'{"order_id":"O-0002"}'</span>}},</span>
@@ -2012,7 +2012,7 @@ call_b asked {"order_id":"O-0002"}    -&gt; {"status":"delayed"}</code></pre>
 </div>
 </div>
 <p>Matching <code>proposals[0]</code> to <code>completions[0]</code> would have reported <code>O-0001</code> as delayed — position is not identity. Third, <strong>streaming</strong> splits one turn into deltas, and a tool-argument string can arrive across chunks (<code>{"order_</code> then <code>id":"O-0042"}</code>). A prefix may be invalid JSON because it is incomplete, or parse by coincidence before the server commits the turn, so we separate two states: <em>parseable</em> (a closed call block decodes) and <em>actionable</em> (the whole response reached a terminal event and policy admitted it). The assembler exposes a proposal only when every call is closed and the response is terminal.</p>
-<div id="884453e1" class="cell" data-execution_count="30">
+<div id="f53cadb8" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb45"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> IncompleteToolStream(<span class="pp">RuntimeError</span>):</span>
 <span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A streamed tool proposal never reached both close and terminal events."""</span></span>
@@ -2057,7 +2057,7 @@ call_b asked {"order_id":"O-0002"}    -&gt; {"status":"delayed"}</code></pre>
 <span id="cb45-42"><a href="#cb45-42" aria-hidden="true" tabindex="-1"></a>            <span class="cf">for</span> _, s <span class="kw">in</span> <span class="bu">sorted</span>(buffers.items())]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We feed it the two argument fragments and print the buffer after each, then show that without the terminal event the proposal stays inert, and with it becomes actionable.</p>
-<div id="da76f569" class="cell" data-execution_count="31">
+<div id="5fa926d7" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>chunks <span class="op">=</span> [</span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"tool_call"</span>: {<span class="st">"index"</span>: <span class="dv">0</span>, <span class="st">"id"</span>: <span class="st">"call_1"</span>, <span class="st">"name"</span>: <span class="st">"lookup_order"</span>, <span class="st">"arguments"</span>: <span class="st">'{"order_'</span>}},</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>    {<span class="st">"tool_call"</span>: {<span class="st">"index"</span>: <span class="dv">0</span>, <span class="st">"arguments"</span>: <span class="st">'id":"O-0042"}'</span>, <span class="st">"closed"</span>: <span class="va">True</span>}},</span>
@@ -2092,6 +2092,7 @@ with terminal event: {'order_id': 'O-0042'}</code></pre>
     Parsed --&gt; Eligible: response-terminal event
     Collecting --&gt; Incomplete: transport ends
     CallClosed --&gt; Incomplete: response never terminal
+    Parsed --&gt; Incomplete: transport ends before terminal
     Eligible --&gt; [*]
     Incomplete --&gt; [*]
 </pre>
@@ -2159,7 +2160,7 @@ Figure&nbsp;12.7: When may a streamed tool proposal become eligible for applicat
 </tr>
 </tbody>
 </table>
-<div id="c50fb949" class="cell" data-execution_count="32">
+<div id="e8cc8451" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb48"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> classify_failure(</span>
 <span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>    <span class="op">*</span>, status: <span class="bu">int</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>, finish_reason: <span class="bu">str</span> <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
@@ -2186,7 +2187,7 @@ Figure&nbsp;12.7: When may a streamed tool proposal become eligible for applicat
 <span id="cb48-24"><a href="#cb48-24" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">"typed_refusal"</span></span>
 <span id="cb48-25"><a href="#cb48-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"accept"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="97be59e1" class="cell" data-execution_count="33">
+<div id="b1cec7b5" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TimeoutException(<span class="pp">Exception</span>):</span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Stand-in for httpx.TimeoutException so the symptom name is recognized."""</span></span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a></span>

@@ -845,7 +845,7 @@ window.Quarto = {
 <h2 data-number="5.1" class="anchored" data-anchor-id="sec-ch05-ladder"><span class="header-section-number">5.1</span> A proxy ladder you can train</h2>
 <p>The honest way to learn what a scaling law is worth is to fit one to models you trained and can inspect, not to a table of numbers from a paper. So we build a ladder: several <code>TinyGPT</code> models of different sizes, each trained on a different amount of unique text, each evaluated on the <em>same</em> held-out slice. If loss falls smoothly as we climb the ladder, there is a law to fit.</p>
 <p>We reuse Chapter 2’s teaching code directly. Its <code># @save</code> cells were tangled into a module we load here; this is the same tokenizer and model, not a copy.</p>
-<div id="d2708384" class="cell" data-execution_count="1">
+<div id="09ac6866" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util, sys</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -861,7 +861,7 @@ window.Quarto = {
 </div>
 </div>
 <p>The corpus is the same nine kilobytes of <em>Alice’s Adventures in Wonderland</em>. We train one tokenizer on it, encode it once, and hold out the last sixth for evaluation — every model on the ladder is scored against this identical, unseen tail.</p>
-<div id="816a4c78" class="cell" data-execution_count="2">
+<div id="a57d868e" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> torch</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>torch.set_num_threads(<span class="dv">1</span>)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -876,7 +876,7 @@ window.Quarto = {
 </div>
 </div>
 <p>Two small helpers do the mechanical work. <code>draw</code> samples a batch of aligned next-token windows (the construction from <a href="02-transformer-first-principles.html#sec-ch02-objective" class="quarto-xref"><span>Section 2.2</span></a>), and <code>heldout_loss</code> averages the model’s cross-entropy over evenly spaced windows of the held-out tail.</p>
-<div id="50aec750" class="cell" data-execution_count="3">
+<div id="1034de6a" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>BLOCK, BATCH <span class="op">=</span> <span class="dv">32</span>, <span class="dv">24</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> draw(source, generator):</span>
@@ -896,7 +896,7 @@ window.Quarto = {
 <span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">float</span>(<span class="bu">sum</span>(losses) <span class="op">/</span> <span class="bu">len</span>(losses))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the rung itself. Each rung fixes a model size (width and depth) and a data budget (how many <em>unique</em> leading tokens of the training set it may see), then trains a fixed ten passes over that slice. Varying the unique-token budget is how we move along the data axis honestly: a rung with more unique text is genuinely exposed to more of the language, not merely to the same sentences more times. For <span class="math inline">N</span> we report <em>non-embedding</em> parameters — the attention and feed-forward weights that actually set model capacity — because a tiny model’s embedding table would otherwise dominate the count and mislabel the axis.</p>
-<div id="fc956a6b" class="cell" data-execution_count="4">
+<div id="82716f52" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> nonembedding_params(config):</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    parts <span class="op">=</span> param_breakdown(config)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> parts[<span class="st">"attention projections"</span>] <span class="op">+</span> parts[<span class="st">"feed-forward (SwiGLU)"</span>] <span class="op">+</span> parts[<span class="st">"norm scales"</span>]</span>
@@ -924,7 +924,7 @@ window.Quarto = {
 <span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a>            <span class="st">"loss"</span>: heldout_loss(model, heldout), <span class="st">"model"</span>: model}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We train eleven rungs, spread across model size and unique-data budget so both axes vary. The whole ladder trains in a few seconds on one CPU thread.</p>
-<div id="f068fcd5" class="cell" data-execution_count="5">
+<div id="37333056" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>ladder_spec <span class="op">=</span> [(<span class="dv">16</span>, <span class="dv">1</span>, <span class="dv">1000</span>), (<span class="dv">24</span>, <span class="dv">1</span>, <span class="dv">1000</span>), (<span class="dv">16</span>, <span class="dv">1</span>, <span class="dv">2000</span>), (<span class="dv">32</span>, <span class="dv">1</span>, <span class="dv">2000</span>),</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">48</span>, <span class="dv">1</span>, <span class="dv">2000</span>), (<span class="dv">24</span>, <span class="dv">1</span>, <span class="dv">3200</span>), (<span class="dv">48</span>, <span class="dv">1</span>, <span class="dv">3200</span>), (<span class="dv">64</span>, <span class="dv">2</span>, <span class="dv">3200</span>),</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>               (<span class="dv">32</span>, <span class="dv">2</span>, split), (<span class="dv">48</span>, <span class="dv">2</span>, split), (<span class="dv">64</span>, <span class="dv">2</span>, split)]</span>
@@ -963,7 +963,7 @@ L(x) = L_\infty + K x^{-\gamma},
 L(N, D) = E + A\left(\frac{N}{N_0}\right)^{-\alpha} + B\left(\frac{D}{D_0}\right)^{-\beta},
 \tag{5.2}</span></span></p>
 <p>with a shared floor <span class="math inline">E</span>, positive coefficients <span class="math inline">A, B</span> and exponents <span class="math inline">\alpha, \beta</span>, and fixed reference units <span class="math inline">N_0, D_0</span> that only condition the arithmetic and never change a prediction. We hold the fitted law in a small value object whose two methods are the only things we will ask of it: predict a loss, and solve for the best allocation under a compute budget (the second we derive in <a href="#sec-ch05-chinchilla" class="quarto-xref"><span>Section 5.3</span></a>).</p>
-<div id="d634c930" class="cell" data-execution_count="6">
+<div id="15475639" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
@@ -1022,7 +1022,7 @@ L(N, D) = E + A\left(\frac{N}{N_0}\right)^{-\alpha} + B\left(\frac{D}{D_0}\right
 <span id="cb9-56"><a href="#cb9-56" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> n <span class="op">*</span> PARAM_REF, d <span class="op">*</span> TOKEN_REF, <span class="bu">float</span>(<span class="va">self</span>.loss(n <span class="op">*</span> PARAM_REF, d <span class="op">*</span> TOKEN_REF))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The fit itself is least squares in the original loss units, with two guardrails that encode what we know: every coefficient and exponent is kept positive, and the floor is held below the smallest observed loss (a floor above the data would be nonsense). <code>scipy</code>’s <code>curve_fit</code> does the optimization; the bounds keep it in the physically meaningful region.</p>
-<div id="a57ea479" class="cell" data-execution_count="7">
+<div id="b810b3c2" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy.optimize <span class="im">import</span> curve_fit</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1057,7 +1057,7 @@ L(N, D) = E + A\left(\frac{N}{N_0}\right)^{-\alpha} + B\left(\frac{D}{D_0}\right
 <span id="cb10-32"><a href="#cb10-32" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ScalingLaw(<span class="op">*</span>popt)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We fit it to the ladder and compare each rung’s fitted loss with what we measured.</p>
-<div id="2439604f" class="cell" data-execution_count="8">
+<div id="5e0a7465" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> [r[<span class="st">"params"</span>] <span class="cf">for</span> r <span class="kw">in</span> rungs]</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>D <span class="op">=</span> [r[<span class="st">"tokens"</span>] <span class="cf">for</span> r <span class="kw">in</span> rungs]</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>L <span class="op">=</span> [r[<span class="st">"loss"</span>] <span class="cf">for</span> r <span class="kw">in</span> rungs]</span>
@@ -1075,7 +1075,7 @@ max |residual| over the ladder = 0.044 nats</code></pre>
 </div>
 <p>Both exponents are positive, so both resources genuinely reduce loss, and the fit tracks every rung to within a few hundredths of a nat. The exponents themselves are far steeper than the frontier values Kaplan reported (near <span class="math inline">{0.08}</span> for parameters, <span class="math inline">{0.10}</span> for data) — a nine-kilobyte corpus and an eighty-step budget compress the whole loss range into about half a nat, which inflates the slopes. What <em>transfers</em> is not the number but the ratio, and the ratio is what <a href="#sec-ch05-chinchilla" class="quarto-xref"><span>Section 5.3</span></a> turns into an allocation.</p>
 <p>An extrapolation is only honest with an interval. We refit the law on residual-resampled copies of the ladder — the residual bootstrap — and read the spread of the extrapolated compute-optimal loss. This interval covers finite-ladder noise; it says nothing about a wrong functional form, an architecture change, or distribution shift, and no bootstrap can.</p>
-<div id="e620d501" class="cell" data-execution_count="9">
+<div id="d2d1ae40" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> extrapolation_interval(params, tokens, losses, <span class="op">*</span>, multiplier<span class="op">=</span><span class="fl">100.0</span>, samples<span class="op">=</span><span class="dv">120</span>, seed<span class="op">=</span><span class="dv">0</span>):</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Residual-bootstrap the compute-optimal loss at ``multiplier`` times the</span></span>
@@ -1123,7 +1123,7 @@ max |residual| over the ladder = 0.044 nats</code></pre>
 <span id="cb13-45"><a href="#cb13-45" aria-hidden="true" tabindex="-1"></a>            <span class="st">"loss"</span>: point, <span class="st">"p05"</span>: <span class="bu">float</span>(low), <span class="st">"p95"</span>: <span class="bu">float</span>(high), <span class="st">"valid"</span>: <span class="bu">len</span>(draws)}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We forecast the compute-optimal loss a hundred times past the ladder’s largest budget, and report its interval.</p>
-<div id="ccbf9649" class="cell" data-execution_count="10">
+<div id="36455553" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>forecast <span class="op">=</span> extrapolation_interval(N, D, L, multiplier<span class="op">=</span><span class="fl">100.0</span>, samples<span class="op">=</span><span class="dv">120</span>, seed<span class="op">=</span><span class="dv">0</span>)</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"at 100x the ladder's largest compute (C = </span><span class="sc">{</span>forecast[<span class="st">'target_compute'</span>]<span class="sc">:.2e}</span><span class="ss"> FLOPs):"</span>)</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"  compute-optimal loss = </span><span class="sc">{</span>forecast[<span class="st">'loss'</span>]<span class="sc">:.3f}</span><span class="ss"> "</span></span>
@@ -1191,7 +1191,7 @@ Figure&nbsp;5.1: Does the fitted law explain the ladder, and what does it predic
 C \approx 6ND,
 \tag{5.3}</span></span></p>
 <p>where <span class="math inline">C</span> counts training FLOPs, <span class="math inline">N</span> is non-embedding parameters, and <span class="math inline">D</span> is tokens seen. The six is a forward pass plus a backward pass that produces gradients for both activations and weights; it is an estimate, not a device invoice, and attention terms, sparsity, and kernel efficiency shift it. Our ladder already reports it in the third column, and it is exact by construction there — which is what lets <code>compute_optimal</code> treat the constraint as an equality. We check that the solver honors it and read three budgets off the fitted law:</p>
-<div id="2437dffe" class="cell" data-execution_count="12">
+<div id="a421d9ce" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> multiplier <span class="kw">in</span> (<span class="dv">1</span>, <span class="dv">10</span>, <span class="dv">100</span>):</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    budget <span class="op">=</span> (<span class="dv">6</span> <span class="op">*</span> np.asarray(N) <span class="op">*</span> np.asarray(D)).<span class="bu">max</span>() <span class="op">*</span> multiplier</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    opt_n, opt_d, opt_loss <span class="op">=</span> law.compute_optimal(budget)</span>
@@ -1208,7 +1208,7 @@ C = 1.93e+12:  N* =   509893  D* =    632227  6ND/C = 1.0000  loss = 4.776</code
 N^\* \propto C^{\,\beta/(\alpha+\beta)}, \qquad D^\* \propto C^{\,\alpha/(\alpha+\beta)}.
 \tag{5.4}</span></span></p>
 <p>The exponents sum to one — every extra unit of compute is divided between the two axes — and their split is set entirely by the <em>ratio</em> of <span class="math inline">\alpha</span> and <span class="math inline">\beta</span>. That is the transferable output of the fit, independent of the inflated absolute exponents:</p>
-<div id="7f714a7e" class="cell" data-execution_count="13">
+<div id="23b22bbe" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>share_N <span class="op">=</span> law.data_exponent <span class="op">/</span> (law.param_exponent <span class="op">+</span> law.data_exponent)</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>share_D <span class="op">=</span> law.param_exponent <span class="op">/</span> (law.param_exponent <span class="op">+</span> law.data_exponent)</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"N* grows as C^</span><span class="sc">{</span>share_N<span class="sc">:.2f}</span><span class="ss">,  D* grows as C^</span><span class="sc">{</span>share_D<span class="sc">:.2f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1254,7 +1254,7 @@ Figure&nbsp;5.2: Why is there an optimum at every compute budget? Each curve fix
 </div>
 </div>
 <p>A budget is not a schedule until compute becomes wall-clock time. If <span class="math inline">P_\text{peak}</span> is per-accelerator peak throughput, <span class="math inline">G</span> the accelerator count, and <span class="math inline">u</span> the measured <strong>model FLOP utilization</strong> (MFU) — the fraction of peak the run actually sustains — then <span class="math inline">t_\text{wall} \approx C / (G\, u\, P_\text{peak})</span>. Using peak throughput silently assumes <span class="math inline">u = 1</span>, which no real run reaches. The arithmetic is worth doing once with frontier-scale magnitudes, plainly illustrative rather than a quote:</p>
-<div id="2d224104" class="cell" data-execution_count="15">
+<div id="b97b42c9" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>params_7b, tokens_1_4t <span class="op">=</span> <span class="fl">7e9</span>, <span class="fl">1.4e12</span></span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>compute_7b <span class="op">=</span> <span class="dv">6</span> <span class="op">*</span> params_7b <span class="op">*</span> tokens_1_4t</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>accelerators, peak_flops, mfu <span class="op">=</span> <span class="dv">1024</span>, <span class="fl">1.0e15</span>, <span class="fl">0.40</span>    <span class="co"># 1024 chips, 1 PFLOP/s each, 40% MFU</span></span>
@@ -1273,7 +1273,7 @@ the same run at an optimistic 100% MFU would claim 0.66 days</code></pre>
 <section id="sec-ch05-decisions" class="level2" data-number="5.4">
 <h2 data-number="5.4" class="anchored" data-anchor-id="sec-ch05-decisions"><span class="header-section-number">5.4</span> Scaling laws are decision tools, not commandments</h2>
 <p>The compute-optimal model minimizes training loss per unit of <em>training</em> compute. A product also pays <em>inference</em> compute on every request, forever, and that changes the objective. A model served heavily may be worth training past its loss-optimal point — deliberate <strong>overtraining</strong> — because a smaller model that reaches the same quality is cheaper on every future token. The break-even is a back-of-envelope, and worth seeing concretely <span class="citation" data-cites="sardana2024beyond">(<a href="../references.html#ref-sardana2024beyond" role="doc-biblioref">Sardana et al. 2024</a>)</span>:</p>
-<div id="8ffac626" class="cell" data-execution_count="16">
+<div id="ba3cff0c" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># a Chinchilla-optimal 7B vs a smaller 4B trained on more tokens to match it</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>opt_params_, opt_tokens_ <span class="op">=</span> <span class="fl">7e9</span>, <span class="fl">1.4e11</span></span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>over_params, over_tokens <span class="op">=</span> <span class="fl">4e9</span>, <span class="fl">8.0e11</span></span>
@@ -1348,7 +1348,7 @@ Figure&nbsp;5.3: Is an ability emerging, or is the metric discretizing a smooth 
 \mathcal{L} = -\frac{1}{T}\sum_{t=1}^{T}\log p_\theta(x_t \mid x_{&lt;t}), \qquad \operatorname{PPL} = e^{\mathcal{L}},
 \tag{5.5}</span></span></p>
 <p>the mean negative log-likelihood, and perplexity is its exponential — an effective branching factor. But a single aggregate number hides where a model is weak. We take the largest model on our ladder and measure its loss on slices instead of in bulk:</p>
-<div id="2c9146eb" class="cell" data-execution_count="18">
+<div id="f2306699" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> torch.nn <span class="im">import</span> functional <span class="im">as</span> F</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>big <span class="op">=</span> <span class="bu">max</span>(rungs, key<span class="op">=</span><span class="kw">lambda</span> r: r[<span class="st">"params"</span>])[<span class="st">"model"</span>]</span>
@@ -1379,7 +1379,7 @@ Arabic sentence          : 8.770</code></pre>
 s(a \mid q) = \frac{1}{|a|}\sum_{t \in a}\log p_\theta(a_t \mid q, a_{&lt;t}),
 \tag{5.6}</span></span></p>
 <p>the length-normalized mean log-probability of the completion. Length normalization keeps a short candidate from winning automatically.</p>
-<div id="411abafc" class="cell" data-execution_count="19">
+<div id="bcb735c4" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="at">@torch.inference_mode</span>()</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> candidate_score(model, prompt, completion):</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    prompt_ids, completion_ids <span class="op">=</span> tokenizer.encode(prompt), tokenizer.encode(completion)</span>
@@ -1427,7 +1427,7 @@ Figure&nbsp;5.4: Why is D not the size of a folder? Each gate discards tokens, s
 </div>
 </div>
 <p>Common Crawl makes the stages concrete: WARC stores raw responses, WAT stores computed metadata, and WET stores extracted plaintext — convenient but already stripped of structure and carrying someone’s extraction decisions. We keep provenance from the start, in a record whose six fields exist because policy needs every one of them. Extraction turns raw records into these documents and assigns each a stable identifier.</p>
-<div id="217a1904" class="cell" data-execution_count="20">
+<div id="8c9b24cb" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> hashlib, re</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass <span class="im">as</span> _dataclass</span>
@@ -1473,7 +1473,7 @@ Figure&nbsp;5.4: Why is D not the size of a folder? Each gate discards tokens, s
 <span id="cb31-43"><a href="#cb31-43" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> documents</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Our embedded corpus is a handful of records built to exercise the pipeline: clean reference and library and community documents, a planted near-duplicate of one reference page (same body, an extra footer line), a document carrying a benchmark answer, a restricted-rights copy, commercial spam, and a one-line stub. All of them share a boilerplate navigation bar, so the deduplicator will have to tell real duplication from shared furniture.</p>
-<div id="b8c14f74" class="cell" data-execution_count="21">
+<div id="27cc0837" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> nav():</span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"Home  About  Login  Cart  Help"</span></span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1523,7 +1523,7 @@ trace: id=2ac722ddcf source=reference rights=licensed lang=en
 <h2 data-number="5.7" class="anchored" data-anchor-id="sec-ch05-curation"><span class="header-section-number">5.7</span> Filter, deduplicate, decontaminate</h2>
 <p>Extraction maximizes recall; curation decides what should actually train the model. Three operations do different jobs and should write different reason codes. A <strong>filter</strong> scores or rejects individual documents. <strong>Deduplication</strong> finds repeated content within and across sources. <strong>Decontamination</strong> removes training candidates that overlap evaluation material. We build them in that order.</p>
 <p>Early corpora such as C4 filtered with transparent heuristics — language, length, character ratios, repetition, blocked terms <span class="citation" data-cites="raffel2020t5">(<a href="../references.html#ref-raffel2020t5" role="doc-biblioref"><span class="nocase">Raffel et al.</span> 2020</a>)</span> — which are cheap and debuggable but encode cultural assumptions; the C4 audit found identity-term blocklists removed disproportionately many documents about and by minority groups. Learned quality classifiers (used by FineWeb-Edu and others) rank documents by a trained notion of quality <span class="citation" data-cites="penedo2024fineweb">(<a href="../references.html#ref-penedo2024fineweb" role="doc-biblioref"><span class="nocase">Penedo et al.</span> 2024</a>)</span>, but the label source <em>is</em> a policy choice, and an evaluator’s preferences can hide behind a score. Our filter stays transparent on purpose: rights, length, alphabetic ratio, and line repetition, each an inspectable feature.</p>
-<div id="336df15e" class="cell" data-execution_count="22">
+<div id="2fa28253" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections <span class="im">import</span> Counter, defaultdict</span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1590,7 +1590,7 @@ trace: id=2ac722ddcf source=reference rights=licensed lang=en
 <span id="cb34-64"><a href="#cb34-64" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> kept, rejected</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run it on the extracted corpus and count what survived and why.</p>
-<div id="07432f3a" class="cell" data-execution_count="23">
+<div id="3f5448c9" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>eligible, rejected <span class="op">=</span> filter_documents(documents)</span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"kept </span><span class="sc">{</span><span class="bu">len</span>(eligible)<span class="sc">}</span><span class="ss"> of </span><span class="sc">{</span><span class="bu">len</span>(documents)<span class="sc">}</span><span class="ss">;  rejections: </span><span class="sc">{</span><span class="bu">dict</span>(Counter(r[<span class="st">'reason'</span>] <span class="cf">for</span> r <span class="kw">in</span> rejected))<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1603,7 +1603,7 @@ trace: id=2ac722ddcf source=reference rights=licensed lang=en
 P(\text{candidate} \mid s) = 1 - (1 - s^{r})^{b}.
 \tag{5.7}</span></span></p>
 <p>More bands raise recall (and false positives); more rows per band sharpen the threshold. We build the pieces — shingles, similarity, a signature — then the deduplicator that uses LSH only to <em>propose</em> candidates and confirms each with an exact Jaccard check before merging clusters with union-find <span class="citation" data-cites="lee2022deduplicating">(<a href="../references.html#ref-lee2022deduplicating" role="doc-biblioref">Lee et al. 2022</a>)</span>.</p>
-<div id="956dcc01" class="cell" data-execution_count="24">
+<div id="d4b8a77c" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> word_shingles(text, width<span class="op">=</span><span class="dv">5</span>, cap<span class="op">=</span><span class="dv">200</span>):</span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return a bounded set of hashed word shingles for a document.</span></span>
@@ -1644,7 +1644,7 @@ P(\text{candidate} \mid s) = 1 - (1 - s^{r})^{b}.
 <span id="cb37-38"><a href="#cb37-38" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">tuple</span>(<span class="bu">min</span>(((<span class="dv">2</span> <span class="op">*</span> k <span class="op">+</span> <span class="dv">1</span>) <span class="op">*</span> h <span class="op">+</span> <span class="dv">2654435761</span> <span class="op">*</span> (k <span class="op">+</span> <span class="dv">1</span>)) <span class="op">%</span> prime <span class="cf">for</span> h <span class="kw">in</span> hashed)</span>
 <span id="cb37-39"><a href="#cb37-39" aria-hidden="true" tabindex="-1"></a>                 <span class="cf">for</span> k <span class="kw">in</span> <span class="bu">range</span>(permutations))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="5a8857bf" class="cell" data-execution_count="25">
+<div id="d352bc8b" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> near_deduplicate(documents, threshold<span class="op">=</span><span class="fl">0.7</span>, permutations<span class="op">=</span><span class="dv">32</span>, bands<span class="op">=</span><span class="dv">16</span>):</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Cluster near-duplicate documents and keep one exemplar from each cluster.</span></span>
@@ -1702,7 +1702,7 @@ P(\text{candidate} \mid s) = 1 - (1 - s^{r})^{b}.
 <span id="cb38-55"><a href="#cb38-55" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [docs[i] <span class="cf">for</span> i <span class="kw">in</span> kept], [[docs[i].doc_id <span class="cf">for</span> i <span class="kw">in</span> members] <span class="cf">for</span> members <span class="kw">in</span> clusters.values()]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run it on the eligible documents and inspect which clusters merged.</p>
-<div id="05a7bb8c" class="cell" data-execution_count="26">
+<div id="4a149386" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>deduped, clusters <span class="op">=</span> near_deduplicate(eligible)</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="bu">len</span>(eligible)<span class="sc">}</span><span class="ss"> -&gt; </span><span class="sc">{</span><span class="bu">len</span>(deduped)<span class="sc">}</span><span class="ss"> after near-deduplication"</span>)</span>
 <span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"clusters with more than one member:"</span>, [c <span class="cf">for</span> c <span class="kw">in</span> clusters <span class="cf">if</span> <span class="bu">len</span>(c) <span class="op">&gt;</span> <span class="dv">1</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1743,7 +1743,7 @@ Figure&nbsp;5.5: How do the band parameters turn a similarity into a match proba
 </div>
 </div>
 <p>Finally decontamination, a different question: does a training candidate contain evaluation material? We normalize whitespace and case and drop any document that contains a known evaluation string. Production systems combine substrings, n-grams, canaries, and cautious semantic matching, and recheck synthetic descendants — but the principle is visible in the small version.</p>
-<div id="169a98ca" class="cell" data-execution_count="28">
+<div id="ad89f64b" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> decontaminate(documents, evaluation_strings, min_chars<span class="op">=</span><span class="dv">20</span>):</span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Remove documents containing a normalized evaluation substring.</span></span>
@@ -1771,7 +1771,7 @@ Figure&nbsp;5.5: How do the band parameters turn a similarity into a match proba
 <span id="cb42-25"><a href="#cb42-25" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> kept, removed</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We give it the one evaluation string we planted and watch the offending document leave.</p>
-<div id="93c903d6" class="cell" data-execution_count="29">
+<div id="a0189e18" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>clean, removed <span class="op">=</span> decontaminate(deduped, [<span class="st">"benchmark secret answer is cobalt river"</span>])</span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span><span class="bu">len</span>(deduped)<span class="sc">}</span><span class="ss"> -&gt; </span><span class="sc">{</span><span class="bu">len</span>(clean)<span class="sc">}</span><span class="ss"> after decontamination; removed </span><span class="sc">{</span>[r[<span class="st">'doc_id'</span>] <span class="cf">for</span> r <span class="kw">in</span> removed]<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1813,7 +1813,7 @@ Figure&nbsp;5.6: How many documents survive each gate? The real counts from our 
 <section id="sec-ch05-mixtures" class="level2" data-number="5.8">
 <h2 data-number="5.8" class="anchored" data-anchor-id="sec-ch05-mixtures"><span class="header-section-number">5.8</span> Mixtures, fertility, and curriculum</h2>
 <p>A curated corpus is still not a training distribution until source weights are chosen. Sampling in proportion to available tokens just reproduces crawl abundance, which over-weights repetitive commercial pages and lets scarce, high-value books or low-resource languages vanish. Mixture weights are model hyperparameters with governance consequences, so we convert weights into exact document quotas and refuse to silently backfill a missing source from leftovers.</p>
-<div id="fb9e2e0c" class="cell" data-execution_count="31">
+<div id="e99c9184" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1851,7 +1851,7 @@ Figure&nbsp;5.6: How many documents survive each gate? The real counts from our 
 <span id="cb46-35"><a href="#cb46-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> selected</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We ask for a 50/30/20 reference-library-community split of six documents, with web weighted to zero.</p>
-<div id="b11ebbcf" class="cell" data-execution_count="32">
+<div id="65214daa" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>mixture <span class="op">=</span> mix_documents(clean, {<span class="st">"reference"</span>: <span class="fl">0.5</span>, <span class="st">"library"</span>: <span class="fl">0.3</span>, <span class="st">"community"</span>: <span class="fl">0.2</span>, <span class="st">"web"</span>: <span class="fl">0.0</span>}, total<span class="op">=</span><span class="dv">6</span>)</span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"mixture by source:"</span>, <span class="bu">dict</span>(Counter(d.source <span class="cf">for</span> d <span class="kw">in</span> mixture)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1860,7 +1860,7 @@ Figure&nbsp;5.6: How many documents survive each gate? The real counts from our 
 </div>
 <p>The realized mixture is exactly the requested 50/30/20 split across reference, library, and community, and the zero-weight web source contributes nothing. Choosing those weights well is its own research problem: <strong>DoReMi</strong> trains a small proxy model to find weights that minimize worst-case excess loss across domains, then trains the real model on them <span class="citation" data-cites="xie2023doremi">(<a href="../references.html#ref-xie2023doremi" role="doc-biblioref"><span class="nocase">Xie et al.</span> 2023</a>)</span>; <strong>RegMix</strong> trains many small proxies on sampled mixtures and fits a regression from weights to downstream score <span class="citation" data-cites="liu2024regmix">(<a href="../references.html#ref-liu2024regmix" role="doc-biblioref"><span class="nocase">Liu et al.</span> 2024</a>)</span>. Both replace intuition with experiments, and both inherit a transfer question — proxy rankings can change with scale — so candidate weights must be validated at more than one budget. The public corpus lineage is best read the same way, as methodological progress rather than a size leaderboard: C4’s single-snapshot heuristic cleanup, the Pile’s named-domain mixture, RedPajama’s and Dolma’s reproducible transforms and released tooling, and DCLM’s and FineWeb’s controlled ablations each added named sources, reproducible transformations, quality signals, and then controlled comparisons — in that order. A raw token count without that provenance says almost nothing.</p>
 <p>Weights decide <em>which</em> tokens; fertility decides <em>how many</em> each language costs. Chapter 2’s byte-fallback tokenizer can encode any Unicode string, but coverage is not efficiency. <strong>Fertility</strong> is the number of tokens per character, and a language’s token allocation is <span class="math inline">D_\ell = f_\ell Q_\ell</span> for character count <span class="math inline">Q_\ell</span> and fertility <span class="math inline">f_\ell</span> <span class="citation" data-cites="ahia2023languages">(<a href="../references.html#ref-ahia2023languages" role="doc-biblioref">Ahia et al. 2023</a>)</span>. We measure it directly on the same tokenizer.</p>
-<div id="19e22164" class="cell" data-execution_count="33">
+<div id="96d8bf8a" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> measure_fertility(samples, encode):</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Measure tokenizer fertility (tokens per character) per language sample.</span></span>
@@ -1881,7 +1881,7 @@ Figure&nbsp;5.6: How many documents survive each gate? The real counts from our 
 <span id="cb49-18"><a href="#cb49-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We encode the same sentence in four languages with Chapter 2’s tokenizer and read off the per-character cost.</p>
-<div id="b86b4e55" class="cell" data-execution_count="34">
+<div id="a6812cd3" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>sentence <span class="op">=</span> {<span class="st">"English"</span>: <span class="st">"A careful engineer measures tokens before fixing a budget."</span>,</span>
 <span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a>            <span class="st">"Spanish"</span>: <span class="st">"Una ingeniera cuidadosa mide los tokens antes de fijar el presupuesto."</span>,</span>
 <span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a>            <span class="st">"Arabic"</span>: <span class="st">"يقيس المهندس الدقيق الرموز قبل تحديد الميزانية."</span>,</span>
@@ -1935,7 +1935,7 @@ Figure&nbsp;5.7: What does tokenizer fertility cost a language? Left: tokens per
 <h2 data-number="5.9" class="anchored" data-anchor-id="sec-ch05-synthetic"><span class="header-section-number">5.9</span> Synthetic data at the data wall</h2>
 <p>Unique, high-quality tokens in a target distribution are finite, and “the data wall” names the point where they run short. Synthetic data is the tempting answer, but the phrase hides four mechanisms with different failure modes: a <em>grounded transformation</em> of a real document (summary, rephrasing) that keeps its parent; <em>fresh generation</em> from prompts or simulators; <em>verified generation</em> accepted only after an executable or human check; and <em>recursive self-consumption</em>, where model output replaces the real distribution across generations. The first three can help — rephrasing real web text and mixing it with the original improves efficiency <span class="citation" data-cites="maini2024rephrasing">(<a href="../references.html#ref-maini2024rephrasing" role="doc-biblioref"><span class="nocase">Maini et al.</span> 2024</a>)</span>. The fourth is where <strong>model collapse</strong> lives.</p>
 <p>Shumailov and colleagues showed that indiscriminate recursive replacement loses the tails of a distribution and eventually distorts it: rare modes are sampled less often, so they appear even less often in the next generation, and the support narrows <span class="citation" data-cites="shumailov2024collapse">(<a href="../references.html#ref-shumailov2024collapse" role="doc-biblioref">Shumailov et al. 2024</a>)</span>. Gerstgrasser and colleagues found the crucial qualifier — <em>accumulating</em> generated data alongside the original real data avoided collapse in their settings, where pure replacement did not <span class="citation" data-cites="gerstgrasser2024accumulating">(<a href="../references.html#ref-gerstgrasser2024accumulating" role="doc-biblioref"><span class="nocase">Gerstgrasser et al.</span> 2024</a>)</span>. We can watch both happen with a one-dimensional toy: each generation fits a Gaussian to the current data (a deliberately lossy model) and samples a new dataset, either replacing the old data or keeping the real anchor. Because a finite sample slightly under-estimates spread, replacement compounds that shrinkage generation over generation, while the real anchor keeps re-injecting the tails. We average over many seeds so the systematic trend, not one random walk, is what we read.</p>
-<div id="0edff655" class="cell" data-execution_count="36">
+<div id="1c2f0368" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> recursive_generations(generations<span class="op">=</span><span class="dv">8</span>, sample_size<span class="op">=</span><span class="dv">20</span>, mode<span class="op">=</span><span class="st">"replace"</span>, seed<span class="op">=</span><span class="dv">0</span>):</span>
 <span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Simulate one lineage of a distribution learned from its own samples.</span></span>
@@ -1967,7 +1967,7 @@ Figure&nbsp;5.7: What does tokenizer fertility cost a language? Left: tokens per
 <span id="cb53-29"><a href="#cb53-29" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> spread, data</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We run both modes over two hundred lineages and average the spread trajectory so the systematic trend, not one random walk, is what we read.</p>
-<div id="284b4e3f" class="cell" data-execution_count="37">
+<div id="02f5a6a8" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb54"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>seeds <span class="op">=</span> <span class="bu">range</span>(<span class="dv">200</span>)</span>
 <span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a>replace <span class="op">=</span> np.mean([recursive_generations(mode<span class="op">=</span><span class="st">"replace"</span>, seed<span class="op">=</span>s)[<span class="dv">0</span>] <span class="cf">for</span> s <span class="kw">in</span> seeds], axis<span class="op">=</span><span class="dv">0</span>)</span>
 <span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a>accumulate <span class="op">=</span> np.mean([recursive_generations(mode<span class="op">=</span><span class="st">"accumulate"</span>, seed<span class="op">=</span>s)[<span class="dv">0</span>] <span class="cf">for</span> s <span class="kw">in</span> seeds], axis<span class="op">=</span><span class="dv">0</span>)</span>
