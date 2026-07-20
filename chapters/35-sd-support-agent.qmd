@@ -36,6 +36,8 @@ The family fork, said aloud: *this is an acting-agent problem, so I will spend t
 Numbers before boxes. We recall Chapter 33's toolkit — the executed calculators for loop cost, completion latency, and in-flight concurrency — and aim them at this prompt. The illustrative frontier-class prices (\$3 and \$15 per million input and output tokens, cached input at a tenth) are the framework's teaching constants.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 import importlib.util
 import sys
 from pathlib import Path
@@ -75,6 +77,8 @@ Three anchors and the family's first lesson. A typical resolution costs under fo
 Latency next, and this is where the SLO split lives. A conversational turn is a tool round-trip (one account lookup) plus a short streamed reply — support answers are terse, so the output cap is small.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 tool_round_trip_ms = 300.0        # one account lookup before the model replies
 reply_ms = boe.completion_ms(ttft_ms=450.0, output_tokens=80, tpot_ms=15.0)
 turn_ms = tool_round_trip_ms + reply_ms
@@ -89,6 +93,8 @@ The reply completes in about two seconds and the first token streams under a sec
 The last anchor is the family's numeric trap, and it is a trap about *metrics*, not tokens. The temptation is to treat "unauthorized-action rate" as an SLO you buy down with a better model.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 actions_per_day = 50_000
 print("if we trust model quality alone, unauthorized effects per day "
       "(zero-tolerance target = 0):")

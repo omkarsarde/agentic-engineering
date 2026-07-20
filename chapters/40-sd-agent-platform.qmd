@@ -43,6 +43,8 @@ A senior closes the move by restating the problem with numbers and naming a non-
 Numbers before boxes. The platform family's classic numeric trap is a *metric* trap: reporting "agents deployed" and "cost per call" hides the retry tax, because an agent task that fails still costs money. The number a senior computes live is **cost per successful task** — the per-attempt cost divided by the success rate — and it is the one the vanity dashboard never shows. We compute it with the back-of-envelope toolkit from Chapter 33 (@sec-ch33-loops), importing its loop-cost calculator rather than rebuilding it.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 import importlib.util
 import sys
 from pathlib import Path
@@ -73,6 +75,8 @@ print(f"retry tax the vanity metric hides: {(per_success / attempt - 1) * 100:.0
 At a 70% success rate the true unit cost is 43% above the per-attempt number — a platform billed and capacity-planned on cost-per-call is undercounting by nearly half, and the fix costs one spoken sentence. That unit scales to a fleet, and two more anchor numbers size the platform's blast radius and its paved-path health. The prices, volumes, and rates here are illustrative teaching constants chosen for round arithmetic, not quotes.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 tasks_per_day = 50 * 4_000                 # 50 teams x ~4k successful tasks/team/day
 cells = 8                                  # capacity partitioned into failure domains
 releases, on_escape_hatch = 320, 26        # live releases; those on a reviewed exception

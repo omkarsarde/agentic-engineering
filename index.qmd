@@ -14,6 +14,7 @@ This book builds that understanding from one starting point: you know neural net
 > Add autonomy only when measured value pays for its reliability, cost, security, and operator burden.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-book-spine
 %%| fig-cap: "The book grows one dependable system outward from the model."
 flowchart LR

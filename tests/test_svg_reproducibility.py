@@ -22,19 +22,35 @@ def test_every_svg_generator_fixes_ids_and_creation_metadata() -> None:
         for path in sorted((ROOT / "code").rglob("*.py"))
         if "savefig(" in path.read_text(encoding="utf-8")
     ]
-    assert generators
+    if not generators:
+        pytest.skip("no committed SVG generator scripts remain; figures are authored inline")
     for path in generators:
         source = path.read_text(encoding="utf-8")
         assert "svg.hashsalt" in source, f"missing stable SVG IDs: {path}"
         assert 'metadata={"Date": None}' in source, f"timestamped SVG output: {path}"
 
 
-@pytest.mark.parametrize(
-    "script",
-    (
-        ROOT / "code" / "appa" / "render_pareto.py",
-    ),
+def _cli_svg_generators() -> list[Path]:
+    """Return code modules exposing a ``--plot`` CLI that writes an SVG.
+
+    The d2l-style redo authors figures inline in the chapters, so standalone
+    ``--plot`` generator scripts are being retired; this discovers whichever
+    remain so the byte-identical check covers them without a hardcoded path.
+    """
+
+    found: list[Path] = []
+    for path in sorted((ROOT / "code").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "--plot" in source and "savefig(" in source:
+            found.append(path)
+    return found
+
+
+@pytest.mark.skipif(
+    not _cli_svg_generators(),
+    reason="no --plot SVG generator scripts remain; figures are authored inline",
 )
+@pytest.mark.parametrize("script", _cli_svg_generators() or [None])
 def test_repeated_svg_builds_are_byte_identical(script: Path, tmp_path: Path) -> None:
     """Regenerate representative chapter and appendix figures in fresh processes."""
 

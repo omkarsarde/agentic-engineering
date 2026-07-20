@@ -1,0 +1,15 @@
+/*-- scss:defaults --*/
+// Dark-theme mermaid palette. This file is listed after styles.scss in the
+// dark theme only, so these values take precedence there and diagrams render
+// with night-mode-legible fills, text, and edges.
+$mermaid-bg-color: #222222;
+$mermaid-fg-color: #e9ecef;
+$mermaid-fg-color--lighter: #b8c0c8;
+$mermaid-fg-color--lightest: #8a939b;
+$mermaid-node-bg-color: #2e3338;
+$mermaid-node-fg-color: #e9ecef;
+$mermaid-edge-color: #9aa5ad;
+$mermaid-label-bg-color: #222222;
+$mermaid-label-fg-color: #e9ecef;
+
+/*-- scss:rules --*/

@@ -106,7 +106,7 @@ format:
   html:
     theme:
       light: [cosmo, styles.scss]
-      dark: [darkly, styles.scss]
+      dark: [darkly, styles.scss, styles-dark.scss]
     toc: true
     toc-depth: 3
     number-sections: true

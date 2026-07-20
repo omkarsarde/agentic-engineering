@@ -111,6 +111,8 @@ $$ {#eq-ch33-cost}
 where $n_{\text{fresh}}$, $n_{\text{cached}}$, and $n_{\text{out}}$ are token counts and each $P$ is a price in dollars per million tokens — the unit vendors quote, which is why the formula divides once at the end rather than trusting us to convert each price by hand.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 # @save
 from dataclasses import dataclass
 
@@ -175,6 +177,8 @@ def cost_per_query(input_tokens: int, output_tokens: int, price: TokenPrice,
 Now the running prompt's query, priced. A representative shape: a 400-token system prompt plus a 100-token question plus five retrieved 500-token chunks and some history is roughly 3,500 input tokens, with a 250-token cited answer. The prices below are illustrative frontier-class numbers chosen for round arithmetic, not quotes.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 price = TokenPrice(input_per_million=3.00, output_per_million=15.00,
                    cached_input_per_million=0.30)
 plain = cost_per_query(3_500, 250, price)
@@ -193,6 +197,8 @@ T_{\text{complete}} \;=\; T_{\text{TTFT}} \;+\; \left(n_{\text{out}} - 1\right) 
 $$ {#eq-ch33-completion}
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 # @save
 def completion_ms(ttft_ms: float, output_tokens: int, tpot_ms: float) -> float:
     """Return end-to-end latency for one streamed response (@eq-ch33-completion).
@@ -218,6 +224,8 @@ def completion_ms(ttft_ms: float, output_tokens: int, tpot_ms: float) -> float:
 Chapter 1's decode simulator gives us a stream to check the composition against — one sentence of recall: `simulate_decode` produces deterministic token-arrival times for a given prompt and output length, and `tpot_ms` reads the mean gap off them.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 import importlib.util
 import sys
 from pathlib import Path
@@ -243,6 +251,8 @@ print(f"last token really arrived at {times[-1]:,.0f} ms")
 The composition reproduces the simulated stream exactly, which is the algebra doing its job. Now aim it at the running prompt's "feel instant." A representative latency budget for the query path — each stage a number we defend in Chapter 34 — and the completion times it implies:
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 stages = {"embed query": 20.0, "ANN search": 50.0,
           "rerank top-100": 150.0, "queue + prefill": 400.0}
 ttft_budget = sum(stages.values())
@@ -289,6 +299,8 @@ The prices (\$3.00 and \$15.00 per million tokens, cached input at a tenth), the
 Three more calculators cover the capacity half of move 2: KV memory, request throughput, and index storage. The first is a recall, not a rebuild — Chapter 3 owns the KV-cache equation and its calculator (@sec-ch03-kv-equation, @eq-ch03-kvbytes), and one sentence recaps it: a request's cache is ${2\,L\,H_{kv}\,d_h\,T\,s}$ bytes — layers times *KV heads* (not query heads) times head dimension times retained tokens times bytes per scalar, doubled for keys and values. We import it and work the classic 7B-class example, trap included.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 ch03 = load_chapter("ch03", "ch03_generated")
 gqa = ch03.KVConfig("7B-class GQA-8", layers=32, query_heads=32, kv_heads=8,
                     head_dim=128, bytes_per_scalar=2)
@@ -303,6 +315,8 @@ print(f"the trap (query heads)  : {trap / 1e9:.2f} GB  -- 4x too high")
 Sixteen concurrent 4K-token requests on a GQA-8 model hold 8.6 GB of cache; compute it from the thirty-two *query* heads and you get 34 GB and a design sized four times too large. This is the single most reliable numeric trap in serving interviews, and the fix is one audible clause: "GQA caches KV heads, so…". What the interview then needs is the next step — how many such requests fit on one device — which is a division we make explicit:
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 # @save
 def kv_concurrency_per_device(hbm_bytes: float, weights_bytes: float,
                               kv_bytes_per_request: float,
@@ -337,6 +351,8 @@ def kv_concurrency_per_device(hbm_bytes: float, weights_bytes: float,
 ```
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 per_device = kv_concurrency_per_device(hbm_bytes=80e9, weights_bytes=16e9,
                                        kv_bytes_per_request=per_request)
 print(f"80 GB device, 16 GB fp16 weights, 10% workspace: {per_device} concurrent requests")
@@ -351,6 +367,8 @@ $$ {#eq-ch33-little}
 where $\lambda$ is arrival rate in requests per second, $W$ is the mean seconds one request stays resident, and $L$ is the mean number of requests in flight. It assumes only a stable system — no distributional fine print — which is what makes it safe to use aloud under pressure.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 # @save
 import math
 
@@ -406,6 +424,8 @@ def devices_for_load(qps: float, residence_seconds: float,
 ```
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 in_flight = concurrent_requests(qps=50, residence_seconds=5.6)
 print(f"50 QPS x 5.6 s residence          = {in_flight:.0f} requests in flight")
 print(f"devices at {per_device}/device, 30% headroom: "
@@ -422,6 +442,8 @@ $$ {#eq-ch33-index}
 with $n$ vectors of dimension $d$ at $b$ bytes per element, an index-structure overhead multiplier $i$, and $r$ replicas. Appendix B's sizing worksheet carries the same formula in fillable form; here it runs.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 # @save
 def index_bytes(vectors: int, dim: int, bytes_per_dim: float,
                 overhead: float = 1.5, replicas: int = 1) -> float:
@@ -453,6 +475,8 @@ def index_bytes(vectors: int, dim: int, bytes_per_dim: float,
 ```
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 chunks = 30_000_000                      # 10M documents x ~3 chunks each
 for label, width in (("fp32", 4), ("int8", 1)):
     total = index_bytes(chunks, dim=1024, bytes_per_dim=width, overhead=1.5, replicas=2)
@@ -475,6 +499,8 @@ $$ {#eq-ch33-loop}
 which is quadratic in $k$: each step looks cheap, and the sum does not. The calculator prices the loop under @eq-ch33-cost, with and without a prompt cache over the resent prefix.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 # @save
 def loop_cost(steps: int, base_context_tokens: int, growth_tokens_per_step: int,
               output_tokens_per_step: int, price: TokenPrice,
@@ -552,6 +578,8 @@ def max_affordable_steps(budget_dollars: float, base_context_tokens: int,
 A representative acting-agent shape: 2,000 tokens of system prompt and tool schemas, 800 tokens added per step, 300 generated per step.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 for k in (5, 10, 20):
     cold = loop_cost(k, 2_000, 800, 300, price)
     hot = loop_cost(k, 2_000, 800, 300, price, cached_resend=True)
@@ -594,6 +622,8 @@ $$ {#eq-ch33-context}
 where $W_{\text{ctx}}$ is the window and the components are the token allocations just named. The reserve matters because generation that runs out of window is truncated output, a user-visible failure; the free term matters because a plan that lands at exactly zero has no room for the next tool result.
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 # @save
 def context_budget(window_tokens: int, *, system: int, history: int,
                    retrieval: int, output_reserve: int) -> dict[str, int]:
@@ -632,6 +662,8 @@ def context_budget(window_tokens: int, *, system: int, history: int,
 ```
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 plan = context_budget(128_000, system=3_000, history=45_000,
                       retrieval=12_000, output_reserve=4_000)
 print("128k plan:", plan)
@@ -675,6 +707,8 @@ We close by running the whole procedure once, compressed, on the running prompt 
 **Minutes 5–10, back-of-envelope.** The anchor numbers, straight from the toolkit — this cell is the interview's whiteboard arithmetic, executed:
 
 ```{python}
+#| code-fold: true
+#| code-summary: "Show the code"
 anchors = [
     ("index: 30M chunks, int8, x1.5, x2 replicas",
      f"{index_bytes(30_000_000, 1024, 1, 1.5, 2) / 1e9:,.0f} GB"),
