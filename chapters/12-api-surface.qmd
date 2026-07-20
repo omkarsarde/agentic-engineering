@@ -1,357 +1,996 @@
 ---
-description: "Turn a language model into a typed software component by owning message semantics, application validation, tool-call correlation, and failure boundaries."
+description: "Turn a language model into a typed software component: walk real message payloads, own structured-output validation-and-retry against a scripted stub, measure the constraint tax, and hand-roll a single-tool loop on the raw wire format."
 ---
 
-# The API Surface: Messages, Structured Outputs, and Tool Calling [F] {#sec-ch12}
+# The API Surface: Messages, Structured Outputs, and Tool Calling {#sec-ch12}
 
-## What you need going in {#sec-ch12-prerequisites}
+A support assistant needs the status of order `O-0042`. The model proposes a `lookup_order` call, the application runs it, and the database returns `{"status": "shipped"}`. A developer, in a hurry, appends that result as a plain user message — "The order shipped." — and sends the conversation back. Sometimes the model answers. Sometimes it proposes the same lookup again. Sometimes it invents a delivery date. The database is healthy and the model is healthy; the *conversation* is malformed. The missing fact was never English phrasing. A tool result is a typed observation correlated to a specific proposal identifier, and the moment the caller flattened it into prose, the transcript stopped meaning what it looked like it meant.
 
-> **Assumed:** neural-network fundamentals, basic Python, and production-backend basics: HTTP requests, JSON, exceptions, tests, and the distinction between authentication and authorization.
->
-> **Route A:** Chapters 7 and 9 already established chat templates, decoding, and the reproducibility boundary. This chapter moves those mechanisms to the caller side of an API.
->
-> **Not required:** a provider SDK, an API key, a GPU, an agent framework, or prior experience with tool calling. The default build is deterministic and offline. An optional seam can call any local OpenAI-compatible server over raw HTTP.
+This chapter treats the API surface as what it actually is — a versioned wire contract — and builds a small typed boundary on top of it, running every piece against a deterministic stand-in for a model server so we can watch real payloads move. We build `chat()`, a raw HTTP boundary, and print the exact JSON it sends and receives; we walk the four message roles and the typed content blocks that break the "content is a string" assumption; we render one message list through two chat templates and watch the token count change; we push probability vectors through nucleus sampling and see why `top_p=0.7` is not "70 percent of the vocabulary"; we sort structured-output guarantees into four levels and measure what each one fails to catch; we measure the *constraint tax* a grammar imposes when the answer it wants is illegal; we own the validation layer with a bounded parse-validate-repair loop and print a real complaint and a real accepted record; we demonstrate — not assert — which schema shapes make mistakes unrepresentable; and we hand-roll one complete tool round trip on the raw message format, then extend it to forcing, parallel calls, and streaming. The build is one boundary grown by mechanism; it is not an agent loop. The model may propose one tool, once. @sec-ch16 turns this into a bounded loop and @sec-ch17 adds the authorized harness.
 
-::: {.callout-note title="Route B backfill — required, about eight pages"}
-Route B arrives here from Chapter 1. Before continuing, read [Chapter 9, “Decoding turns logits into a choice”](09-inference-behavior.qmd#sec-ch09-decoding), [“Truncation shapes the candidate support”](09-inference-behavior.qmd#sec-ch09-truncation), and [“Seeded is not batch invariant”](09-inference-behavior.qmd#sec-ch09-determinism), about five pages together. Then read the **“Chat templates are a model ABI”** subsection inside [Chapter 7, “Supervised fine-tuning makes the first policy”](07-post-training.qmd#sec-ch07-sft), about three pages. The first backfill explains sampling and the limit of determinism; the second explains how messages become the token sequence a model actually receives.
-:::
+## A request and a response on the wire {#sec-ch12-wire}
 
-## Contents {#sec-ch12-contents}
+A chat-completions request is, underneath every SDK, an HTTP `POST` to `/v1/chat/completions`. Its body names a model and carries an ordered `messages` list; it may also carry sampling controls, an output schema, and tool declarations. The response carries one or more choices, each with an assistant message and a **finish reason**, plus a usage block that accounts for tokens. We use this OpenAI-compatible shape as a teaching language because local servers implement it and its five load-bearing ideas transfer to every provider: ordered input, typed output parts, correlation identifiers, a terminal reason, and usage. "Compatible" does not mean identical; provider deltas live in the dated section at the end.
 
-- [The wire format is semantics](#sec-ch12-wire)
-- [What you will build](#sec-ch12-will-build)
-- [Messages compile into tokens](#sec-ch12-messages)
-- [Sampling controls belong to the request contract](#sec-ch12-controls)
-- [Structured output is a spectrum of guarantees](#sec-ch12-spectrum)
-- [Constrained decoding has coverage and quality costs](#sec-ch12-constraint-tax)
-- [Application validation is the guarantee you own](#sec-ch12-validation)
-- [Schemas should make mistakes hard to express](#sec-ch12-schema-design)
-- [A tool call is a proposal, not an execution](#sec-ch12-tool-loop)
-- [Forcing, parallel calls, and streaming change the boundary](#sec-ch12-advanced-calls)
-- [Errors are observations with different owners](#sec-ch12-errors)
-- [Landscape 2026 (dated)](#sec-ch12-landscape)
-- [Build](#sec-ch12-build)
-- [What endures, what changes](#sec-ch12-endures)
-- [Exercises](#sec-ch12-exercises)
-- [Notes and sources](#sec-ch12-sources)
+We start the artifact with `chat()`. It builds the JSON body, sends it through an injected *transport*, and extracts exactly the fields a caller must inspect. The transport seam is the whole trick that keeps this chapter offline: the production transport is `httpx.post`; the teaching transport is a scripted stub we can read.
 
-## The wire format is semantics {#sec-ch12-wire}
+```{python}
+# @save
+from __future__ import annotations
 
-A support assistant asks for order `O-0042`. The model proposes `lookup_order`, the application runs it, and the database returns `{"status":"shipped"}`. A developer appends that result as a plain user message: “The order shipped.” Sometimes the model answers. Sometimes it calls the tool again. Sometimes it invents a delivery date. The database and model are both functioning; the conversation is malformed.
+import json
+import re
+from collections.abc import Callable
+from functools import partial
+from typing import Any
 
-The missing fact is not English phrasing. A tool result is a typed observation correlated to a particular proposal ID. When the caller discards the type and ID, it changes the meaning of the transcript. **The wire format is semantics, not plumbing.**
+from jsonschema import Draft202012Validator
 
-A common chat-completions request is an HTTP `POST` to `/v1/chat/completions`. Its body names a model and carries an ordered `messages` list. It may also carry sampling controls, an output schema, and tool declarations. The response contains one or more choices; each choice has an assistant message and a finish reason. Usage fields report token accounting. A model server can expose this shape without using any vendor SDK.
+Message = dict[str, Any]
+Transport = Callable[[str, dict[str, Any]], dict[str, Any]]
 
-The chapter uses that OpenAI-compatible shape as a teaching language because local servers implement it and its key ideas transfer: ordered input, typed output parts, correlation identifiers, a terminal reason, and usage. “Compatible” does not mean identical behavior. Provider deltas belong in the dated section; the durable spine depends only on those five ideas.
 
-The reference artifact starts with `chat()` in [`code/ch12/chat_api.py`](../code/ch12/chat_api.py). The function constructs JSON, sends raw HTTP, and extracts the fields the caller must inspect:
+def _http_transport(url: str, body: dict[str, Any]) -> dict[str, Any]:
+    """POST one JSON body to a chat-completions URL without a provider SDK."""
+    import httpx
 
-```python
-# code/ch12/chat_api.py — changed region: chat request and response
-body = {
-    "model": model,
-    "messages": messages,
-    "temperature": temperature,
-    "top_p": top_p,
-    "max_tokens": max_tokens,
-}
-endpoint = f"{base_url.rstrip('/')}/v1/chat/completions"
-wire = (transport or _http_transport)(endpoint, body)
-choice = wire["choices"][0]
-return {
-    "message": choice["message"],
-    "finish_reason": choice.get("finish_reason"),
-    "usage": wire.get("usage", {}),
-    "request_id": wire.get("id"),
-}
+    response = httpx.post(url, json=body, timeout=30.0)
+    response.raise_for_status()
+    return response.json()
+
+
+def chat(
+    base_url: str,
+    model: str,
+    messages: list[Message],
+    *,
+    transport: Transport | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    response_format: dict[str, Any] | None = None,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
+    max_tokens: int = 256,
+    tool_choice: Any = None,
+    parallel_tool_calls: bool = False,
+) -> dict[str, Any]:
+    """Call an OpenAI-compatible chat-completions endpoint over raw HTTP.
+
+    The body is the wire contract; every keyword is a field a server versions
+    and may interpret differently. We return a small dict rather than raw text
+    because the caller must inspect four things a bare string hides: the typed
+    assistant ``message`` (which may carry tool calls and null content), the
+    ``finish_reason`` (why generation stopped), token ``usage``, and a
+    ``request_id`` for tracing.
+
+    Args:
+        base_url: Server root; ``/v1/chat/completions`` is appended.
+        model: Model identifier the server routes on.
+        messages: Ordered role/content turns — the conversation so far.
+        transport: A ``(url, body) -> wire_dict`` function; defaults to raw
+            HTTP. Injecting it is what lets tests and this chapter run offline.
+        tools: Optional tool declarations the model may propose against.
+        response_format: Optional structured-output request (see
+            :func:`schema_response_format`).
+        temperature: Decoding sharpness; ``0.0`` is the reproducible default.
+        top_p: Nucleus-sampling mass to keep.
+        max_tokens: Hard generation budget; hitting it yields a ``length`` finish.
+        tool_choice: Optional forcing control (``auto``/``required``/named/``none``).
+        parallel_tool_calls: Whether the server may propose several calls at once.
+
+    Returns:
+        A dict with ``message``, ``finish_reason``, ``usage``, and ``request_id``.
+    """
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+    }
+    if tools is not None:
+        body["tools"] = tools
+        body["parallel_tool_calls"] = parallel_tool_calls
+    if response_format is not None:
+        body["response_format"] = response_format
+    if tool_choice is not None:
+        body["tool_choice"] = tool_choice
+    endpoint = f"{base_url.rstrip('/')}/v1/chat/completions"
+    wire = (transport or _http_transport)(endpoint, body)
+    choice = wire["choices"][0]
+    return {
+        "message": choice["message"],
+        "finish_reason": choice.get("finish_reason"),
+        "usage": wire.get("usage", {}),
+        "request_id": wire.get("id"),
+    }
 ```
 
-The production seam uses `httpx.post`; the test seam accepts a function with the same URL-and-body contract. This is dependency inversion at one boundary, not a provider abstraction layer. Chapter 26 owns gateways, routing, fallback, and multi-provider ports.
+Now the teaching transport. It is deliberately not a language model and makes no attempt to be one: it holds a queue of assistant turns and plays them back in order, wrapping each in the same wire envelope a real server returns. Because its script is right here in the source, every output we print is one you can trace to a line you can read. That is exactly the property a real model denies us, and exactly the property that makes it a good place to learn the boundary.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `chat_api.py` after `chat()` | 46 lines | Every call exposes the assistant message, finish reason, usage, and request ID instead of returning text alone. |
-:::
+```{python}
+# @save
+class ScriptedModel:
+    """A deterministic, offline stand-in for a chat-completions server.
 
-The SDK is not the API. An SDK can add retries, object models, streaming helpers, and authentication, but the network still carries a versioned contract. Inspecting that contract once makes later framework behavior easier to debug.
+    This is not a language model. It replays a fixed list of assistant turns,
+    wrapping each in the OpenAI-compatible ``choices``/``finish_reason``/
+    ``usage`` envelope so the code under test sees a real wire shape. It also
+    remembers the last request body, which lets us print exactly what went out
+    on the wire. Every number it reports is a stub value, honest about being
+    one; it estimates no model's quality.
 
-## What you will build {#sec-ch12-will-build}
+    Args:
+        turns: Assistant turns to play in order, each a
+            ``(message, finish_reason)`` pair. The final turn repeats if asked
+            for more calls than were scripted.
+        prompt_tokens: Fixed prompt-token count to report in ``usage``.
+    """
 
-::: {.callout-tip title="One typed model boundary"}
-You will build a strict-schema refund-ticket extractor and a hand-rolled single-tool round trip rooted at [`chat_api.py`](../code/ch12/chat_api.py). The same functions can use raw HTTP against a local OpenAI-compatible server or a deterministic transport in CI.
+    def __init__(
+        self,
+        turns: list[tuple[Message, str]],
+        *,
+        prompt_tokens: int = 40,
+    ) -> None:
+        self._turns = list(turns)
+        self._prompt_tokens = prompt_tokens
+        self.calls = 0
+        self.last_body: dict[str, Any] | None = None
 
-The offline experiment in [`chapter_build.py`](../code/ch12/chapter_build.py) sends 50 messy tickets through three simulated guarantee levels, applies bounded application repair, and executes 20 `lookup_order` turns. It measures schema-validity rate, schema-valid but business-invalid records, repair frequency, tokens per success, and tool-loop termination. [`render_metrics.py`](../code/ch12/render_metrics.py) generates the numeric SVG from those measurements.
+    def __call__(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.last_body = body
+        message, finish_reason = self._turns[min(self.calls, len(self._turns) - 1)]
+        self.calls += 1
+        completion = max(1, len(json.dumps(message)) // 4)
+        return {
+            "id": f"stub-{self.calls}",
+            "choices": [{"message": message, "finish_reason": finish_reason}],
+            "usage": {
+                "prompt_tokens": self._prompt_tokens,
+                "completion_tokens": completion,
+                "total_tokens": self._prompt_tokens + completion,
+            },
+        }
+```
 
-Success means that every accepted extraction passes Draft 2020-12 validation and the order-existence rule; every tool proposal receives exactly one result carrying the same call ID; no streamed proposal becomes actionable before both call-close and response-terminal events; and all 20 tool loops terminate.
-:::
+With both halves in hand we can watch one round trip. We script a single terse answer, send a two-message conversation, and print both the body that left on the wire and the dict the caller reads back.
 
-This build is one boundary grown by mechanism. It is not an agent loop. The model may propose one tool once; Chapter 16 adds repeated observation and stopping, while Chapter 17 adds approval, authorization, and a production tool harness.
+```{python}
+stub = ScriptedModel([
+    ({"role": "assistant", "content": "Order O-0042 shipped on the 3rd."}, "stop"),
+])
+messages = [
+    {"role": "system", "content": "You are a support assistant. Be terse."},
+    {"role": "user", "content": "Where is order O-0042?"},
+]
+response = chat("http://stub", "scripted-1", messages, transport=stub)
+
+print("REQUEST body sent on the wire:")
+print(json.dumps(stub.last_body, indent=2))
+print("\nRESPONSE the caller reads back:")
+print(json.dumps(response, indent=2))
+```
+
+Read the two payloads against each other. The request is an ordered list of typed turns plus a decoding policy — nothing is hidden in prose. The response is not a string: it is a message, a `finish_reason` of `stop` (the server saw one of its terminal conditions), a `usage` block we can reconcile against our own token counting, and a `request_id` we can log. The stub let us see the shape offline; against a real server the *same* `chat()` call returns the *same* fields, which is the whole point — the boundary is the contract, not the server. The cell below issues that call against any local OpenAI-compatible endpoint. It needs a network and a served model, so it does not run in the book; the block after it shows a representative response.
+
+```{python}
+#| eval: false
+real = chat("http://localhost:8000", "your-model-id", messages)
+print(real["finish_reason"], real["usage"])
+print(real["message"]["content"])
+```
+
+```text
+Representative response (an 8B-class instruct model behind an OpenAI-compatible endpoint):
+
+stop {'prompt_tokens': 26, 'completion_tokens': 14, 'total_tokens': 40}
+Order O-0042 shipped on July 3rd and is out for delivery.
+```
+
+An SDK can layer retries, object models, and streaming helpers over this, but the network still carries this versioned contract, and inspecting it once makes every later framework behavior easier to debug. @sec-ch26 owns gateways, routing, and multi-provider ports; here we keep the wire visible.
 
 ## Messages compile into tokens {#sec-ch12-messages}
 
-An API message is structured input. Its `role` says who or what produced the turn; its `content` may be text or a list of typed blocks. Four roles are useful in the chat-completions teaching shape:
+An API message is structured input. Its `role` says who produced the turn; its `content` may be a string, `null`, or a list of typed blocks. Four roles carry the teaching shape: `system` holds caller-controlled operating instructions, `user` holds user input, `assistant` preserves model output including tool-call proposals, and `tool` carries an application-produced result correlated to one proposal. The trap is assuming `message["content"]` is always a string. It is not, and the two turns below prove it: an assistant turn can carry `content: null` beside a `tool_calls` array, and a multimodal user turn can carry a list of parts.
 
-- `system` carries caller-controlled operating instructions when the surface supports that role;
-- `user` carries user-originated input;
-- `assistant` preserves model output, including tool-call proposals;
-- `tool` carries an application-produced result correlated to one assistant proposal.
-
-Do not assume that `message["content"]` is always a string. An assistant message can have `content: null` and a `tool_calls` array. A multimodal message can contain text and media parts. A refusal may arrive in a field distinct from ordinary text. Walking typed parts is more robust than taking “the first string that looks like an answer.”
-
-Roles are not words the network reads by magic. Before inference, the server applies the checkpoint's **chat template**: a tokenizer-owned program that renders messages, tools, and control metadata into one token sequence. A conceptual rendering might surround each turn with role markers and append an assistant-start marker. Another checkpoint may use different markers, whitespace, order, or tool syntax. Supplying the wrong template is an input-distribution change even when the visible messages are identical.
-
-Figure @fig-ch12-message-compiler answers the question hidden by a convenient API: what happens between a JSON body and a typed response?
-
-```{mermaid}
-%%| label: fig-ch12-message-compiler
-%%| fig-cap: "How does a structured chat request become the token continuation returned to the caller?"
-flowchart LR
-    J["JSON messages, tools, and controls"] --> T["Pinned chat template"]
-    T --> I["Tokenizer: token IDs"]
-    I --> M(["Model logits"])
-    M --> S["Sampling and structural masks"]
-    S --> D["Detokenizer and tool parser"]
-    D --> P["Typed assistant parts"]
-    P --> C{"Caller checks finish reason and types"}
+```{python}
+assistant_tool_turn = {
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{
+        "id": "call_0042",
+        "type": "function",
+        "function": {"name": "lookup_order", "arguments": '{"order_id": "O-0042"}'},
+    }],
+}
+multimodal_user_turn = {
+    "role": "user",
+    "content": [
+        {"type": "text", "text": "What is the total on this receipt?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0K..."}},
+    ],
+}
+print("assistant turn, content is null:")
+print(json.dumps(assistant_tool_turn, indent=2))
+print("\nfirst content part type:", multimodal_user_turn["content"][0]["type"])
 ```
 
-The invariant is that the template and tokenizer are part of the model's application binary interface. Pin them with the model revision, render a golden conversation in tests, and reconcile local counts with server-reported usage. A message list by itself does not determine the prompt tokens.
+Walking typed parts is more robust than grabbing "the first string that looks like an answer." Notice too that the function `arguments` arrive as a JSON *string*, not a parsed object — a detail that bites in @sec-ch12-tool-loop.
 
-The artifact's `count_tokens()` deliberately delegates to the real tokenizer rather than approximating characters:
+Roles are not words the network reads by magic. Before inference the server applies the checkpoint's **chat template**: a tokenizer-owned program that renders messages and tool metadata into one token sequence with role markers. Different checkpoints use different markers, whitespace, and order, so the *same* message list becomes *different* prompt tokens under different templates. This is why the template is part of the model's application binary interface, not plumbing. We make the point with a toy renderer and a toy token counter — both stand-ins for the real `apply_chat_template`, but enough to show the effect.
 
-```python
-# code/ch12/chat_api.py — changed region: count_tokens
-token_ids = tokenizer.apply_chat_template(
-    messages,
-    tools=tools,
-    tokenize=True,
-    add_generation_prompt=True,
-)
-return len(token_ids)
+```{python}
+# @save
+def render_chat_template(messages: list[Message], template: dict[str, Any]) -> str:
+    """Render messages into one prompt string using a template's role markers.
+
+    A real chat template is tokenizer-owned and far richer, but the mechanism
+    is this: each turn is wrapped in role-specific markers and the turns are
+    joined, then a generation marker invites the assistant to continue. Two
+    templates over identical messages produce different strings — and therefore
+    different token counts — which is the whole point.
+
+    Args:
+        messages: The conversation turns; string content only, for the demo.
+        template: Markers dict with per-role ``open``/``close``, a ``sep``
+            between turns, and an ``assistant_open`` generation marker.
+
+    Returns:
+        The rendered prompt string a tokenizer would then encode.
+    """
+    rendered = []
+    for turn in messages:
+        marker = template["roles"][turn["role"]]
+        rendered.append(f"{marker['open']}{turn['content']}{marker['close']}")
+    return template["sep"].join(rendered) + template["assistant_open"]
+
+
+def count_tokens(text: str) -> int:
+    """Count tokens with a word-and-punctuation splitter (a tokenizer stand-in)."""
+    return len(re.findall(r"\w+|[^\w\s]", text))
 ```
 
-Some templates support **assistant prefilling**: the caller supplies a partial final assistant turn and asks the model to continue it. This can steer a prefix, but it is not a portable structured-output guarantee. A template may distinguish “start a new assistant message” from “continue the final message,” and a hosted surface may reject prefilling. Use a native schema feature for structure and treat prefill support as a dated capability.
+We render one conversation through two templates and count. The messages are byte-for-byte identical; only the markers differ.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `chat_api.py` after `count_tokens()` | 10 lines | Token budgeting uses the same tokenizer and chat template that construct the model input. |
-:::
+```{python}
+convo = [
+    {"role": "system", "content": "Be terse."},
+    {"role": "user", "content": "Where is O-0042?"},
+]
+chatml = {
+    "roles": {r: {"open": f"<|im_start|>{r}\n", "close": "<|im_end|>\n"}
+              for r in ("system", "user", "assistant")},
+    "sep": "", "assistant_open": "<|im_start|>assistant\n",
+}
+plain = {
+    "roles": {r: {"open": f"{r.upper()}: ", "close": "\n"}
+              for r in ("system", "user", "assistant")},
+    "sep": "", "assistant_open": "ASSISTANT: ",
+}
+for name, template in (("ChatML-style", chatml), ("plain", plain)):
+    prompt = render_chat_template(convo, template)
+    print(f"{name:14} -> {count_tokens(prompt):2d} tokens")
+```
 
-## Sampling controls belong to the request contract {#sec-ch12-controls}
+Identical messages, different token counts. That is why token budgeting must use the model's own template and tokenizer, and why you reconcile your local count against the server's reported `prompt_tokens`: a delta usually means a template mismatch, server-added tool instructions, or a different tokenizer revision — none of which a character count would ever surface. In production the count comes from the model's own tokenizer via `tokenizer.apply_chat_template(messages, tools=..., add_generation_prompt=True)`, which the offline demo above stands in for; the reconciliation discipline is identical.
 
-The caller does not merely send prose. It chooses a decoding policy. Chapter 9 derived that policy; this section records the API consequence.
+Some templates also support **assistant prefilling**: the caller supplies a partial final assistant turn and the model continues it. It steers a prefix, but it is not a portable structured-output guarantee — a template may or may not distinguish "start a new assistant message" from "continue the last one," and a hosted surface may reject it. Our stub simply continues the seeded prefix so the mechanism is visible:
 
-For logits $z_i$ and temperature $T>0$, the next-token distribution is
+```{python}
+prefill_messages = [
+    {"role": "user", "content": "Give the refund decision as JSON."},
+    {"role": "assistant", "content": '{"action": "'},  # seed the prefix
+]
+prefill_stub = ScriptedModel([
+    ({"role": "assistant", "content": 'refund", "amount_cents": 3700}'}, "stop"),
+])
+tail = chat("http://stub", "scripted", prefill_messages, transport=prefill_stub)
+print("seeded prefix + continuation:", '{"action": "' + tail["message"]["content"])
+```
 
+The continuation completes the object we started, which is useful for steering. But treat prefill support as a dated capability and reach for a native schema feature when you need an actual structural guarantee.
+
+## Sampling controls are versioned request policy {#sec-ch12-controls}
+
+The caller does not merely send prose; it sends a decoding policy, and that policy belongs in versioned request configuration, not hidden in a prompt. @sec-ch01 and @sec-ch09 derived the policy; here we record its API consequences. For logits $z_i$ and temperature $T>0$, the next-token distribution is
 $$
 p_i(T)=\frac{\exp(z_i/T)}{\sum_j \exp(z_j/T)}.
-$$
+$$ {#eq-ch12-softmax}
+Smaller $T$ concentrates mass; larger $T$ spreads it. **Nucleus sampling** then keeps the smallest probability-ranked prefix whose cumulative mass reaches `top_p` and renormalizes over it. The consequence people misread is that `top_p=0.7` does not keep 70 percent of the vocabulary — it keeps however many tokens are needed to *reach* 0.7 of the mass, which depends entirely on the distribution's shape.
 
-Smaller $T$ concentrates probability; larger $T$ spreads it. Nucleus sampling then keeps the smallest probability-ranked prefix whose cumulative mass reaches `top_p`, and renormalizes. Thus `top_p=0.7` does not keep 70 percent of the vocabulary. It may retain two tokens, two hundred, or one, depending on the distribution.
+```{python}
+# @save
+def nucleus(probs: list[float], top_p: float) -> list[int]:
+    """Return the token indices nucleus (top_p) sampling keeps, most likely first.
 
-Put these values in versioned request configuration rather than hiding them in prompt prose. They affect behavior, replay evidence, and evaluation:
+    We sort by probability, accumulate mass, and stop as soon as the running
+    total reaches ``top_p``. The size of the returned set is a property of the
+    distribution, not a fixed fraction of the vocabulary — which is the whole
+    reason ``top_p=0.7`` keeps two tokens in one context and many in another.
 
-| Control | What it controls | What it does not guarantee |
-|---|---|---|
-| `temperature` | relative sharpness before sampling | factuality or identical future output |
-| `top_p` | eligible probability mass | a fixed number of candidates |
-| maximum output tokens | generation budget | task completion or valid closing syntax |
-| stop sequence | termination on a matching sequence | a valid object or semantic stopping condition |
-| seed, when exposed | pseudorandom draws under some conditions | identity across model, hardware, kernel, or batch changes |
-| schema constraint | structurally legal continuations | correct field values or authorization |
+    Args:
+        probs: A probability vector over the candidate tokens; should sum to 1.
+        top_p: Cumulative-mass threshold in ``(0, 1]``.
 
-Always read `finish_reason`. A normal stop means the server observed one of its terminal conditions. A tool-call finish means the model is waiting for observations. A length finish means the configured output budget interrupted generation; accepting a partially emitted object as complete is an application bug. A refusal or content-filter outcome is also not ordinary text.
+    Returns:
+        The kept indices, ordered from most to least probable.
+    """
+    order = sorted(range(len(probs)), key=lambda i: probs[i], reverse=True)
+    kept, cumulative = [], 0.0
+    for index in order:
+        kept.append(index)
+        cumulative += probs[index]
+        if cumulative >= top_p:
+            break
+    return kept
+```
 
-`temperature=0` commonly selects a highest-scoring token, but it is not a system invariant. Model aliases move. Chat templates change. Parallel reductions can perturb nearly tied logits. Dynamic batching can select a different legal kernel. Record the exact model revision when available, template and schema versions, endpoint, controls, request ID, and provider fingerprint when exposed. For hermetic CI, replay a scripted transport and assert types and invariants. For live drift, compare a versioned evaluation distribution rather than one golden sentence.
+We take two distributions over the same vocabulary. One is peaked (the model is confident); one is nearly flat (the model is unsure). The same `top_p=0.7` cuts them very differently.
 
-Token accounting follows the same discipline. Compare the local rendered count with the response's prompt-token usage. A delta often exposes a template mismatch, server-added tool instructions, or different tokenizer revision. Budgeting by characters hides all three.
+```{python}
+peaked = [0.60, 0.25, 0.10, 0.03, 0.02]
+flat = [1 / 12] * 12
+for name, probs in (("peaked", peaked), ("flat", flat)):
+    kept = nucleus(probs, 0.7)
+    mass = sum(probs[i] for i in kept)
+    print(f"{name:7} dist ({len(probs):2d} tokens): top_p=0.7 keeps "
+          f"{len(kept):2d} tokens, {mass:.2f} mass")
+```
 
-## Structured output is a spectrum of guarantees {#sec-ch12-spectrum}
+Two tokens in the peaked case, nine in the flat one, from one threshold. @fig-ch12-topp draws the two cuts so the shape-dependence is unmistakable.
 
-“The model returns JSON” can describe four different contracts. Ordering them prevents a syntactic convenience from becoming a false business guarantee.
+```{python}
+#| label: fig-ch12-topp
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why is top_p not a fixed count? The same top_p=0.7 cut (dashed line at cumulative mass) keeps 2 tokens of a peaked distribution and 9 of a flat one. The retained set is a property of the shape, not a fraction of the vocabulary."
+import matplotlib.pyplot as plt
 
-| Level | Mechanism | Guarantee | Typical failure |
+fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.2))
+for ax, (name, probs) in zip(axes, (("peaked", peaked), ("flat", flat))):
+    kept = set(nucleus(probs, 0.7))
+    colors = ["#355f4d" if i in kept else "#c9cdd4" for i in range(len(probs))]
+    ax.bar(range(len(probs)), sorted(probs, reverse=True), color=colors)
+    ax.set_title(f"{name}: keeps {len(kept)} of {len(probs)}")
+    ax.set_xlabel("token rank")
+axes[0].set_ylabel("probability")
+fig.tight_layout()
+plt.show()
+```
+
+Two more controls round out the request contract, and both are about *stopping*, not correctness. A **stop sequence** truncates generation at the first match; it is a string trigger, not a guarantee of a valid object. We can demonstrate the trigger directly:
+
+```{python}
+def apply_stop(text: str, stops: list[str]) -> str:
+    """Truncate text at the first stop sequence that occurs, if any."""
+    hits = [text.find(s) for s in stops if s in text]
+    return text[:min(hits)] if hits else text
+
+raw = 'refund approved.\nEND\nignore everything after the stop marker'
+print(repr(apply_stop(raw, ["\nEND"])))
+```
+
+And the `finish_reason` is not decoration — it is the difference between a complete answer and a truncated one. A `stop` means a terminal condition fired; a `length` means the `max_tokens` budget interrupted generation mid-object, and accepting that partial object as complete is an application bug; a `tool_calls` means the model is waiting for observations; a content-filter or refusal outcome is also not ordinary text. Always branch on it. And `temperature=0` commonly selects the top-scoring token but is not a system invariant across model aliases, kernels, and batch sizes, so record the exact model revision, template and schema versions, controls, and request id when you need to reason about a past call.
+
+## Four levels of "it returns JSON" {#sec-ch12-spectrum}
+
+"The model returns JSON" can name four very different contracts, and confusing a syntactic convenience for a business guarantee is how extraction endpoints quietly ship bugs. Ordering the guarantees keeps them apart.
+
+| Level | Mechanism | Guarantee | Typical failure it still allows |
 |---:|---|---|---|
-| 1 | prompt-only instruction | none beyond model behavior | prose fences, malformed JSON, wrong shape |
-| 2 | JSON mode | syntactically parseable JSON | missing fields, extra fields, invalid enums |
-| 3 | schema-constrained decoding | conformance to the engine's supported schema subset | unsupported schema, legal but wrong value |
-| 4 | application validation | checks implemented and versioned by your code | a missing business rule in your validator |
+| 1 | prompt-only instruction | none beyond model behavior | prose around the object, malformed JSON, wrong shape |
+| 2 | JSON mode | syntactically parseable JSON | missing/extra fields, invalid enum values |
+| 3 | schema-constrained decoding | conformance to the engine's supported schema subset | a legal-shaped but false value |
+| 4 | application validation | checks your code implements and versions | a business rule you forgot to write |
 
-At level 1, the model may answer “Here is the result” and then an object. A tolerant parser can extract that object, but tolerance is not enforcement. At level 2, every response may parse while `currency: "usd"` violates the application enum. JSON syntax knows objects and strings; it does not know the refund contract.
-
-At level 3, a decoding engine converts the schema into a grammar or state machine. Before each token, it masks continuations that cannot lead to a legal output. The model still scores the remaining tokens. If both `O-0042` and nonexistent `O-9042` fit a string pattern, the grammar permits both. Constrained decoding therefore moves validation earlier without turning a language model into a database.
-
-The artifact sends a strict JSON-Schema request using the common chat-completions shape:
-
-```python
-# code/ch12/chat_api.py — changed region: schema_response_format
-return {
-    "type": "json_schema",
-    "json_schema": {
-        "name": name,
-        "schema": schema,
-        "strict": True,
-    },
-}
-```
-
-Level 4 is different in kind. It runs inside the application release boundary. The caller chooses the JSON Schema draft and validator version, checks values against current state, decides whether a retry is safe, and returns a typed failure when the attempt budget ends. Provider-side enforcement can reduce how often that layer rejects; it cannot replace ownership of it.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `chat_api.py` after `schema_response_format()` | 8 lines | The request distinguishes JSON syntax from one named, strict application schema. |
-:::
-
-## Constrained decoding has coverage and quality costs {#sec-ch12-constraint-tax}
-
-A JSON Schema is a language; a decoding engine implements some of that language. Those sets are not automatically equal. Recursion, references, unions, numeric bounds, string formats, regular-expression dialects, and interactions among object keywords require different compiler and runtime support. An application schema can be valid under Draft 2020-12 yet rejected by a provider, accepted but only partially enforced, or compiled differently by another engine.
-
-Call this the **schema-coverage gap**. Test it at deployment time with the exact schema and engine. A portable design has two explicit targets: the canonical application schema used by the validator, and a provider schema compiled from it. The compiler may flatten references or move a bound to application validation, but it must report lost constraints. Silently deleting keywords creates a guarantee gap no test can name.
-
-Constrained decoding also changes the distribution. If $C(x_{<t})$ is the set of tokens that remain structurally legal after prefix $x_{<t}$, a masked distribution is
-
-$$
-p_i^{C}=\frac{p_i\mathbf{1}[i\in C(x_{<t})]}
-{\sum_j p_j\mathbf{1}[j\in C(x_{<t})]}.
-$$
-
-Every symbol has a concrete role: $p_i$ is the model's unconstrained probability for token $i$; the indicator is one only for legal tokens; the denominator renormalizes surviving mass. If the intended answer lies outside the grammar because the schema is wrong, masking makes it unreachable. If the model planned to reason in free text before writing an object, a grammar that requires `{` immediately removes that route.
-
-This is the **constraint tax**, but its sign is workload-dependent. A 2024 study reported reasoning degradation under restrictive formats. Later critiques argued that prompt and task construction confounded format with reasoning and showed benefits from separating unconstrained reasoning from constrained answers. The engineering conclusion is not that constraints always hurt or always help. Measure semantic task quality, latency, compile time, first-request warmup, schema coverage, and validity together.
-
-Three patterns are useful:
-
-1. For extraction and classification, constrain the final object directly and score field correctness, not only parse rate.
-2. For reasoning-heavy work, let the model reason in a permitted region and constrain only the answer region, or use a second extraction call.
-3. For tool proposals, keep the argument schema small and validate it again before policy and execution.
-
-The mask can guarantee a structural property only within the engine's implemented subset. It cannot guarantee that the schema expresses the product's intent.
-
-## Application validation is the guarantee you own {#sec-ch12-validation}
-
-The application boundary has two jobs. **Structural validation** checks types, required fields, enum membership, patterns, ranges, and extra properties. **Semantic validation** checks facts and policy that the schema cannot know: whether an order exists, whether the extracted amount matches the ticket, whether the actor may refund it, and whether the currency belongs to that account.
-
-The reference artifact uses `Draft202012Validator`, gathers specific complaints, and feeds only those complaints back within a fixed attempt budget. It never retries forever:
-
-```python
-# code/ch12/chat_api.py — changed region: bounded extract loop
-for attempt in range(1, max_attempts + 1):
-    result = invoke(
-        transcript,
-        response_format=schema_response_format(
-            "refund_decision", schema
-        ),
-    )
-    tokens += int(result.get("usage", {}).get("total_tokens", 0))
-    text = result["message"].get("content") or ""
-    try:
-        value = parse_object(text)
-        complaint = _complaint(value, validator, semantic_check)
-    except ValueError as exc:
-        complaint = str(exc)
-    if complaint is None:
-        return Extraction(value=value, attempts=attempt, total_tokens=tokens)
-    transcript.extend([
-        {"role": "assistant", "content": text},
-        {"role": "user", "content": (
-            f"The candidate failed validation: {complaint}. "
-            "Return only one object matching the supplied schema."
-        )},
-    ])
-raise StructuredOutputFailed(f"no valid object after {max_attempts} attempts")
-```
-
-The important behavior is observable: each rejection produces one exact complaint, each new attempt adds token cost, and exhaustion becomes `StructuredOutputFailed` rather than a half-valid dictionary.
-
-Figure @fig-ch12-repair-loop shows where trust ends. The model may repair a candidate; only code may accept it.
+Each rung catches the failure below it and lets a subtler one through. @fig-ch12-guarantee-ladder makes that ladder concrete by annotating each rung with a bad output that passes it and is caught only by the next.
 
 ```{mermaid}
-%%| label: fig-ch12-repair-loop
-%%| fig-cap: "Where does a bounded repair loop stop trusting model output?"
+%%| echo: false
+%%| label: fig-ch12-guarantee-ladder
+%%| fig-cap: "What does each guarantee level fail to catch? Every rung admits a bad output that the rung above it rejects — which is why the top rung, application validation, is the only one that can see business state."
 flowchart TD
-    R["Receive typed assistant content"] --> P{"JSON object parses?"}
-    P -->|"no"| E["Create specific complaint"]
-    P -->|"yes"| S{"Canonical schema passes?"}
-    S -->|"no"| E
-    S -->|"yes"| B{"Business rules pass?"}
-    B -->|"no"| E
-    B -->|"yes"| A(["Accept typed value"])
-    E --> Q{"Attempt budget remains?"}
-    Q -->|"yes"| M["Append candidate + complaint"]
-    M --> R
-    Q -->|"no"| F(["StructuredOutputFailed"])
+    L1["Level 1 prompt only<br/>admits: prose-wrapped object"] --> L2["Level 2 JSON mode<br/>admits: currency = usd, a bad enum"]
+    L2 --> L3["Level 3 schema-constrained<br/>admits: order_id O-9042, legal shape but nonexistent"]
+    L3 --> L4["Level 4 application validation<br/>rejects nonexistent order and wrong actor"]
 ```
 
-The loop retries a model call, not an external effect. Extraction is safe to recompute because it changes no account state. If a model produced a tool proposal that might already have executed, replay requires an idempotency record; Chapter 26 owns that durable-effect machinery.
+Level 3 deserves a sentence of mechanism because it is the one people over-trust. A decoding engine compiles the schema into a grammar or state machine and, before each token, masks continuations that cannot lead to a legal output [@willard2023outlines; @dong2024xgrammar]. The model still scores the surviving tokens. If both a real id `O-0042` and a nonexistent `O-9042` match the string pattern, the grammar permits both — constraint moves validation earlier without turning a language model into a database. Level 4 is different in kind: it runs inside your release boundary, chooses the JSON Schema draft and validator version, checks values against current state, and returns a typed failure when the budget ends. The artifact requests level-3 conformance with a strict schema, then owns level 4 itself.
 
-Repair is not automatically the best fallback. A syntax error may be locally repairable. An unknown order ID may require clarification or a fresh state read. A refusal should remain a typed refusal, not be bullied through repeated prompts. Treat the complaint class as a routing signal.
+```{python}
+# @save
+def schema_response_format(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """Build the OpenAI-compatible strict JSON-Schema request block.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `chat_api.py` after `extract()` | 53 lines | No extraction crosses the boundary until parsing, canonical schema, and optional semantic checks all pass within a finite budget. |
-:::
+    Args:
+        name: A stable name for the schema, recorded in traces.
+        schema: The JSON Schema the decoder should conform output to.
 
-## Schemas should make mistakes hard to express {#sec-ch12-schema-design}
+    Returns:
+        The ``response_format`` object to place in the request body.
+    """
+    return {"type": "json_schema",
+            "json_schema": {"name": name, "schema": schema, "strict": True}}
 
-A schema is both a machine contract and model context. Property names, descriptions, enums, nesting, and optionality change what the model must infer. Design it for one decision, not for every future use case.
 
-Prefer fields whose invalid states are unrepresentable. An enum such as `refund | deny | escalate` is safer than an unconstrained `decision` string followed by fuzzy normalization. Require every property when the engine's strict mode expects it; represent genuine absence explicitly with `null` or a separate status. Set `additionalProperties: false` at every object boundary so misspellings do not become silent features. Keep identifiers as strings when leading zeros or formatting matter.
-
-Descriptions should state purpose and non-use, not repeat the field name. Compare these declarations:
-
-```json
-{
-  "name": "lookup",
-  "description": "Looks things up",
-  "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}
-}
-```
-
-```json
-{
-  "name": "lookup_order",
-  "description": "Read one order by exact ID; do not use for product search.",
-  "parameters": {
+REFUND_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "properties": {
-      "order_id": {
-        "type": "string",
-        "description": "Order ID printed in the ticket, for example O-0042",
-        "pattern": "^O-[0-9]{4}$"
-      }
+        "ticket_id": {"type": "string", "pattern": "^T-[0-9]{3}$"},
+        "action": {"enum": ["refund", "deny", "escalate"]},
+        "order_id": {"type": "string", "pattern": "^O-[0-9]{4}$"},
+        "amount_cents": {"type": "integer", "minimum": 0},
+        "currency": {"enum": ["USD", "EUR"]},
     },
-    "required": ["order_id"],
-    "additionalProperties": false
-  }
+    "required": ["ticket_id", "action", "order_id", "amount_cents", "currency"],
+    "additionalProperties": False,
 }
 ```
 
-The second name states the resource and operation. Its description provides a negative boundary. The argument name carries meaning, and the pattern blocks a class of malformed IDs. It still cannot prove existence or access rights; those remain application checks.
+To see the three failure modes as *data*, we script one stub output per level and print them. These are the exact strings a level-1, level-2, and level-3 surface might emit on a hard ticket — manufactured here so the boundary has something concrete to reject.
 
-Flat schemas usually require fewer dependent decisions than deeply nested unions. Split two semantically different operations into two tools instead of a `mode` field that changes the meaning of ten optional fields. Conversely, do not create dozens of tiny overlapping tools whose selection boundaries the model cannot distinguish. Chapter 17 develops tool-surface design; here the rule is narrower: make one proposed call easy to validate and hard to misread.
+```{python}
+level_outputs = {
+    "1 prompt-only": 'Here is the result: '
+        '{"ticket_id":"T-004","action":"refund","order_id":"O-0004",'
+        '"amount_cents":1048,"currency":"usd"}',
+    "2 JSON-mode": '{"ticket_id":"T-011","action":"refund","order_id":"O-0011",'
+        '"amount_cents":1307,"currency":"USD","note":"extra field"}',
+    "3 schema": '{"ticket_id":"T-010","action":"refund","order_id":"O-9010",'
+        '"amount_cents":1270,"currency":"USD"}',
+}
+for level, text in level_outputs.items():
+    print(f"level {level}:\n  {text}\n")
+```
 
-Version schemas as code. Give each a stable name and digest, record that identity in traces, and add examples that should pass and fail. A provider rejecting a valid application keyword is a compile-time deployment failure, not a reason to weaken the canonical validator.
+The level-1 output buries a valid object in prose and lower-cases the currency; the level-2 output is clean JSON with an extra field; the level-3 output is schema-perfect but names an order that does not exist. Each is caught one rung higher than you might hope. Turning these strings into accepted-or-rejected decisions is the job of the layer we own next.
+
+## The constraint tax, measured {#sec-ch12-constraint-tax}
+
+Constrained decoding is not free. A JSON Schema is a language and a decoding engine implements only some of it; recursion, references, unions, numeric bounds, and string formats each need compiler support, so a schema valid under Draft 2020-12 can be silently under-enforced by a provider [@geng2025jsonschemabench]. That is the **schema-coverage gap**, and you close it by testing the exact schema against the exact engine at deploy time. But there is a second, subtler cost that shows up even when coverage is perfect. Masking reshapes the distribution. If $C$ is the set of tokens still legal after the current prefix, the constrained distribution is
+$$
+p_i^{C}=\frac{p_i\,\mathbf{1}[i\in C]}{\sum_j p_j\,\mathbf{1}[j\in C]},
+$$ {#eq-ch12-mask}
+where $p_i$ is the model's unconstrained probability for token $i$, the indicator is one only for legal tokens, and the denominator renormalizes the survivors. When the token the model most wanted is illegal — because the schema forbids the free-text reasoning it planned, or because the true answer lies outside the grammar — that mass is not redistributed to a better answer; it is simply diverted. We can measure exactly how much.
+
+```{python}
+# @save
+def constrained_renormalize(probs: list[float], legal: set[int]) -> list[float]:
+    """Apply @eq-ch12-mask: zero illegal tokens and renormalize the survivors.
+
+    Args:
+        probs: The model's unconstrained probability vector.
+        legal: Indices the grammar still permits after the current prefix.
+
+    Returns:
+        The renormalized distribution over legal tokens; illegal tokens get 0.
+
+    Raises:
+        ValueError: If the grammar leaves no legal continuation (empty support).
+    """
+    masked = [p if i in legal else 0.0 for i, p in enumerate(probs)]
+    total = sum(masked)
+    if total == 0.0:
+        raise ValueError("the grammar left no legal continuation")
+    return [p / total for p in masked]
+
+
+def constraint_tax(probs: list[float], legal: set[int]) -> float:
+    """Return the probability mass the grammar diverts from the model's top choice."""
+    intended = max(range(len(probs)), key=lambda i: probs[i])
+    return 0.0 if intended in legal else probs[intended]
+```
+
+Consider the first token after a prompt. The model's top choice is to start reasoning in prose; a strict grammar requires the object to open with `{` immediately. We measure the tax in that case and in a benign one where the model's top choice is already legal.
+
+```{python}
+tokens = ["Here", "{", "The", "Sure", "Note"]
+reasoning_first = [0.45, 0.08, 0.25, 0.12, 0.10]   # model wants to reason first
+object_first = [0.10, 0.55, 0.15, 0.10, 0.10]      # model already wants "{"
+grammar = {1}  # the schema permits only "{" as the first token
+
+for name, probs in (("reasoning-first", reasoning_first), ("object-first", object_first)):
+    tax = constraint_tax(probs, grammar)
+    after = constrained_renormalize(probs, grammar)
+    forced = tokens[max(range(len(after)), key=lambda i: after[i])]
+    print(f"{name:16}: tax={tax:.2f} mass diverted, grammar forces {forced!r}")
+```
+
+In the reasoning-first case the grammar throws away 0.45 of probability — the model's entire plan to think before answering — and forces the `{`. In the object-first case the tax is zero: the constraint agrees with the model, so it costs nothing. @fig-ch12-constraint-mask shows the before-and-after for the expensive case.
+
+```{python}
+#| label: fig-ch12-constraint-mask
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does the constraint tax cost when the wanted token is illegal? The grammar zeroes the model's top choice ('Here', p=0.45) and renormalizes the rest onto the single legal token, diverting 0.45 of mass that never reaches a better answer."
+before = reasoning_first
+after = constrained_renormalize(reasoning_first, grammar)
+x = range(len(tokens))
+fig, ax = plt.subplots(figsize=(6.8, 3.3))
+ax.bar([i - 0.2 for i in x], before, width=0.4, label="unconstrained $p_i$", color="#71849c")
+ax.bar([i + 0.2 for i in x], after, width=0.4, label="constrained $p_i^C$", color="#355f4d")
+ax.set_xticks(list(x))
+ax.set_xticklabels([repr(t) for t in tokens])
+ax.set_ylabel("probability")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+The engineering lesson is not that constraints always hurt. A 2024 study reported reasoning degradation under restrictive formats; a rebuttal showed the effect largely vanished once unconstrained reasoning was separated from the constrained answer [@tam2024letmespeak; @dottxt2024saywhatyoumean]. So the sign of the tax is workload-dependent: for extraction, constrain the final object directly and score field correctness; for reasoning-heavy work, let the model reason in a permitted region and constrain only the answer, or use a second extraction call. Measure semantic task quality, latency, compile time, coverage, and validity together — never parse rate alone.
+
+## The validation you own {#sec-ch12-validation}
+
+The application boundary has two jobs the model cannot do for it. **Structural validation** checks types, required fields, enum membership, patterns, and ranges. **Semantic validation** checks facts and policy the schema cannot know: whether the order exists, whether the actor may refund it, whether the amount matches the ticket. We build the layer as a bounded loop: parse the first object, gather one specific complaint, feed only that complaint back, and stop after a fixed budget with a typed failure rather than a half-valid dict.
+
+```{python}
+# @save
+class StructuredOutputFailed(RuntimeError):
+    """No valid application object was obtained within the attempt budget."""
+
+
+class Extraction:
+    """A validated object plus the cost of obtaining it.
+
+    Keeping ``attempts`` and ``total_tokens`` beside the value is what makes the
+    repair loop measurable: every retry is a countable cost, not a hidden one.
+    """
+
+    def __init__(self, value: dict[str, Any], attempts: int, total_tokens: int) -> None:
+        self.value = value
+        self.attempts = attempts
+        self.total_tokens = total_tokens
+
+
+def parse_object(text: str) -> dict[str, Any]:
+    """Parse the first JSON object in text, tolerating surrounding prose.
+
+    Tolerance is not enforcement: this happily extracts an object a level-1
+    model wrapped in prose, which is why it must be followed by real schema and
+    business validation — parsing something is not the same as accepting it.
+
+    Args:
+        text: Raw assistant content that should contain one JSON object.
+
+    Returns:
+        The first decoded object.
+
+    Raises:
+        ValueError: If no JSON object is present or the first value is not one.
+    """
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("no JSON object found")
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON: {exc.msg}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("the first JSON value is not an object")
+    return value
+
+
+def _complaint(
+    value: dict[str, Any],
+    validator: Draft202012Validator,
+    semantic_check: Callable[[dict[str, Any]], str | None] | None,
+) -> str | None:
+    """Return one specific structural-or-semantic complaint, or None if valid."""
+    errors = sorted(validator.iter_errors(value), key=lambda e: list(e.path))
+    if errors:
+        return "; ".join(
+            f"{'/'.join(map(str, e.path)) or '<root>'}: {e.message}" for e in errors
+        )
+    return semantic_check(value) if semantic_check else None
+```
+
+The loop itself calls the model, checks the candidate, and either accepts, complains and retries, or gives up. Only the model call is retried — parsing an extraction changes no account state, so it is safe to recompute; an *effect* would not be, which is why @sec-ch26 owns durable execution.
+
+```{python}
+# @save
+def extract(
+    invoke: Callable[..., dict[str, Any]],
+    messages: list[Message],
+    schema: dict[str, Any],
+    *,
+    max_attempts: int = 3,
+    semantic_check: Callable[[dict[str, Any]], str | None] | None = None,
+) -> Extraction:
+    """Parse, validate, and repair a structured extraction within a token budget.
+
+    Each attempt sends the transcript with a strict-schema request, parses the
+    first object, and asks for one specific complaint. A complaint becomes the
+    next user turn so the model repairs exactly what failed; success returns a
+    typed ``Extraction``; exhaustion raises rather than leaking a half-valid dict.
+
+    Args:
+        invoke: A ``chat``-like callable bound to a transport and model.
+        messages: The seed conversation (typically one user turn).
+        schema: The canonical schema the value must satisfy.
+        max_attempts: Maximum model calls before giving up.
+        semantic_check: Optional business-state check returning a complaint string.
+
+    Returns:
+        The validated value with its attempt count and cumulative token cost.
+
+    Raises:
+        StructuredOutputFailed: If no valid object appears within the budget.
+    """
+    validator = Draft202012Validator(schema)
+    transcript = list(messages)
+    tokens = 0
+    for attempt in range(1, max_attempts + 1):
+        result = invoke(
+            transcript,
+            response_format=schema_response_format("refund_decision", schema),
+        )
+        tokens += int(result.get("usage", {}).get("total_tokens", 0))
+        text = result["message"].get("content") or ""
+        try:
+            value = parse_object(text)
+            complaint = _complaint(value, validator, semantic_check)
+        except ValueError as exc:
+            complaint = str(exc)
+        if complaint is None:
+            return Extraction(value=value, attempts=attempt, total_tokens=tokens)
+        transcript += [
+            {"role": "assistant", "content": text},
+            {"role": "user", "content": (
+                f"The candidate failed validation: {complaint}. "
+                "Return only one object matching the supplied schema.")},
+        ]
+    raise StructuredOutputFailed(f"no valid object after {max_attempts} attempts")
+```
+
+The semantic check is the part the schema cannot express — whether an order actually exists in application state. It is the layer @sec-ch12-spectrum called level 4.
+
+```{python}
+# @save
+KNOWN_ORDERS = {f"O-{i:04d}" for i in range(1, 51)}
+
+
+def semantic_check(value: dict[str, Any]) -> str | None:
+    """Reject a schema-legal order id that does not exist in application state.
+
+    Args:
+        value: A structurally valid extraction with an ``order_id``.
+
+    Returns:
+        ``None`` if the order exists, else a complaint string for the loop.
+    """
+    return None if value["order_id"] in KNOWN_ORDERS else "order_id does not exist"
+```
+
+Now the payoff the boundary was built for: a real repair trace. We script a stub that first emits the level-2 candidate (a stray `note` field) and then, after being told exactly what failed, emits a clean object. Watch the complaint route through and the accepted record print.
+
+```{python}
+repair_stub = ScriptedModel([
+    ({"role": "assistant", "content":
+      '{"ticket_id":"T-011","action":"refund","order_id":"O-0011",'
+      '"amount_cents":1307,"currency":"USD","note":"stray field"}'}, "stop"),
+    ({"role": "assistant", "content":
+      '{"ticket_id":"T-011","action":"refund","order_id":"O-0011",'
+      '"amount_cents":1307,"currency":"USD"}'}, "stop"),
+])
+invoke = partial(chat, "http://stub", "scripted", transport=repair_stub)
+extraction = extract(
+    invoke,
+    [{"role": "user", "content": "Extract the refund decision for ticket T-011."}],
+    REFUND_SCHEMA,
+    semantic_check=semantic_check,
+)
+print("attempts:", extraction.attempts)
+print("total tokens:", extraction.total_tokens)
+print("accepted value:", json.dumps(extraction.value))
+```
+
+The first candidate failed on `additionalProperties`, the complaint named the stray field, and the second attempt passed — at the cost of a second call, which the token count records honestly. @fig-ch12-repair-loop draws where trust ends: the model may *repair* a candidate, but only code may *accept* one.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch12-repair-loop
+%%| fig-cap: "Where does a bounded repair loop stop trusting model output? Every path back to the model is a retry of a safe recomputation; only the application accepts a value, and only within a finite budget."
+flowchart TD
+    R["Receive assistant content"] --> P{"Object parses?"}
+    P -->|no| E["Build one specific complaint"]
+    P -->|yes| S{"Schema passes?"}
+    S -->|no| E
+    S -->|yes| B{"Business rules pass?"}
+    B -->|no| E
+    B -->|yes| A(["Accept typed value"])
+    E --> Q{"Budget remains?"}
+    Q -->|yes| M["Append candidate + complaint, retry"]
+    M --> R
+    Q -->|no| F(["StructuredOutputFailed"])
+```
+
+Repair is not always the right fallback. A syntax slip is locally repairable; an unknown order id may need a fresh state read or a clarification; a refusal should stay a typed refusal, not be bullied through repeated prompts. Treat the complaint class as a routing signal, not an invitation to loop.
+
+With the loop in hand we can run the small experiment that gives the chapter its one data figure. Fifty synthetic tickets, three guarantee levels with their characteristic flaws injected, and the level-4 loop over the level-2 stream. The failure injection is a visible function, so nothing is hidden.
+
+```{python}
+# @save
+def make_tickets(count: int = 50) -> list[dict[str, Any]]:
+    """Build source-traceable but deliberately messy refund tickets.
+
+    Args:
+        count: How many tickets to generate (ids ``T-001`` upward).
+
+    Returns:
+        Ticket dicts carrying a ticket id, order id, amount, currency, and prose.
+    """
+    tickets = []
+    for i in range(1, count + 1):
+        currency = "USD" if i % 5 else "EUR"
+        tickets.append({
+            "ticket_id": f"T-{i:03d}",
+            "order_id": f"O-{i:04d}",
+            "amount_cents": 900 + 37 * i,
+            "currency": currency,
+        })
+    return tickets
+
+
+def scripted_candidate(ticket: dict[str, Any], level: int) -> str:
+    """Return a guarantee-level's characteristic output for one ticket.
+
+    The injected flaws are the point: level 1 lower-cases some enums and wraps
+    some objects in prose, level 2 adds a stray property, level 3 emits a
+    legal-shaped but nonexistent order id. They stand in for real model failure
+    modes so the boundary has honest, known-bad inputs to reject.
+
+    Args:
+        ticket: A ticket from :func:`make_tickets`.
+        level: The guarantee level (1, 2, or 3) whose flaw to inject.
+
+    Returns:
+        The candidate assistant content as a string.
+    """
+    index = int(ticket["ticket_id"].split("-")[1])
+    value = {
+        "ticket_id": ticket["ticket_id"], "action": "refund",
+        "order_id": ticket["order_id"], "amount_cents": ticket["amount_cents"],
+        "currency": ticket["currency"],
+    }
+    if level == 1 and index % 4 == 0:
+        value["currency"] = value["currency"].lower()   # bad enum
+    if level == 2 and index % 11 == 0:
+        value["note"] = "not in schema"                 # extra property
+    if level == 3 and index % 10 == 0:
+        value["order_id"] = f"O-9{index:03d}"           # legal shape, nonexistent
+    body = json.dumps(value)
+    if level == 1 and index % 7 == 0:
+        return f"Here is the extraction: {body}"         # prose wrapper
+    return body
+
+
+def run_validity_experiment(count: int = 50) -> dict[str, Any]:
+    """Measure schema validity per level and the level-4 repair cost.
+
+    Args:
+        count: Number of tickets to run.
+
+    Returns:
+        A report with per-level validity, the count of schema-valid but
+        business-invalid records, the repair-invocation rate, and mean tokens
+        per successful extraction.
+    """
+    tickets = make_tickets(count)
+    validator = Draft202012Validator(REFUND_SCHEMA)
+
+    def valid(text: str) -> bool:
+        try:
+            return not list(validator.iter_errors(parse_object(text)))
+        except ValueError:
+            return False
+
+    validity = {
+        level: sum(valid(scripted_candidate(t, level)) for t in tickets) / count
+        for level in (1, 2, 3)
+    }
+    business_invalid = sum(
+        valid(scripted_candidate(t, 3))
+        and semantic_check(parse_object(scripted_candidate(t, 3))) is not None
+        for t in tickets
+    )
+    extractions = []
+    for ticket in tickets:
+        stub = ScriptedModel([
+            ({"role": "assistant", "content": scripted_candidate(ticket, 2)}, "stop"),
+            ({"role": "assistant", "content": json.dumps({
+                "ticket_id": ticket["ticket_id"], "action": "refund",
+                "order_id": ticket["order_id"], "amount_cents": ticket["amount_cents"],
+                "currency": ticket["currency"]})}, "stop"),
+        ])
+        extractions.append(extract(
+            partial(chat, "http://stub", "scripted", transport=stub),
+            [{"role": "user", "content": "extract"}],
+            REFUND_SCHEMA, semantic_check=semantic_check))
+    repaired = sum(e.attempts > 1 for e in extractions)
+    return {
+        "validity": validity,
+        "business_invalid": business_invalid,
+        "repair_rate": repaired / count,
+        "tokens_per_success": sum(e.total_tokens for e in extractions) / count,
+    }
+```
+
+```{python}
+report = run_validity_experiment()
+for level, rate in report["validity"].items():
+    print(f"level {level}: {rate:.0%} schema-valid")
+print(f"schema-valid but nonexistent order: {report['business_invalid']} of 50")
+print(f"repair-invocation rate: {report['repair_rate']:.0%}")
+print(f"tokens per successful extraction: {report['tokens_per_success']:.1f}")
+```
+
+The numbers climb 76, 92, 100 as the guarantee tightens — but the comparison that matters is not 92 versus 100. It is the five records at level 3 that are structurally perfect and operationally false: real-shaped order ids that do not exist. @fig-ch12-validity hatches exactly that remainder so schema conformance cannot masquerade as correctness. These are synthetic CPU results; they prove the boundary's behavior, not a model's quality.
+
+```{python}
+#| label: fig-ch12-validity
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How do stronger guarantees change validity, and what survives them? Bars show schema-valid records over 50 tickets; the hatched slice of the schema-constrained bar is five schema-valid but nonexistent order ids that only application validation catches."
+names = ["prompt only", "JSON mode", "schema", "app validated"]
+rates = [report["validity"][1], report["validity"][2], report["validity"][3], 1.0]
+invalid = [0, 0, report["business_invalid"] / 50, 0]
+pos = range(len(names))
+fig, ax = plt.subplots(figsize=(7.0, 3.6))
+ax.bar(pos, rates, color=["#d7dde5", "#aebac9", "#71849c", "#355f4d"], edgecolor="#222")
+ax.bar(pos, invalid, bottom=[r - b for r, b in zip(rates, invalid)],
+       color="none", edgecolor="#111", hatch="////", label="schema-valid, business-invalid")
+for p, r in zip(pos, rates):
+    ax.text(p, r + 0.02, f"{r:.0%}", ha="center", fontsize=9)
+ax.set_xticks(list(pos)); ax.set_xticklabels(names)
+ax.set_ylim(0, 1.12); ax.set_ylabel("valid records / 50")
+ax.legend(frameon=False, loc="lower right")
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
+
+## Designing schemas models can't misuse {#sec-ch12-schema-design}
+
+A schema is two things at once: a machine contract the validator enforces and context the model reads. Both jobs pull toward the same design rule — make invalid states unrepresentable — and the rule is best shown, not asserted. Take two versions of the refund schema. A loose one uses a free-form `decision` string and allows extra properties; a strict one uses an enum and forbids them. We feed both the *same* sloppy candidate and watch them disagree.
+
+```{python}
+loose_schema = {
+    "type": "object",
+    "properties": {"decision": {"type": "string"}, "amount_cents": {"type": "integer"}},
+    "required": ["decision", "amount_cents"],
+    # no additionalProperties: false, no enum
+}
+strict_schema = {
+    "type": "object",
+    "properties": {
+        "action": {"enum": ["refund", "deny", "escalate"]},
+        "amount_cents": {"type": "integer", "minimum": 0},
+    },
+    "required": ["action", "amount_cents"],
+    "additionalProperties": False,
+}
+sloppy = {"decision": "Refund!!", "action": "Refund!!", "amount_cents": -5,
+          "aproved_by": "bot"}   # typo'd key, negative amount, free-text decision
+
+for name, schema in (("loose", loose_schema), ("strict", strict_schema)):
+    errors = list(Draft202012Validator(schema).iter_errors(sloppy))
+    verdict = "accepts it" if not errors else f"rejects: {errors[0].message}"
+    print(f"{name:6} schema {verdict}")
+```
+
+The loose schema accepts the record whole — the free-text `decision` swallows "Refund!!", the misspelled `aproved_by` key rides along as a silent feature, and the negative amount passes because nothing forbids it. The strict schema rejects on the first illegal value. The difference is not model quality; it is what the two contracts made *possible to express*. Four rules follow, each demonstrated by that contrast: prefer an enum over a string the model can fill freely; set `additionalProperties: false` at every object boundary so a misspelled key cannot become a feature; give numbers real bounds; keep ids as patterned strings when formatting matters. And descriptions should state purpose and non-use — `"Read one order by exact id; do not use for product search."` teaches the model far more than `"Looks things up."` @sec-ch17 develops full tool-surface design; here the rule is narrow: make one proposed call easy to validate and hard to misread.
 
 ## A tool call is a proposal, not an execution {#sec-ch12-tool-loop}
 
-A tool declaration tells the model which action shape it may propose. It does not grant credentials, call a function, or authorize an effect. One complete tool-calling round trip requires at least two model requests:
+A tool declaration tells the model which action *shape* it may propose. It grants no credentials, calls no function, authorizes no effect. One complete round trip takes at least two model requests: the application sends messages plus declarations; the model returns an assistant turn with a call id, tool name, and arguments as a JSON string, finishing with `tool_calls`; the application parses, validates, and authorizes those arguments and either runs or refuses; it appends the original assistant turn and a `tool` result carrying the *same* call id; and it sends the second request, from which the model can finally answer. The invariant to hold without qualification: **the provider never calls your tool.** Your code owns the only execution arrow. We build the loop to admit exactly one proposal, validate its arguments before touching the handler, and correlate the result by id.
 
-1. The application sends messages plus tool declarations.
-2. The model returns an assistant turn containing a call ID, tool name, and serialized arguments. Its finish reason indicates `tool_calls` in this teaching shape.
-3. The application parses and validates arguments, applies policy, and either executes or refuses.
-4. The application appends the original assistant turn and a typed tool result carrying the same call ID.
-5. The application sends the second model request; the model can now answer from the observation.
+```{python}
+# @save
+def assert_all_calls_answered(calls: list[dict], results: list[Message]) -> None:
+    """Require every proposal id to be answered by exactly one result id.
 
-Figure @fig-ch12-tool-sequence places authority on the only arrow that can reach the tool.
+    Args:
+        calls: The assistant's proposed tool calls, each carrying an ``id``.
+        results: The tool result messages, each carrying a ``tool_call_id``.
+
+    Raises:
+        ValueError: If ids are duplicated or the two id sets do not match.
+    """
+    proposed = [c["id"] for c in calls]
+    answered = [r["tool_call_id"] for r in results]
+    if len(proposed) != len(set(proposed)) or sorted(proposed) != sorted(answered):
+        raise ValueError("tool results must answer every unique call id exactly once")
+
+
+def run_tool_turn(
+    invoke: Callable[..., dict[str, Any]],
+    messages: list[Message],
+    tool: dict[str, Any],
+    handler: Callable[..., Any],
+) -> dict[str, Any]:
+    """Run one proposed tool call and return the model's final response.
+
+    The proposal is validated against the tool's own parameter schema *before*
+    the handler runs, so malformed arguments raise at the boundary rather than
+    inside application code. The complete assistant turn is preserved on the
+    second request — reconstructing only name and arguments can drop provider
+    metadata the model needs.
+
+    Args:
+        invoke: A ``chat``-like callable bound to a transport and model.
+        messages: The seed conversation.
+        tool: One tool declaration (name, description, parameter schema).
+        handler: The Python function that actually performs the action.
+
+    Returns:
+        The second-request response, from which the model answers.
+
+    Raises:
+        ValueError: On an unexpected finish, wrong call count, disallowed tool,
+            or arguments that fail the tool's schema.
+    """
+    first = invoke(messages, tools=[tool], parallel_tool_calls=False)
+    if first["finish_reason"] != "tool_calls":
+        raise ValueError("expected a tool_calls finish reason")
+    calls = first["message"].get("tool_calls", [])
+    if len(calls) != 1:
+        raise ValueError("this boundary permits exactly one tool proposal")
+    call = calls[0]
+    if call["function"]["name"] != tool["function"]["name"]:
+        raise ValueError("the proposed tool is not allowed")
+    arguments = json.loads(call["function"]["arguments"])
+    errors = list(Draft202012Validator(tool["function"]["parameters"]).iter_errors(arguments))
+    if errors:
+        raise ValueError(f"tool arguments failed validation: {errors[0].message}")
+    output = handler(**arguments)
+    result = {"role": "tool", "tool_call_id": call["id"],
+              "content": json.dumps(output, sort_keys=True)}
+    assert_all_calls_answered(calls, [result])
+    return invoke([*messages, first["message"], result], tools=[tool],
+                  parallel_tool_calls=False)
+```
+
+We script the two-turn exchange and print the intermediate `tool_calls` structure and the correlated `tool` message, so the correlation is visible rather than described.
+
+```{python}
+LOOKUP_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "lookup_order",
+        "description": "Read one order by exact id; do not use for product search.",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string", "pattern": "^O-[0-9]{4}$"}},
+            "required": ["order_id"], "additionalProperties": False,
+        },
+    },
+}
+proposal_turn = {"role": "assistant", "content": None, "tool_calls": [{
+    "id": "call_0042", "type": "function",
+    "function": {"name": "lookup_order", "arguments": '{"order_id": "O-0042"}'}}]}
+tool_stub = ScriptedModel([
+    (proposal_turn, "tool_calls"),
+    ({"role": "assistant", "content": "Order O-0042 is shipped."}, "stop"),
+])
+def lookup_order(order_id: str) -> dict[str, str]:
+    return {"order_id": order_id, "status": "shipped"}
+
+final = run_tool_turn(
+    partial(chat, "http://stub", "scripted", transport=tool_stub),
+    [{"role": "user", "content": "Where is O-0042?"}], LOOKUP_TOOL, lookup_order)
+print("proposal the model returned:")
+print(json.dumps(proposal_turn["tool_calls"][0], indent=2))
+print("correlated result carries the same id, then the model answers:")
+print("final answer:", final["message"]["content"], "| finish:", final["finish_reason"])
+```
+
+@fig-ch12-tool-sequence places authority on the only arrow that reaches the tool.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch12-tool-sequence
-%%| fig-cap: "Who actually invokes a tool, and how is its result correlated to the proposal?"
+%%| fig-cap: "Who actually invokes a tool, and how is its result correlated to the proposal? The model proposes; the application validates, authorizes, and executes; the result returns under the same call id."
 sequenceDiagram
     participant App as Application
     participant API as Model API
@@ -365,226 +1004,216 @@ sequenceDiagram
     API-->>App: final assistant text, finish=stop
 ```
 
-The invariant is worth stating without qualification: **the provider never calls your application tool.** The application owns the credentials and the only execution arrow. A managed provider-side tool is a different architecture and must be labeled as such.
+Three variations change the boundary, and each is a worked example rather than a table row. First, **forcing** with `tool_choice` changes which shapes the decoder may emit; the request body differs concretely:
 
-In chat completions, function arguments commonly arrive as a JSON string inside `tool_calls[*].function.arguments`. Parse at the boundary. A truncated string should raise near the response, not travel two layers until a handler fails on the wrong type. Verify that the proposed name is on the allowed list and validate the parsed object against that tool's schema before invoking a handler.
-
-The artifact's `run_tool_turn()` admits exactly one proposal, executes one injected handler, and echoes the identifier:
-
-```python
-# code/ch12/chat_api.py — changed region: one tool-call round trip
-calls = first["message"].get("tool_calls", [])
-if len(calls) != 1:
-    raise ValueError("this boundary permits exactly one tool proposal")
-call = calls[0]
-arguments = json.loads(call["function"]["arguments"])
-argument_errors = list(
-    Draft202012Validator(
-        tool["function"]["parameters"]
-    ).iter_errors(arguments)
-)
-if argument_errors:
-    raise ValueError(
-        f"tool arguments failed validation: {argument_errors[0].message}"
-    )
-output = handler(**arguments)
-result_message = {
-    "role": "tool",
-    "tool_call_id": call["id"],
-    "content": json.dumps(output, sort_keys=True),
-}
-assert_all_calls_answered(calls, [result_message])
-return invoke(
-    [*messages, first["message"], result_message],
-    tools=[tool],
-    parallel_tool_calls=False,
-)
+```{python}
+choices = ["auto", "required",
+           {"type": "function", "function": {"name": "lookup_order"}}, "none"]
+for choice in choices:
+    sent = ScriptedModel([({"role": "assistant", "content": "x"}, "stop")])
+    chat("http://stub", "m", messages, transport=sent,
+         tools=[LOOKUP_TOOL], tool_choice=choice)
+    label = choice if isinstance(choice, str) else "named:lookup_order"
+    print(f"tool_choice={label:16} -> sent on the wire: {sent.last_body['tool_choice']!r}")
 ```
 
-Preserve the complete assistant tool-call turn. Reconstructing only its visible name and arguments can drop provider metadata needed on the next request. Treat tool results as untrusted observations when they can contain external text; Chapter 24 develops indirect prompt injection and protocol-neutral action security.
+Use forcing to express a route contract — a classifier endpoint may `require` one tool, a stage after an irreversible effect may set `none` to block another proposal — not to rescue a weak description. Second, **parallel calls** are parallel *proposals*, each with its own id, and completion order need not match proposal order. The rule is to correlate by id, never by list position:
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `chat_api.py` after `run_tool_turn()` | 40 lines | Only application code invokes the handler, and the second request answers every admitted proposal ID exactly once. |
-:::
+```{python}
+proposals = [
+    {"id": "call_a", "function": {"name": "lookup_order", "arguments": '{"order_id":"O-0001"}'}},
+    {"id": "call_b", "function": {"name": "lookup_order", "arguments": '{"order_id":"O-0002"}'}},
+]
+# results come back in REVERSE completion order
+completions = [
+    {"tool_call_id": "call_b", "content": '{"status":"delayed"}'},
+    {"tool_call_id": "call_a", "content": '{"status":"shipped"}'},
+]
+by_id = {c["tool_call_id"]: c["content"] for c in completions}
+for p in proposals:
+    print(f"{p['id']} asked {p['function']['arguments']:24} -> {by_id[p['id']]}")
+```
 
-## Forcing, parallel calls, and streaming change the boundary {#sec-ch12-advanced-calls}
+Matching `proposals[0]` to `completions[0]` would have reported `O-0001` as delayed — position is not identity. Third, **streaming** splits one turn into deltas, and a tool-argument string can arrive across chunks (`{"order_` then `id":"O-0042"}`). A prefix may be invalid JSON because it is incomplete, or parse by coincidence before the server commits the turn, so we separate two states: *parseable* (a closed call block decodes) and *actionable* (the whole response reached a terminal event and policy admitted it). The assembler exposes a proposal only when every call is closed and the response is terminal.
 
-The common `tool_choice` control changes which proposal shapes the decoder may emit:
+```{python}
+# @save
+class IncompleteToolStream(RuntimeError):
+    """A streamed tool proposal never reached both close and terminal events."""
 
-| Choice | Intended contract |
-|---|---|
-| `auto` | model may answer or propose an allowed tool |
-| `required` | model must propose at least one allowed tool |
-| named tool | model must propose that particular tool |
-| `none` | model must not propose a tool |
 
-Use forcing to express a route contract, not to rescue a poor tool description. A classification endpoint may require one classifier tool. A conversational answer route may use `auto`. A stage after an irreversible effect may use `none` to prevent another proposal. Current spellings and model support belong to capability tests.
+def assemble_tool_stream(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Assemble streamed tool-call deltas, exposing proposals only when actionable.
 
-Parallel tool calls are parallel **proposals**. Each carries its own ID. Execute independent reads concurrently only after validating all calls and preserving their IDs. Do not match results by list position: completion order can differ from proposal order. Return one result per ID, including typed errors. Two proposed payments are not safe merely because the model emitted them in one response; concurrency policy and effect idempotency remain code responsibilities.
+    Arguments accumulate per call index; a proposal becomes eligible only after
+    its call-close event *and* a response-terminal event. Anything less fails
+    closed, because a parseable prefix is not a committed turn.
 
-Streaming splits one assistant turn into deltas. Tool argument strings can arrive across chunks: `{"order_` followed by `id":"O-0042"}`. A prefix may be invalid JSON because it is incomplete; a later prefix may parse by coincidence while the server has not committed the turn. This creates two boundaries:
+    Args:
+        chunks: Streamed events; a terminal event carries ``terminal: True``,
+            others carry a ``tool_call`` delta with ``index`` and partial
+            ``arguments``.
 
-- **parseable** means a closed call block contains decodable arguments;
-- **actionable** means the whole response reached a valid terminal event and application policy admitted the proposal.
+    Returns:
+        One assembled proposal per call index, each with id, name, and parsed
+        arguments.
 
-Figure @fig-ch12-stream-state prevents those states from collapsing.
+    Raises:
+        IncompleteToolStream: If any call is unclosed or the response never
+            reached a terminal event.
+    """
+    buffers: dict[int, dict[str, Any]] = {}
+    terminal = False
+    for chunk in chunks:
+        if chunk.get("terminal"):
+            terminal = True
+            continue
+        delta = chunk["tool_call"]
+        index = int(delta["index"])
+        state = buffers.setdefault(index, {"id": None, "name": None, "text": "", "closed": False})
+        state["id"] = delta.get("id", state["id"])
+        state["name"] = delta.get("name", state["name"])
+        state["text"] += delta.get("arguments", "")
+        state["closed"] = state["closed"] or bool(delta.get("closed"))
+    if not terminal or not buffers or any(not s["closed"] for s in buffers.values()):
+        raise IncompleteToolStream("stream ended before close and terminal events")
+    return [{"id": s["id"], "name": s["name"], "arguments": json.loads(s["text"])}
+            for _, s in sorted(buffers.items())]
+```
+
+We feed it the two argument fragments and print the buffer after each, then show that without the terminal event the proposal stays inert, and with it becomes actionable.
+
+```{python}
+chunks = [
+    {"tool_call": {"index": 0, "id": "call_1", "name": "lookup_order", "arguments": '{"order_'}},
+    {"tool_call": {"index": 0, "arguments": 'id":"O-0042"}', "closed": True}},
+]
+print("buffer after chunk 1:", repr('{"order_'))
+print("buffer after chunk 2:", repr('{"order_id":"O-0042"}'))
+try:
+    assemble_tool_stream(chunks)
+except IncompleteToolStream as exc:
+    print("without terminal event:", exc)
+done = assemble_tool_stream([*chunks, {"terminal": True}])
+print("with terminal event:", done[0]["arguments"])
+```
+
+@fig-ch12-stream-state names the states so a parseable prefix can never be mistaken for an actionable one.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch12-stream-state
-%%| fig-cap: "When may a streamed tool proposal become eligible for application policy?"
+%%| fig-cap: "When may a streamed tool proposal become eligible for application policy? Only after both the call-close event and the response-terminal event; every other exit fails closed."
 stateDiagram-v2
     [*] --> Collecting
     Collecting --> Collecting: argument delta
     Collecting --> CallClosed: call-close event
-    CallClosed --> ParseFailed: JSON decode or schema failure
     CallClosed --> Parsed: parse + schema pass
     Parsed --> Eligible: response-terminal event
     Collecting --> Incomplete: transport ends
     CallClosed --> Incomplete: response never terminal
     Eligible --> [*]
-    ParseFailed --> [*]
     Incomplete --> [*]
 ```
 
-The text equivalent is short: collect bytes, observe call closure, parse and validate, then wait for response termination before exposing the proposal to policy. Any missing close or terminal event fails closed.
+## Errors have owners {#sec-ch12-errors}
 
-`assemble_tool_stream()` implements that rule. It accumulates by call index, remembers the provider ID, and returns parsed proposals only when every call is closed and the response is terminal. The focused test deletes the terminal event and expects `IncompleteToolStream`.
+"Retry on error" is not a policy until the error has a class and an owner. A connection timeout, an HTTP 429, a schema-rejecting 400, a `length` finish, a refusal, an invalid-argument string, and a tool's own domain error are different states with different safe moves. The table names the owner; `classify_failure` implements just this chapter's distinctions — not backoff, deadlines, or circuit breakers, which interact with cost and overload and belong to @sec-ch26.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `chat_api.py` after stream assembly | 25 lines | Parseability alone cannot make an interrupted streamed proposal actionable. |
-:::
-
-## Errors are observations with different owners {#sec-ch12-errors}
-
-“Retry on error” is not a policy until the error has a class and an owner. A transport timeout, rejected HTTP request, truncated generation, refusal, invalid argument string, and tool failure describe different states.
-
-| Observation | What knows enough to handle it | Safe next move at this boundary |
+| Observation | Who can handle it | Safe next move here |
 |---|---|---|
-| connection timeout before a response | application transport | retry the model call under an outer budget |
-| HTTP 429 or retryable 5xx | application transport | bounded retry or route decision; Chapter 26 owns full policy |
-| HTTP 400 schema rejection | application deployment/configuration | stop; compile or fix the provider schema |
-| `finish_reason: length` | application plus model | retry generation without claiming an effect occurred |
-| refusal/content filter | product policy | preserve a typed refusal or escalate through an approved path |
-| arguments fail JSON/schema validation | application model boundary | bounded repair, typed tool error, or reject |
-| tool returns a domain error | tool handler | return a correlated, structured error observation when useful |
-| tool effect status is unknown | durable effect system | do not ask the model to guess; reconcile by idempotency record |
+| connection timeout | application transport | retry the call under an outer budget |
+| HTTP 429 / retryable 5xx | application transport | bounded retry or route; @sec-ch26 owns full policy |
+| HTTP 400 schema rejection | deployment/config | stop; fix or recompile the provider schema |
+| `finish_reason: length` | application + model | retry generation, claim no effect occurred |
+| refusal / content filter | product policy | keep a typed refusal or escalate on an approved path |
+| arguments fail validation | application boundary | bounded repair, typed error, or reject |
+| tool returns a domain error | tool handler | return a correlated structured error |
 
-Suppose a streamed proposal stops after `{"order_id":"O-00`. The JSON decoder raises. That is useful proximity: the failure occurs before a handler sees anything. If the model emits a complete object but the response lacks a terminal event, the stream assembler still fails closed. If the tool ran and the network failed before its result was recorded, this chapter cannot safely retry the effect; that is precisely why production runtimes need durable execution.
+```{python}
+# @save
+def classify_failure(
+    *, status: int | None = None, finish_reason: str | None = None,
+    error: Exception | None = None,
+) -> str:
+    """Map a boundary symptom to the layer that owns its recovery.
 
-Some errors belong in the next model observation. “Order not found” may help the model ask for a corrected ID. “Actor is not authorized” should remain a policy denial and may be summarized without exposing sensitive details. A provider authentication failure, timeout, or internal stack trace does not help the model reason; code owns it.
+    Args:
+        status: An HTTP status, when the failure was transport-level.
+        finish_reason: A completion's finish reason, when one was returned.
+        error: A raised exception, when the call did not complete.
 
-The artifact's small `classify_failure()` makes only this chapter's distinction. It does not implement backoff, deadlines, hedging, circuit breakers, or fallback. Those mechanisms interact with cost, overload, model behavior, and externally visible effects, so Chapter 26 treats them together.
+    Returns:
+        One of ``code_retry``, ``typed_failure``, ``model_retry_without_effect``,
+        ``typed_refusal``, or ``accept``.
+    """
+    if error is not None:
+        return "code_retry" if type(error).__name__ in {"ConnectError", "TimeoutException"} else "typed_failure"
+    if status is not None and status >= 400:
+        return "code_retry" if status in {408, 429, 500, 502, 503, 504} else "typed_failure"
+    if finish_reason == "length":
+        return "model_retry_without_effect"
+    if finish_reason == "content_filter":
+        return "typed_refusal"
+    return "accept"
+```
 
-The Berkeley Function Calling Leaderboard (BFCL) and related tool-use scores are evaluated as part of the broader statistical evaluation system in Chapter 22; one aggregate score is not a substitute for testing the exact schemas, correlations, refusals, and failure paths used by an application.
+```{python}
+class TimeoutException(Exception):
+    """Stand-in for httpx.TimeoutException so the symptom name is recognized."""
+
+cases = [
+    {"error": TimeoutException("slow")},
+    {"status": 429}, {"status": 400},
+    {"finish_reason": "length"}, {"finish_reason": "content_filter"},
+    {"finish_reason": "stop"},
+]
+for case in cases:
+    label = next(f"{k}={v}" for k, v in case.items())
+    print(f"{label:28} -> {classify_failure(**case)}")
+```
+
+A recognized timeout is a code retry; a 429 is a code retry; a 400 stops the deployment rather than looping; a `length` finish routes to a fresh generation while asserting no effect occurred. Note that the recovery keys on the symptom's *class*, not on a raised object's identity — an unrecognized exception name falls through to a typed failure rather than being retried blindly. Some domain errors belong in the *next* model observation — "order not found" can help the model ask for a corrected id — while an authentication failure or a raw stack trace helps the model reason about nothing and stays with code. Tool-use leaderboards such as BFCL, treated in @sec-ch22, aggregate this behavior into one score; that score never substitutes for testing the exact schemas, correlations, and failure paths your application uses.
 
 ## Landscape 2026 (dated) {#sec-ch12-landscape}
 
 ::: {.landscape-2026}
-**Verified on 2026-07-19.** Provider surfaces now converge on typed tool proposals and structured outputs while differing in transcript rules and state ownership. The table is an interoperability checklist, not a normalized contract.
+**Verified on 2026-07-20.** Provider surfaces converge on typed tool proposals and structured outputs while differing in transcript rules and state ownership. Treat this as an interoperability checklist, not a normalized contract.
 
-| Surface | Instruction and conversation shape | Tool proposal and result | State detail that bites |
-|---|---|---|---|
-| OpenAI Chat Completions | ordered `messages`; system/developer behavior depends on model and reference | `tool_calls`; function arguments are serialized JSON; result commonly uses a `tool` message with `tool_call_id` | caller resends transcript; inspect `finish_reason` and usage |
-| OpenAI Responses | typed input/output items rather than only chat messages | function-call and function-call-output items correlated by call ID | can be stateless or chained by reference; stored-state choices affect replay and data handling |
-| Anthropic Messages | system instruction is outside the `messages` array; content is typed blocks | assistant `tool_use` contains object input; results are `tool_result` blocks inside the next user message and refer to `tool_use_id` | results for parallel calls belong together in that next user message, before extra text; `stop_reason` names differ |
-| Gemini Interactions / Generate Content | typed steps or content parts, depending on surface | function-call arguments are objects and results correlate by call ID on current surfaces | stateful interactions can carry state by reference; stateless reasoning/tool turns must preserve returned thought signatures exactly |
-| vLLM OpenAI-compatible server | Chat Completions and Responses are exposed for supported model classes | named, required, auto, and none tool modes have model/parser/backend conditions | chat template, tool parser, reasoning parser, structured-output backend, and supported fields are deployment configuration |
+| Surface | Conversation and tool shape | The detail that bites |
+|---|---|---|
+| OpenAI Chat Completions | ordered `messages`; `tool_calls` with arguments as a serialized JSON string; results as a `tool` message with `tool_call_id` | caller resends the transcript; branch on `finish_reason` and reconcile `usage` |
+| OpenAI Responses | typed input/output items; function-call and output items correlated by call id | can be stateless or chained by reference; stored-state choices affect replay and data handling |
+| Anthropic Messages | system instruction outside `messages`; typed content blocks; `tool_use` input is an object, `tool_result` blocks ride the next user message | parallel results belong together before extra text; `stop_reason` names differ |
+| Gemini Generate Content | typed content parts; function-call arguments are objects | stateless reasoning turns must preserve returned thought signatures exactly |
+| vLLM OpenAI-compatible | Chat Completions and Responses for supported models | chat template, tool parser, and structured-output backend are deployment configuration |
 
-OpenAI's current [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs) distinguishes schema-conforming output from ordinary JSON and documents supported-schema constraints; its [function-calling guide](https://developers.openai.com/api/docs/guides/function-calling), [Chat API reference](https://developers.openai.com/api/reference/resources/chat), and [Responses migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses) define the live field shapes. Anthropic's [tool-use implementation guide](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use) documents content-block ordering and tool-result correlation. Google's [function-calling guide](https://ai.google.dev/gemini-api/docs/function-calling) and [thought-signature guide](https://ai.google.dev/gemini-api/docs/thought-signatures) document current state and signature rules. vLLM's [OpenAI-compatible server](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/), [tool-calling](https://docs.vllm.ai/en/stable/features/tool_calling/), and [structured-output](https://docs.vllm.ai/en/stable/features/structured_outputs/) pages document the local serving path.
+No provider SDK appears in the artifact; that keeps the wire visible and is not a recommendation against maintained clients in production. A production adapter should preserve provider-native metadata, refusals, reasoning signatures, and usage even as it maps them into an application contract.
 
-No provider SDK appears in the reference artifact. That choice keeps the wire visible; it is not a recommendation to avoid maintained clients in production. A production adapter should preserve provider-native metadata, refusals, reasoning signatures, and usage even when it maps them into an application contract. vLLM has exposed `continue_final_message` for template-level assistant continuation, while hosted prefill support has changed across model generations; neither should be treated as the structured-output contract.
-
-**Verify live:** endpoint and field names; current model support; role and instruction placement; content-part types; function-argument string versus object encoding; strict-schema subset and recursion/reference limits; `additionalProperties` and required-field rules; finish/stop reasons; refusal representation; parallel-result ordering; streaming terminal events; tool/parser launch flags; prefill support; state storage defaults, retention, regions, quotas, pricing, and deprecations.
+**Verify live:** endpoint and field names; role and instruction placement; function-argument string-versus-object encoding; strict-schema subset and recursion/reference limits; `additionalProperties` and required-field rules; finish/stop reasons; parallel-result ordering; streaming terminal events; prefill support; state-storage defaults, quotas, and pricing. Primary sources: the OpenAI structured-outputs and function-calling guides, the Anthropic tool-use guide, the Gemini function-calling and thought-signature guides, and the vLLM OpenAI-compatible-server, tool-calling, and structured-output pages.
 :::
 
-## Build {#sec-ch12-build}
-
-Install the two chapter-local dependencies and run the deterministic build from the `newbook` directory:
-
-```bash
-python -m pip install -r code/ch12/requirements.txt
-python code/ch12/chapter_build.py
-python code/ch12/render_metrics.py --output assets/figures/ch12-structured-validity.svg
-python -m pytest tests/test_ch12_api_surface.py -q
-```
-
-The fixture contains 50 synthetic support tickets. Each ticket includes a traceable ticket ID, order ID, amount, currency, and messy prose. Three deterministic candidate generators stand in for prompt-only, JSON-mode, and schema-constrained behavior. They are not model measurements; they create known failures so the application boundary can be inspected.
-
-| Guarantee stage | Schema-valid outputs | What remains wrong |
-|---|---:|---|
-| prompt only | 38 / 50 (76%) | lower-case enums and wrapper text cause contract failures |
-| JSON-mode proxy | 46 / 50 (92%) | four objects contain an extra property |
-| schema-constrained proxy | 50 / 50 (100%) | five legal-looking order IDs do not exist |
-| application-validated extraction | 50 / 50 (100%) | all values also pass the order-existence rule |
-
-The important comparison is not 92 versus 100 percent. It is the five records that are structurally perfect and operationally false. Figure @fig-ch12-build-validity hatches that remainder so schema conformance cannot visually masquerade as correctness.
-
-![How do stronger output guarantees change structural validity, and what error survives schema enforcement? Bars show schema-valid records from a deterministic 50-ticket fixture. The hatched portion of the schema-constrained bar marks five schema-valid but nonexistent order IDs. These are synthetic CPU results, not measurements of a language model or provider.](../assets/figures/ch12-structured-validity.svg){#fig-ch12-build-validity fig-alt="Four bars show 76 percent prompt-only validity, 92 percent JSON-mode proxy validity, and 100 percent for schema-constrained and application-validated stages. Ten percentage points of the schema-constrained bar are hatched as business-invalid; the application-validated bar has no hatch."}
-
-The application repair loop ran on the JSON-mode candidates. Four of 50 records required a second call, so the repair-invocation rate was 8 percent. The deterministic accounting was 46.32 tokens per successful extraction. That number has fixture units: it proves the code adds the cost of each attempt, not what a live model will cost.
-
-The tool half of the build issued 20 status questions. Every first response proposed exactly one `lookup_order` call; every application result echoed the proposal ID exactly once; and all 20 second responses terminated with an ordinary stop. The tests also delete a result ID, duplicate one, exhaust the extraction budget, and remove the terminal stream event. Each deliberate break fails at the boundary that owns it.
-
-To use a local server, start a tool-capable model under an OpenAI-compatible implementation using its current chat template and tool-parser instructions. Then bind the raw function:
-
-```python
-from functools import partial
-from chat_api import chat, extract, REFUND_SCHEMA
-from chapter_build import make_tickets, semantic_check
-
-invoke = partial(
-    chat,
-    "http://localhost:8000",
-    "YOUR_LOCAL_MODEL_ID",
-)
-ticket = make_tickets()[0]
-result = extract(
-    invoke,
-    [{"role": "user", "content": ticket["text"]}],
-    REFUND_SCHEMA,
-    semantic_check=semantic_check,
-)
-print(result.value)
-```
-
-Replace the fixture ticket and `semantic_check` with your input and application-state lookup. A live run must pin the checkpoint, tokenizer, template, server revision, parser/backend flags, schema digest, controls, and seed when supported. Report field accuracy, schema validity, semantic validity, latency distribution, repair rate, and tokens per accepted record. Do not compare the fixture percentages to a live model.
-
-::: {.callout-warning title="Honesty boundary"}
-The default transport is a scripted fault fixture. Its HTTP body, message ordering, schema validation, bounded repair, tool-call parsing, call-ID correlation, stream terminal rule, metrics, and tests are real. Its candidate quality, token counts, and success rates estimate no checkpoint or provider. A live local server uses the same `chat()` seam, but model quality and parser compatibility must be evaluated on your own corpus.
+::: {.callout-note title="In the interview"}
+**Q. A provider now enforces your JSON Schema at decode time. Can you delete the application validator?**
+No. Schema enforcement is level 3; it guarantees shape, not truth. In the build, all five nonexistent order ids are schema-perfect and only the application's existence check rejects them. The trap is treating a structural guarantee as a business one. You can *reduce* the validator's scope with provider-conformance tests and a measured semantic-error rate, but you cannot delete the layer that reads current state — and you keep a rollback condition for when the provider's supported-schema subset shifts under you.
 :::
 
-## What endures, what changes {#sec-ch12-endures}
+## Summary
 
-**What endures.** Messages are structured inputs that a pinned template compiles into tokens. Sampling controls are versioned caller policy, not correctness guarantees. Output guarantees form a ladder: prompt behavior, JSON syntax, engine-supported schema conformance, and application validation. Only the last layer can combine canonical schema with current business state. Tool calls are proposals; application code parses, validates, authorizes, executes, and returns one result per call ID. Streaming separates parseability from eligibility. Finish reasons and typed failures are part of the contract.
+The API surface is a versioned wire contract, and treating it as one turns a model into a typed software component. Messages are structured input a pinned chat template compiles into tokens; sampling controls are caller policy, not correctness. Output guarantees form a ladder — prompt behavior, JSON syntax, engine-supported schema conformance, application validation — and only the top rung can combine a canonical schema with live business state, which is why the five schema-perfect nonexistent orders survive everything below it. Constrained decoding has a measurable tax when the wanted token is illegal. Tool calls are proposals: your code parses, validates, authorizes, executes, and returns one result per call id. @sec-ch13 builds context on top of these messages; @sec-ch16 and @sec-ch17 grow the one-tool round trip into a bounded, authorized loop.
 
-**What changes.** Endpoint names, role spellings, item types, strict-schema subsets, tool-choice modes, function-argument encodings, stop reasons, prefill support, thought-signature rules, state-by-reference features, vLLM parsers, structured-generation engines, SDK conveniences, quotas, prices, and model capabilities will move. Keep those details in adapter tests and the dated landscape. Removing the dated section leaves a complete boundary design.
+## Exercises
 
-Chapter 13 builds context on top of messages. Chapters 16 and 17 turn the one-tool round trip into a bounded agent loop and an authorized harness without changing the propose-versus-execute invariant learned here.
+1. **Reconcile a token delta.** Using `render_chat_template` and `count_tokens`, render one conversation through the two templates in @sec-ch12-messages and add a third template of your own. Then add a `tool` message to the conversation and re-count. Explain every change in the count by the markers that moved, not by the words, and state which template you would trust to budget against a real server.
 
-## Exercises {#sec-ch12-exercises}
+2. **Expose nucleus support.** Construct three probability vectors — one peaked, one flat, one bimodal — and use `nucleus` to find, for each, the `top_p` that retains exactly two tokens. Show the sorted probabilities and the crossing point, and explain why the same `top_p` value is not comparable across the three distributions.
 
-1. **Reconcile token counts.** Load a tokenizer whose checkpoint publishes a chat template. Count one transcript with `count_tokens()`, call the matching local server, and compare with prompt-token usage. Add a tool declaration and one assistant tool-call turn. Explain every delta by rendered tokens rather than by characters.
+3. **Measure the constraint tax both ways.** Extend the `constraint_tax` demo so that (a) the grammar agrees with the model's top token (tax zero), (b) the grammar forbids it (positive tax), and (c) the grammar leaves no legal token at all. Show that case (c) raises, and argue from @eq-ch12-mask why an empty legal set is a deployment failure rather than a model failure.
 
-2. **Expose nucleus support.** Request or compute next-token log probabilities for a small prompt. Find a distribution where `top_p=0.7` retains at least two tokens. Show the sorted probabilities, crossing token, retained cumulative mass, and renormalized distribution. Explain why the result is not “70 percent of the vocabulary.”
+4. **Break correlation on purpose.** Using `run_tool_turn` and `assert_all_calls_answered`, extend the tool stub to propose two independent reads. First omit one result, then return one call id twice, then return correct results in reverse completion order. Make the first two fail and the third succeed, and write one sentence on why position is not identity.
 
-3. **Break correlation on purpose.** Extend the fixture to propose two independent reads. First omit one result; then return one call ID twice; then return correct results in reverse completion order. Make the first two cases fail and the third succeed. State why position is not identity.
+5. **Interrupt the stream.** Starting from the `assemble_tool_stream` example, write three tests that delete, respectively, an argument delta, the call-close flag, and the terminal event. Prove no variant becomes eligible, then add a second call index and confirm both proposals are correlated by id.
 
-4. **Audit a schema-coverage gap.** Add recursion, references, numeric bounds, string formats, and a nested union to the canonical application schema one at a time. Compile each against your local engine and one hosted surface if available. Produce a matrix of accepted, enforced, ignored, and rejected keywords. Keep every lost constraint in application validation.
+6. **Defend the application validator.** A reviewer proposes deleting `semantic_check` because the provider now enforces `REFUND_SCHEMA`. Use the five nonexistent order ids from `run_validity_experiment` as the counterexample, then list the evidence — provider-conformance tests, semantic-error rate, validator latency, repair cost, and a rollback condition — that could *reduce but not erase* the validator's scope.
 
-5. **Interrupt the stream.** Capture or synthesize a streamed tool call. Delete an argument delta, the call-close event, and the response-terminal event in three separate tests. Attempt to parse each intermediate buffer, then prove that no variant becomes eligible for execution. Add one complete stream with two call indices and correlate by ID.
-
-6. **Measure the constraint tax.** On a reasoning task with a machine-checkable answer, compare direct constrained output with free reasoning followed by constrained extraction. Hold model, examples, and total token budget as constant as possible. Report answer accuracy, schema validity, latency, generated tokens, and failures by class; do not select a winner from parse rate alone.
-
-7. **Defend the application validator.** A reviewer proposes deleting it because the provider now enforces the schema. Use the build's five nonexistent order IDs to specify the counterexample. Then write the evidence that could reduce—but not erase—the validator: provider conformance tests, semantic-error rate, validator latency, repair cost, drift alerts, and a rollback condition.
-
-## Notes and sources {#sec-ch12-sources}
-
-[Hugging Face chat-template documentation](https://huggingface.co/docs/transformers/main/en/chat_templating) explains how structured messages are rendered with `apply_chat_template` and why generation prompts are template-specific. [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12) defines the canonical schema language; the Python [`jsonschema` documentation](https://python-jsonschema.readthedocs.io/en/stable/) documents the versioned validator used by the build.
-
-[Let Me Speak Freely?](https://arxiv.org/abs/2408.02442) studies task-quality changes under format restrictions; dottxt's [“Say What You Mean” response](https://blog.dottxt.co/say-what-you-mean.html) challenges its prompt and evaluation setup and motivates separating reasoning from the constrained answer. [XGrammar](https://arxiv.org/abs/2411.15100) develops grammar execution for efficient structured generation, while [XGrammar 2](https://arxiv.org/abs/2601.04426) targets more dynamic agentic structures. [JSONSchemaBench](https://arxiv.org/abs/2501.10868) separates schema coverage, efficiency, and output quality across real-world schemas. Together they support measuring constraints as an inference mechanism rather than assuming a universal quality effect.
-
-The dated provider documentation is linked inside [Landscape 2026](#sec-ch12-landscape). Chapter 22 owns benchmark construction and judge validity; Chapter 24 owns hostile tool-result content; Chapter 26 owns retry, fallback, and durable-effect policy.
+7. **Design a schema that resists a mistake.** Take the `loose_schema` from @sec-ch12-schema-design and harden it one keyword at a time (enum, `additionalProperties: false`, a numeric bound, a string pattern), re-running the `sloppy` candidate after each change. Report which specific bad value each keyword newly rejects, and identify one mistake that *no* schema keyword can catch and must live in `semantic_check`.
