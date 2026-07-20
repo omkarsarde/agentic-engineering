@@ -1,513 +1,1373 @@
 ---
-description: "Build one bounded agent loop, specify its invariants, and reuse it across workflows without duplicating the control kernel."
+description: "Build an agent from bare Python — tools, the tool-call wire format, the propose-gate-execute-observe loop, budgets — then run the workflow canon, a ReAct trace, and a planner through the same kernel and verify outcomes from the effect log."
 ---
 
-# Anatomy of an Agent: The Loop, Tools, and Workflow Patterns [F] {#sec-ch16}
+# Anatomy of an Agent: The Loop, Tools, and Workflow Patterns {#sec-ch16}
 
-## What you need going in
+A customer writes, "Order A-17 arrived damaged. Please make this right." A language model can compose a sympathetic reply. Give it a lookup tool and it can fetch the order. Give it a refund tool and it can propose a remedy. None of those additions answers the engineering question that matters: what stands between the proposal and the movement of money? Suppose the system prompt says "never refund more than 50 dollars without approval" but the Python handler accepts any integer. The model emits `amount_cents=999999`, the caller invokes the handler, and the payment provider accepts it. The prompt expressed an intention; the executable path granted the authority. The real limit was never 50 dollars — it was whatever the handler and the payment account permitted.
 
-> **Assumed:** neural-network fundamentals, basic Python, HTTP APIs, tests, and the distinction between authentication and authorization.
->
-> **From earlier chapters:** [Chapter 12](12-api-surface.qmd) provides message and tool-call wire contracts; [Chapter 13](13-prompting-context-engineering.qmd) provides the caller-side context boundary; [Chapter 14](14-embeddings-rag.qmd) and [Chapter 15](15-agentic-retrieval.qmd) provide retrieval as one possible tool-backed subsystem.
->
-> **Not required:** an agent framework, a vendor SDK, reinforcement learning, or access to a hosted model. The default build uses deterministic strategies so that control-flow failures are reproducible.
+We are now ready to build the thing that closes that gap: a complete agent in bare Python, assembled in small executed steps. The parts are (i) a tool registry with declared, machine-checkable contracts; (ii) the tool-call wire format a chat model actually emits, and a parser that survives it being malformed; (iii) the loop itself — propose, gate, execute, observe — whose transcript we print in full; (iv) a policy gate that turns an over-limit refund into a denial the model can read and recover from; (v) budgets and typed endings that make every run finish; (vi) the workflow canon — chain, router, parallel, evaluator, agent — implemented as control policies over the same kernel and compared with measured numbers; (vii) a ReAct trace and a plan-then-execute worked example; and (viii) verification that checks the environment rather than believing the answer. The whole artifact is about 150 lines, built from the raw message format of @sec-ch12 with no framework and no SDK, because every framework we meet in Chapter 19 is a wrapper around exactly this loop.
 
-::: {.route-b}
-**Route B backfill.** Read [Chapter 8, “Verifiers set the ceiling”](08-reasoning-test-time-compute.qmd#sec-ch08-verifiers) (about 6 pages) before **Execution-grounded verification** if you want the full generator–verifier argument. If you skip it, you can still build the loop, but the distinction between a model revising its own text and an external system verifying an outcome will have less foundation.
-:::
+One honesty note before we start. The book executes offline and deterministically, so the "model" in these pages is a scripted stub: a small object that replays a visible script of assistant messages, speaking the same wire format a hosted model speaks. You will see its script in full every time we use it — nothing is generated, and we never pretend otherwise. Everything around the stub is the real mechanism: the schemas, the parse, the gate, the budgets, and every measured number are exactly what a live model would plug into, and one `eval: false` cell shows the genuine network call for when you want to swap the stub out.
 
-## Contents
+## Tools and their contracts {#sec-ch16-tools}
 
-- [The missing boundary](#sec-ch16-boundaries)
-- [What you will build](#sec-ch16-will-build)
-- [An agent as an executable specification](#sec-ch16-specification)
-- [The proposal–gate–execute–observe kernel](#sec-ch16-kernel)
-- [A denial trace: the action that must not happen](#sec-ch16-denial)
-- [Termination, budgets, and typed failure](#sec-ch16-lifecycle)
-- [Workflows are strategies, not new loops](#sec-ch16-workflows)
-- [ReAct, planning, and replanning](#sec-ch16-planning)
-- [Execution-grounded verification](#sec-ch16-verification)
-- [Build](#sec-ch16-build)
-- [What endures, what changes](#sec-ch16-endures)
-- [Exercises](#sec-ch16-exercises)
-- [Notes and sources](#sec-ch16-sources)
+An agent's tools are ordinary functions. What makes them *tools* is that they carry a declared contract — a schema of argument names and types — that is advertised to the model as data and enforced by our code before anything runs. We start with the contract type.
 
-## The missing boundary {#sec-ch16-boundaries}
+```{python}
+# @save
+from __future__ import annotations
 
-A customer writes, “Order A-17 arrived damaged. Please make this right.” A language model can compose a sympathetic reply. Give the same model a lookup tool and it can retrieve the order. Give it a refund tool and it can propose a remedy. None of those additions answers the most important engineering question: **what stands between the proposal and the movement of money?**
+import json
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
-Suppose the system prompt says, “Never refund more than 50 dollars without approval,” but the Python handler accepts any integer. The model emits `amount_cents=999999`, the caller invokes the handler, and the payment provider accepts it. The prompt expressed an intention; the executable path granted authority. The real limit was not 50 dollars. It was whatever the handler and payment account permitted.
 
-That gap is where agent engineering begins. A model call returns a candidate output. An agent system interprets candidate outputs as proposals inside a code-owned control system. The proposal can be useful, malformed, repetitive, unaffordable, or unsafe. The surrounding system must remain correct under all five possibilities.
+@dataclass(frozen=True)
+class ToolSpec:
+    """One tool the harness is willing to execute on the model's behalf.
 
-The words *model*, *workflow*, *agent*, *harness*, *runtime*, and *platform* are often used as if they named the same object. They do not:
+    The schema maps argument names to Python types; it is the tool's public
+    contract, advertised to the model as data and enforced by the harness
+    before the handler runs. The handler is ordinary code with real authority,
+    which is why the effectful flag marks tools that change the world instead
+    of reading it.
+    """
 
-- A **model** maps context to a distribution over possible outputs. It has no direct authority over an external system.
-- A **workflow** has a control path chosen primarily by code. Models may fill individual steps, but code determines which step follows.
-- An **agent** lets a model choose at least some next actions or control transitions from a bounded action space.
-- A **harness** assembles context, exposes tools, manages a workspace, records events, and applies local policy around the loop.
-- A **runtime** schedules and persists runs, interrupts them, resumes them, streams events, and coordinates concurrent work.
-- A **platform** supplies shared identity, gateways, deployment, evaluation, observability, cost controls, and governance.
-
-```{mermaid}
-%%| label: fig-ch16-boundaries
-%%| fig-cap: "Which layer owns each decision around an agent run?"
-flowchart TB
-    subgraph Platform["Platform: identity, gateway, evals, deployment"]
-      subgraph Runtime["Runtime: persist, schedule, interrupt, resume"]
-        subgraph Harness["Harness: context, tools, workspace, policy"]
-          Loop["Control kernel"]
-          Model(["Model"])
-          Gate["Code-owned gate"]
-          Tools["Tool registry"]
-          Model -->|proposal| Loop
-          Loop --> Gate
-          Gate -->|allowed call| Tools
-          Tools -->|typed observation| Loop
-        end
-      end
-    end
-    External[("External systems")]
-    Tools -->|effect| External
+    description: str
+    schema: dict[str, type]
+    handler: Callable[..., Any]
+    effectful: bool = False
 ```
 
-The figure is nested because ownership is nested. The loop is not the harness; the harness is not the runtime; the runtime is not the platform. A library may package several layers, but the engineering responsibilities remain distinct. When a framework advertises “memory,” for example, ask whether it means a serialized run checkpoint, a long-term user fact, or durable recovery after an external effect. Those are different contracts even when one product exposes all three.
+Our running environment is a tiny support desk: one order table, a policy document, and three tools. The important design choice is the **effect log** — an append-only list that records every refund actually issued. Reads return data; only `refund_order` appends a receipt. For the rest of the chapter, every safety claim we make will be an assertion on this list, never on anything the model says.
 
-Two rules travel through the rest of the book. First, **prompt text is not enforcement**. A restriction that must hold belongs in a schema, policy check, capability boundary, transaction, or human process. Second, **autonomy is assigned per action, not per agent**. One support agent may autonomously read order status, propose a refund, require approval to issue it, and be forbidden from changing a bank account. Calling the whole agent “level three” hides the authority that matters.
+```{python}
+# @save
+def make_environment() -> tuple[dict[str, ToolSpec], list[dict[str, Any]]]:
+    """Create the support-desk world: three tools and an append-only effect log.
 
-## What you will build {#sec-ch16-will-build}
+    The effect log is the ground truth of this small world. Reads return data;
+    only ``refund_order`` appends a receipt. Every safety claim we make later
+    is an assertion on this list, never on anything the model says.
 
-::: {.callout-tip}
-### One loop, several policies, measurable endings
+    Returns:
+        The tool registry and the (initially empty) effect log.
+    """
+    orders = {"A-17": {"order_id": "A-17", "status": "damaged", "paid_cents": 4999}}
+    effects: list[dict[str, Any]] = []
 
-The chapter artifact is `code/ch16/agent_loop.py`: a vendor-neutral, typed proposal–gate–execute–observe kernel. A deterministic fixture supplies a support task, three workflow strategies, one adaptive strategy, and a code-owned refund policy. You will run all strategies through the same kernel, inspect their steps and modeled cost, deliberately propose an over-limit refund, and verify that the effect handler was never called. Four focused tests establish the central invariants without a network connection.
-:::
+    def lookup_order(order_id: str) -> dict[str, Any]:
+        if order_id not in orders:
+            raise KeyError(f"no such order: {order_id}")
+        return orders[order_id]
 
-## An agent as an executable specification {#sec-ch16-specification}
+    def read_policy() -> str:
+        return "Damaged orders: refund the amount paid, up to 5000 cents automatically."
 
-An informal definition such as “an LLM that uses tools in a loop” identifies the shape but not the contract. We need a definition that tells us what to test.
+    def refund_order(order_id: str, amount_cents: int) -> dict[str, Any]:
+        receipt = {"order_id": order_id, "refunded_cents": amount_cents}
+        effects.append(receipt)
+        return receipt
 
-Let $h_t$ be the history visible at step $t$: the original task, prior proposals, and correlated observations. The model or deterministic strategy samples a proposal
+    tools = {
+        "lookup_order": ToolSpec(
+            "Fetch an order's status and the amount paid.", {"order_id": str}, lookup_order
+        ),
+        "read_policy": ToolSpec("Read the refund policy.", {}, read_policy),
+        "refund_order": ToolSpec(
+            "Issue a refund. Moves real money.",
+            {"order_id": str, "amount_cents": int},
+            refund_order,
+            effectful=True,
+        ),
+    }
+    return tools, effects
+```
 
-$$
-a_t \sim \pi_\theta(\cdot \mid h_t),
-$$
+Watch what the raw handlers do when we call them directly, with no model anywhere in sight.
 
-where $\pi_\theta$ is the proposal policy parameterized by model weights $\theta$. A code-owned gate evaluates the proposal against current state $s_t$ and caller context $c$:
+```{python}
+tools, effects = make_environment()
+print(tools["lookup_order"].handler(order_id="A-17"))
+print(tools["refund_order"].handler(order_id="A-17", amount_cents=999999))
+print("effect log:", effects)
+```
 
-$$
-G(s_t, a_t, c) \in \{\text{allow},\ \text{deny},\ \text{escalate}\}.
-$$
+The second line is the chapter's whole problem in one receipt: the handler cheerfully refunded 999,999 cents — two hundred times what the customer paid — because nothing in Python stops it. The authority lives in the handler, and today the handler grants it to any caller. Before we let a model near this function, we need two layers of judgment. The first is **validation**: is this call well formed? A proposal names a tool and carries arguments, and validation checks it against the declared contract.
 
-Only an allowed proposal reaches an executor. The executor returns an observation $o_{t+1}$, and a transition function computes the next explicit state:
-
-$$
-s_{t+1} = \tau(s_t, a_t, o_{t+1}).
-$$
-
-This gives a useful agent specification
-
-$$
-\mathcal{A} = (S, A, O, \pi_\theta, G, E, \tau, B, \Phi),
-$$
-
-where $S$ is the state space, $A$ the proposal space, $O$ the observation space, $E$ the effect executor, $B$ the resource budget, and $\Phi$ the set of success, failure, escalation, and termination predicates. A typed implementation does not prove every property of this tuple, but it makes the properties nameable.
-
-The first version of the artifact defines proposals, observations, tools, explicit run state, and typed endings. Notice that `ToolCall` is named a proposal in its documentation. Describing an action does not confer permission to execute it.
-
-```python
-# agent_loop.py — public contracts introduced once
+```{python}
+# @save
 @dataclass(frozen=True)
 class ToolCall:
-    """A model proposal; it has no authority by itself."""
+    """A parsed proposal to run one tool. It carries no authority by itself.
+
+    ``arguments`` is ``None`` when the model's argument string failed to parse
+    as JSON — a proposal can be broken before it can be judged.
+    """
+
     call_id: str
     name: str
-    arguments: dict[str, Any]
+    arguments: dict[str, Any] | None
+
+
+def validate_call(call: ToolCall, tools: dict[str, ToolSpec]) -> str | None:
+    """Check one proposal against the registry's declared contracts.
+
+    Validation answers "is this call well formed?" — the tool exists, the
+    argument names match exactly, and every value has the declared type. It
+    deliberately says nothing about whether the call is *permitted*; that is
+    the gate's question, asked later.
+
+    Args:
+        call: The parsed proposal.
+        tools: The registry of declared contracts.
+
+    Returns:
+        None when the proposal is well formed, otherwise a reason string the
+        model can read and act on.
+    """
+    if call.arguments is None:
+        return "arguments were not valid JSON"
+    tool = tools.get(call.name)
+    if tool is None:
+        return f"unknown tool: {call.name}"
+    if set(call.arguments) != set(tool.schema):
+        return f"{call.name} expects exactly the fields {sorted(tool.schema)}"
+    for arg_name, expected in tool.schema.items():
+        if not isinstance(call.arguments[arg_name], expected):
+            return f"{arg_name} must be {expected.__name__}"
+    return None
+```
+
+```{python}
+good = ToolCall("c1", "refund_order", {"order_id": "A-17", "amount_cents": 4999})
+bad_type = ToolCall("c2", "refund_order", {"order_id": "A-17", "amount_cents": "lots"})
+bad_name = ToolCall("c3", "delete_database", {})
+for call in (good, bad_type, bad_name):
+    print(f"{call.name:16} -> {validate_call(call, tools)}")
+```
+
+Note what validation did *not* catch: the 999,999-cent refund is perfectly well formed — right tool, right fields, right types. Well-formed and permissible are different questions, and we keep them in different functions on purpose. Our exact `name -> type` schema is a teaching miniature; production tools use JSON Schema with ranges, enumerations, and nested objects, but the division of labor is identical. The second question — may this exact call run now? — waits for the gate in @sec-ch16-denial.
+
+The last thing tools need is a way to reach the model. They travel as data: one JSON declaration per tool, carried in the request. The model never receives the handlers — only these descriptions — so everything it "knows" about a tool is what we choose to advertise.
+
+```{python}
+# @save
+def tool_schema_json(tools: dict[str, ToolSpec]) -> list[dict[str, Any]]:
+    """Render the registry in the JSON wire shape a chat API expects.
+
+    This is how tools reach the model: as data in the request, one JSON
+    schema per tool. The model never receives the handlers — only these
+    descriptions — so everything it "knows" about a tool is what we choose
+    to advertise here.
+
+    Args:
+        tools: The registry to advertise.
+
+    Returns:
+        A list of function-tool declarations in OpenAI-compatible form.
+    """
+    type_names = {str: "string", int: "integer", float: "number", bool: "boolean"}
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": spec.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        arg: {"type": type_names[kind]} for arg, kind in spec.schema.items()
+                    },
+                    "required": sorted(spec.schema),
+                },
+            },
+        }
+        for name, spec in tools.items()
+    ]
+```
+
+```{python}
+print(json.dumps(tool_schema_json(tools)[2], indent=2))
+```
+
+That block of JSON is the entire interface between the model and the refund handler. Writing tool descriptions that models use *well* is a craft of its own — Chapter 17 spends a whole chapter on it.
+
+## The model side of the wire {#sec-ch16-model}
+
+What does a model actually send back when it wants to use a tool? Not a function call — text, structured as an **assistant message** that carries a list of proposed tool calls. Two helpers build the two message shapes we need, and their exact structure is the point, so read them as data formats rather than code.
+
+```{python}
+# @save
+def tool_call_message(
+    call_id: str, name: str, arguments: dict[str, Any], thought: str | None = None
+) -> dict[str, Any]:
+    """Build an assistant message that proposes one tool call, wire-shaped.
+
+    The arguments travel as a JSON *string*, exactly as chat APIs deliver
+    them: the model emitted text that happens to look like JSON, and the
+    harness must parse it — and must survive the parse failing.
+
+    Args:
+        call_id: Correlation id the tool result must echo back.
+        name: The tool being proposed.
+        arguments: The arguments, serialized to the wire string.
+        thought: Optional visible reasoning text carried in ``content``.
+
+    Returns:
+        An assistant message dict in OpenAI-compatible wire shape.
+    """
+    return {
+        "role": "assistant",
+        "content": thought,
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments)},
+            }
+        ],
+    }
+
+
+def answer_message(text: str) -> dict[str, Any]:
+    """Build a plain assistant message that answers and proposes nothing."""
+    return {"role": "assistant", "content": text}
+```
+
+```{python}
+print(json.dumps(tool_call_message("call_1", "lookup_order", {"order_id": "A-17"}), indent=2))
+```
+
+Three details deserve a hard look. The `arguments` value is a *string* containing JSON, not a JSON object — the model generated characters, and someone has to parse them. The `id` is a correlation handle: when we send the tool's result back, we must echo this id so the model (and our own verifier) can match result to proposal; position in a list is not a stable identity once calls can be parallel or retried. And `content` can coexist with `tool_calls` — that slot is where visible reasoning text rides along, which is how we will print a ReAct trace in @sec-ch16-planning.
+
+Now the stand-in model. It holds a script of assistant turns and plays them in order, with one twist that earns its keep for the rest of the chapter: before consuming the next turn, it checks the most recent tool result against a small table of *reactions*, so a script can respond to what the loop feeds back — retry after a denial, for example — while staying fully deterministic.
+
+```{python}
+# @save
+@dataclass
+class ScriptedModel:
+    """A stand-in for a chat model whose entire behavior is a visible script.
+
+    ``chat`` plays the scripted turns in order. Before consuming the next
+    turn it checks the most recent tool result against ``reactions``: if a
+    key occurs in that result, the paired message is returned instead. That
+    one rule lets a script react to what the loop feeds back — retry after
+    a denial, for example — while staying deterministic and inspectable.
+    Nothing here is a language model; the point is that the loop cannot tell
+    the difference, because both speak the same wire format.
+    """
+
+    turns: list[dict[str, Any]]
+    reactions: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Return the next assistant message, given the conversation so far.
+
+        Args:
+            messages: The transcript; only the latest tool message is
+                consulted, and only to match ``reactions`` keys.
+
+        Returns:
+            The next scripted assistant message, a reaction, or a default
+            answer once the script is exhausted.
+        """
+        last = messages[-1]
+        if last["role"] == "tool":
+            for needle, reply in self.reactions.items():
+                if needle in last["content"]:
+                    return reply
+        if not self.turns:
+            return answer_message("I have nothing further to add.")
+        return self.turns.pop(0)
+```
+
+```{python}
+model = ScriptedModel(
+    turns=[
+        tool_call_message("call_1", "lookup_order", {"order_id": "A-17"}),
+        answer_message("Order A-17 arrived damaged; the customer paid 4999 cents."),
+    ]
+)
+history = [{"role": "user", "content": "What happened with order A-17?"}]
+first = model.chat(history)
+print("turn 1:", json.dumps(first))
+history += [first, {"role": "tool", "tool_call_id": "call_1",
+                    "content": json.dumps({"status": "damaged", "paid_cents": 4999})}]
+print("turn 2:", json.dumps(model.chat(history)))
+```
+
+The interface is one method: messages in, assistant message out. A hosted model has exactly the same interface, which is why swapping the stub for the real thing touches nothing else in the chapter. Here is that swap, shown but not executed — it needs a network and a served model — followed by a representative response so you can see the wire shape survives contact with reality.
+
+```{python}
+#| eval: false
+import httpx
+
+payload = {
+    "model": "an-8b-instruct",
+    "messages": [
+        {"role": "system", "content": "You are a support agent. Use the tools."},
+        {"role": "user", "content": "Order A-17 arrived damaged. Please make this right."},
+    ],
+    "tools": tool_schema_json(tools),
+    "temperature": 0, "seed": 7,
+}
+resp = httpx.post("http://localhost:8000/v1/chat/completions", json=payload).json()
+print(json.dumps(resp["choices"][0]["message"], indent=2))
+```
+
+```text
+Representative response (an 8B-class instruct model behind an OpenAI-compatible endpoint):
+
+{
+  "role": "assistant",
+  "content": null,
+  "tool_calls": [
+    {
+      "id": "chatcmpl-tool-9f2a41",
+      "type": "function",
+      "function": {
+        "name": "lookup_order",
+        "arguments": "{\"order_id\": \"A-17\"}"
+      }
+    }
+  ]
+}
+```
+
+::: {.landscape-2026}
+**Tool-call envelopes are vendor-specific and drift.** The OpenAI-compatible shape above — `tool_calls` with arguments as a JSON string — is the most widely copied, but Anthropic's Messages API carries `tool_use` content blocks whose `input` arrives already parsed, and both vendors have revised these envelopes several times since 2023. The mechanism this chapter teaches (proposals as data, parse, gate, correlated results) is stable; the field names are not. Verify live: your provider's tool-use API reference for the current envelope (checked 2026-07-20).
+:::
+
+Because the arguments are model-generated text, parsing them is a step that can fail, and a loop that crashes on bad JSON hands the model a denial-of-service button. Our parser therefore never raises: a call whose arguments do not parse still comes back as a `ToolCall`, with `arguments=None`, and `validate_call` already knows what to say about it.
+
+```{python}
+# @save
+def parse_tool_calls(message: dict[str, Any]) -> list[ToolCall]:
+    """Parse the tool calls, if any, out of an assistant message.
+
+    The arguments field is model-generated text, so it can be broken JSON;
+    a call whose arguments fail to parse still comes back as a ``ToolCall``,
+    with ``arguments=None``, so the loop can reject it through the normal
+    validation path instead of crashing.
+
+    Args:
+        message: An assistant message in wire shape.
+
+    Returns:
+        One ``ToolCall`` per entry in ``tool_calls``; empty for a plain answer.
+    """
+    calls: list[ToolCall] = []
+    for item in message.get("tool_calls") or []:
+        function = item["function"]
+        try:
+            arguments = json.loads(function["arguments"])
+        except json.JSONDecodeError:
+            arguments = None
+        calls.append(ToolCall(item["id"], function["name"], arguments))
+    return calls
+```
+
+```{python}
+print(parse_tool_calls(tool_call_message("call_7", "refund_order",
+                                         {"order_id": "A-17", "amount_cents": 4999})))
+broken = {"role": "assistant", "content": None,
+          "tool_calls": [{"id": "call_8", "type": "function",
+                          "function": {"name": "refund_order",
+                                       "arguments": '{"order_id": A-17}'}}]}
+print(parse_tool_calls(broken))
+print(validate_call(parse_tool_calls(broken)[0], tools))
+```
+
+A parse failure is just another way a proposal can be invalid, so it flows down the same rejection path as a wrong type or an unknown tool. One code path for every malformed input is easier to test than special cases, and the model gets a readable reason either way.
+
+## The loop: propose, gate, execute, observe {#sec-ch16-loop}
+
+We have tools with contracts and a model that proposes calls in wire format. The loop that connects them has four verbs, and keeping them separate matters more than any framework choice. **Propose**: the model returns an assistant message. **Gate**: our code decides whether each proposed call may run. **Execute**: only an allowed call reaches a handler. **Observe**: the result — success, denial, or failure — travels back to the model as an ordinary tool message. First, the typed endings and budgets the loop will enforce.
+
+```{python}
+# @save
+from enum import Enum
+
+
+class Stop(str, Enum):
+    """The typed ways a run can end. Callers branch on these, not on prose."""
+
+    ANSWERED = "answered"
+    STEP_LIMIT = "step_limit"
+    TOKEN_LIMIT = "token_limit"
+    NO_PROGRESS = "no_progress"
+
 
 @dataclass(frozen=True)
+class Limits:
+    """Resource ceilings the loop enforces regardless of what the model wants.
+
+    ``max_turns`` bounds model calls; ``max_prompt_tokens`` bounds the
+    estimated context we are willing to send on any single call; and
+    ``repeated_denials`` bounds how often the identical proposal may be
+    denied before the loop declares no progress.
+    """
+
+    max_turns: int = 8
+    max_prompt_tokens: int = 4000
+    repeated_denials: int = 2
+```
+
+Next, the observation type and a cost estimator. An observation is the typed result of attempting one call, correlated to the proposal that caused it; the `kind` field distinguishes a denial from a validation failure from a handler error, because a strategy that only sees "failed" can do nothing smarter than retry blindly. The token estimator is deliberately crude — four characters per token — but it is monotone in the thing that matters: the transcript, and with it the price of every further turn, only ever grows.
+
+```{python}
+# @save
+@dataclass(frozen=True)
 class Observation:
-    """A correlated, typed result returned to the strategy."""
+    """The typed result of attempting one tool call.
+
+    ``kind`` is one of ``result`` (the handler ran), ``invalid`` (validation
+    failed), ``denied`` (the gate refused), or ``error`` (the handler raised
+    an expected exception). A strategy can branch on the kind; "failed" alone
+    invites blind retries.
+    """
+
     call_id: str
     ok: bool
     kind: str
     content: Any
 
-@dataclass
-class RunState:
-    """Serializable state visible at each decision boundary."""
-    task: str
-    observations: list[Observation] = field(default_factory=list)
-    trace: list[dict[str, Any]] = field(default_factory=list)
-    steps: int = 0
-    cost_units: int = 0
+
+def estimate_tokens(messages: list[dict[str, Any]]) -> int:
+    """Estimate the token cost of a message list at four characters per token.
+
+    Crude, but monotone in the thing that matters: the transcript — and with
+    it the price of every further turn — only ever grows.
+
+    Args:
+        messages: Wire-format messages about to be sent.
+
+    Returns:
+        The estimated prompt token count.
+    """
+    return sum(len(json.dumps(message)) for message in messages) // 4
 ```
 
-A useful specification states invariants before implementation details. This chapter uses five:
+Now the function that carries one proposal across the effect boundary — or refuses to. A **gate** is any function from a validated call to an allow-or-deny decision with a reason. We start with the gate that every system has before anyone writes policy: the one that allows everything.
 
-1. **Effect authorization:** every handler invocation corresponds to a proposal that passed schema validation and policy at the execution boundary.
-2. **Correlation:** every tool observation carries the call identifier of the proposal that caused it.
-3. **Boundedness:** the kernel stops after finite step and modeled-cost budgets, even when the proposal policy never chooses to stop.
-4. **Typed endings:** answering, exhausting a budget, and making no progress are different results that a caller can branch on.
-5. **Outcome separation:** “the model returned an answer” is not the same predicate as “the task succeeded.” An external verifier decides the latter.
+```{python}
+# @save
+Gate = Callable[[ToolCall], tuple[bool, str]]
 
-The fifth invariant prevents a common measurement error. A polite final message can accompany an unchanged database. The loop should report that it reached an answer boundary; the evaluator should inspect the environment and decide whether the requested outcome occurred.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `agent_loop.py` with public contracts | 37 lines | Proposals, observations, state, and stop reasons have distinct types. |
-:::
+def allow_all(call: ToolCall) -> tuple[bool, str]:
+    """A gate that approves everything — the absence of policy, made explicit."""
+    return True, "no policy configured"
 
-## The proposal–gate–execute–observe kernel {#sec-ch16-kernel}
 
-The core loop has four verbs. Keeping them separate is more important than the choice of framework.
+def execute_call(call: ToolCall, tools: dict[str, ToolSpec], gate: Gate) -> Observation:
+    """Carry one proposal across the effect boundary — or refuse to.
 
-**Propose.** A strategy receives explicit state and returns either a `ToolCall` or a `FinalAnswer`. In a live adapter, the strategy serializes state into messages and parses the model's tool call. In the deterministic fixture, it returns the same types directly.
+    Validation asks whether the call is well formed; the gate asks whether
+    this exact call may run now. Only when both pass does the handler
+    execute. Expected handler failures come back as typed observations
+    instead of ending the run, and a denial is information, not an exception.
 
-**Gate.** Code verifies that the tool exists, arguments match the declared contract, and current policy permits this exact proposal. Validation answers “is this well formed?” Authorization answers “may this caller perform this effect now?” Neither can be delegated to model obedience.
+    Args:
+        call: The parsed proposal.
+        tools: The registry of executable contracts.
+        gate: The policy consulted immediately before execution.
 
-**Execute.** Only the allowed path invokes a handler. Expected failures become typed observations. Unexpected programming faults should still fail loudly rather than being converted into plausible text.
+    Returns:
+        A typed, correlated ``Observation``.
+    """
+    error = validate_call(call, tools)
+    if error is not None:
+        return Observation(call.call_id, False, "invalid", error)
+    allowed, reason = gate(call)
+    if not allowed:
+        return Observation(call.call_id, False, "denied", reason)
+    try:
+        result = tools[call.name].handler(**call.arguments)
+    except (KeyError, ValueError, TimeoutError) as exc:
+        return Observation(call.call_id, False, "error", str(exc))
+    return Observation(call.call_id, True, "result", result)
+```
 
-**Observe.** The result, denial, or expected error is correlated to the proposal and appended to state. The strategy can adapt on its next decision.
+Three probes — a good call, a missing order, an unknown tool — show the three failure textures a strategy can tell apart.
+
+```{python}
+tools, effects = make_environment()
+print(execute_call(ToolCall("c1", "lookup_order", {"order_id": "A-17"}), tools, allow_all))
+print(execute_call(ToolCall("c2", "lookup_order", {"order_id": "Z-99"}), tools, allow_all))
+print(execute_call(ToolCall("c3", "delete_database", {}), tools, allow_all))
+```
+
+The missing order came back as an `error` observation rather than a crashed run, because a `KeyError` from a lookup is an expected, informative failure. The catch list is deliberately short: an assertion failure or a corrupted registry should still crash loudly, because a loop that converts *every* exception into a polite observation invites the model to improvise around broken safety code. @fig-ch16-kernel traces the path one proposal takes.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch16-kernel
-%%| fig-cap: "How does one proposed action cross—or fail to cross—the effect boundary?"
+%%| fig-cap: "How does one proposed action cross — or fail to cross — the effect boundary? Every outcome, including the denial, returns to the model as an ordinary tool message."
 sequenceDiagram
     autonumber
-    participant S as Strategy / model
-    participant K as Control kernel
-    participant G as Validation + policy gate
+    participant M as Model
+    participant L as Loop
+    participant G as Validate + gate
     participant T as Tool handler
-    participant X as External system
-    S->>K: ToolCall(call_id, name, arguments)
-    K->>G: Validate exact proposal in current context
-    alt denied or malformed
-        G-->>K: Denial(reason)
-        K-->>S: Observation(call_id, denied, reason)
+    participant E as Environment
+    M->>L: assistant message with tool_calls
+    L->>G: ToolCall(id, name, arguments)
+    alt malformed or denied
+        G-->>L: reason
+        L-->>M: tool message (kind=invalid / denied)
     else allowed
-        G-->>K: Allow
-        K->>T: Invoke typed handler
-        T->>X: Read or effect
-        X-->>T: Result / expected error
-        T-->>K: Typed outcome
-        K-->>S: Observation(call_id, kind, content)
+        G-->>L: allow
+        L->>T: handler(**arguments)
+        T->>E: read or effect
+        E-->>T: result or expected error
+        T-->>L: typed result
+        L-->>M: tool message (kind=result / error)
     end
 ```
 
-The denied branch is a normal control path. The handler does not receive the call and the model receives useful information. This is stronger than asking the model to reconsider before execution because the same component that grants authority evaluates the final arguments.
+The loop's state is worth a pause before we write the loop. It is nothing but plain data — the wire-format transcript, the typed observations, and two counters. That plainness is a feature with a name: if you persist `messages`, you can resume the run on another machine, replay it into an evaluator, or hand it to a human, because there is no hidden state anywhere else.
 
-The implementation follows the diagram. This excerpt is the stable center of the artifact; later additions bound it without introducing another loop.
+```{python}
+# @save
+@dataclass
+class RunState:
+    """Everything the loop knows, as plain serializable data.
 
-```python
-# agent_loop.py — run_agent(), proposal through observation
-decision = strategy.decide(state)
-state.steps += 1
-state.cost_units += 2
-state.trace.append({"event": "proposal", "value": repr(decision)})
+    ``messages`` is the transcript in wire format: persist it and the run can
+    resume anywhere, because there is no hidden state elsewhere. The typed
+    observations and per-turn prompt sizes exist so a verifier can replay
+    what happened without re-running anything.
+    """
 
-if isinstance(decision, FinalAnswer):
-    return RunResult(Stop.ANSWERED, decision.text, state)
+    messages: list[dict[str, Any]]
+    observations: list[Observation] = field(default_factory=list)
+    prompt_token_log: list[int] = field(default_factory=list)
+    turns: int = 0
 
-tool = tools.get(decision.name)
-error = "unknown tool" if tool is None else _validate(decision, tool)
-allowed, reason = gate(decision, state) if error is None else (False, error)
 
-if not allowed:
-    observation = Observation(decision.call_id, False, "denied", reason)
-    state.observations.append(observation)
-    state.trace.append({"event": "gate", "allowed": False, "reason": reason})
-    # ... bounded no-progress handling is added in Section 16.5 ...
-else:
-    content = tool.handler(**decision.arguments)
-    observation = Observation(decision.call_id, True, "result", content)
-    state.observations.append(observation)
+@dataclass(frozen=True)
+class RunResult:
+    """A typed ending, the final answer if any, and the full state behind it."""
+
+    stop: Stop
+    answer: str | None
+    state: RunState
 ```
 
-The example uses an exact top-level `name -> type` schema so the mechanism is visible. Production tools normally use JSON Schema or an equivalent typed contract, including ranges, enumerations, nested objects, defaults, and explicit rejection of unknown fields. Schema validation still does not establish business authorization. `amount_cents` can be a valid integer and an impermissible refund.
+Here is the loop entire — no elisions, because this is the raw mechanism every agent framework wraps. The model chooses what to propose; this function owns everything else: the transcript, the budgets, the effect boundary, and the decision to stop.
 
-Call identifiers matter as soon as calls can be parallel, retried, or streamed. Position in a list is not a stable identity under concurrency. A result without correlation can be attached to the wrong proposal and contaminate later decisions.
-
-This in-process kernel establishes a narrow guarantee: within one Python process, a denied call cannot reach a registered handler through `run_agent`. It does not authenticate a tenant, protect a secret, bind a human approval, isolate untrusted code, survive a crash, or reconcile an ambiguous remote effect. Later chapters add those responsibilities at their canonical boundaries.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `agent_loop.py` after gate and dispatch | 31 lines | No handler call occurs unless validation and policy both allow the exact proposal. |
-:::
-
-## A denial trace: the action that must not happen {#sec-ch16-denial}
-
-The fixture models a damaged order paid at 4,999 cents. Its `refund_order` handler appends a receipt to an effect log. The policy gate permits automatic refunds up to 5,000 cents. An adaptive strategy initially proposes 9,999 cents.
-
-The interesting event is not a successful lookup. It is the missing receipt after the over-limit proposal:
-
-| Step | Proposal or observation | Gate | Effect log |
-|---:|---|---|---|
-| 1 | `lookup_order(A-17)` | allowed | empty |
-| 2 | `refund_order(A-17, 9999)` | denied: above authority | empty |
-| 3 | `refund_order(A-17, 4999)` | allowed | one receipt |
-| 4 | final answer references the receipt | not applicable | still one receipt |
-
-The denial becomes an observation, not an exception that destroys the run. That lets the strategy reduce the proposal to the actual purchase amount. More important, adaptation happens without weakening the gate. The model is free to propose another value; code remains free to deny it.
-
-The policy itself is intentionally small:
-
-```python
-# fixture.py — gate(), value boundary for the teaching fixture
-def gate(call: ToolCall, _: RunState) -> tuple[bool, str]:
-    if call.name == "refund_order" and call.arguments["amount_cents"] > 5_000:
-        return False, "refund exceeds automatic authority"
-    return True, "policy permits proposal"
-```
-
-This proves one value-limit property and nothing broader. It does not verify that the caller owns A-17, that the currency is correct, that a previous refund has not occurred, that the policy version is current, or that 4,999 cents is a desirable remedy. A trustworthy example states those gaps instead of letting a short function borrow the reputation of a production authorization service.
-
-A denial must also be designed as data. It needs a stable category, a safe explanation, and enough detail for a strategy or human to choose a legal next step. Returning a raw stack trace may leak internals. Returning only “failed” encourages blind retries. The `Observation.kind` field distinguishes a denial from a transient dependency failure and a permanent domain error.
-
-The focused test makes the safety claim executable. It lowers the repeat threshold to one, submits an over-limit proposal, and checks the effect log:
-
-```python
-# test_ch16_agent_loop.py — denied effect invariant
-tools, gate, effects = fixture()
-result = run_agent(
-    "Refund A-17",
-    SupportStrategy("chain", refund_cents=9_999),
-    tools,
-    gate,
-    Limits(max_steps=5, repeated_denials=1),
+```{python}
+# @save
+SYSTEM_PROMPT = (
+    "You are a support agent. Use the tools to resolve the customer's problem. "
+    "A denied call is information: read the reason and adjust."
 )
-assert result.stop == Stop.NO_PROGRESS
-assert effects == []
+
+
+def run_agent(
+    task: str,
+    model: Any,
+    tools: dict[str, ToolSpec],
+    gate: Gate,
+    limits: Limits = Limits(),
+) -> RunResult:
+    """Run one task through the propose-gate-execute-observe loop to a typed end.
+
+    Each turn sends the whole transcript to the model, appends whatever it
+    returns, executes any proposed calls through ``execute_call``, and appends
+    the typed results as tool messages. The model chooses what to propose;
+    this function owns everything else — the transcript, the budgets, the
+    effect boundary, and the decision to stop.
+
+    Args:
+        task: The user's goal. Text only; it grants no authority.
+        model: Anything with ``chat(messages) -> assistant message``.
+        tools: The registry of executable contracts.
+        gate: Policy consulted immediately before every handler call.
+        limits: Step, token, and no-progress ceilings.
+
+    Returns:
+        A ``RunResult`` with the stop reason, the answer text when the model
+        answered, and the complete state for verification.
+    """
+    state = RunState(messages=[
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": task},
+    ])
+    denials: dict[str, int] = {}
+    while state.turns < limits.max_turns:
+        prompt_tokens = estimate_tokens(state.messages)
+        if prompt_tokens > limits.max_prompt_tokens:
+            return RunResult(Stop.TOKEN_LIMIT, None, state)
+        state.prompt_token_log.append(prompt_tokens)
+        reply = model.chat(state.messages)
+        state.messages.append(reply)
+        state.turns += 1
+        calls = parse_tool_calls(reply)
+        if not calls:
+            return RunResult(Stop.ANSWERED, reply.get("content"), state)
+        for call in calls:
+            observation = execute_call(call, tools, gate)
+            state.observations.append(observation)
+            state.messages.append({
+                "role": "tool",
+                "tool_call_id": call.call_id,
+                "content": json.dumps({
+                    "ok": observation.ok,
+                    "kind": observation.kind,
+                    "content": observation.content,
+                }),
+            })
+            if observation.kind == "denied":
+                key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+                denials[key] = denials.get(key, 0) + 1
+                if denials[key] >= limits.repeated_denials:
+                    return RunResult(Stop.NO_PROGRESS, None, state)
+    return RunResult(Stop.STEP_LIMIT, None, state)
 ```
 
-The empty list is the decisive assertion. Testing that the model *said* it was denied would not test containment. The code asserts the state owned by the effect boundary.
+It is worth reading this function slowly, because you will recognize it inside every agent product you ever open up. To watch it run, we want the transcript in a readable form, so a small printer first.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| fixture plus denial test | 17 lines shown | An over-limit refund creates no receipt, even when proposed correctly. |
-:::
+```{python}
+# @save
+def print_transcript(state: RunState) -> None:
+    """Print a run's transcript, one aligned line per message or tool call.
 
-## Termination, budgets, and typed failure {#sec-ch16-lifecycle}
+    Args:
+        state: The finished (or in-flight) run state to display.
+    """
+    labels = {"system": "system |", "user": "user   |", "tool": "tool   |"}
+    for message in state.messages:
+        if message["role"] == "assistant":
+            if message.get("content"):
+                print(f"model  | {message['content']}")
+            for item in message.get("tool_calls") or []:
+                function = item["function"]
+                print(f"model  | -> {function['name']} {function['arguments']}")
+        else:
+            print(f"{labels[message['role']]} {message['content']}")
+```
 
-A gate can contain an action while the loop still fails operationally. A strategy may repeat the same denied proposal forever, wander across harmless reads, or retry a timed-out dependency until the caller's budget is gone. “The model will eventually stop” is not a termination condition.
+Now the first complete run: a well-behaved script that looks up the order, refunds what was paid, and answers.
 
-Finite step and cost limits give the in-process kernel a simple liveness property: each iteration consumes at least one step, so the loop must return after at most `max_steps` decisions. The artifact also charges two synthetic cost units per strategy decision. Real systems use observed input/output tokens, tool charges, wall-clock deadlines, and sometimes energy or scarce-resource quotas. The counter's unit is less important than its code-owned enforcement.
+```{python}
+task = "Order A-17 arrived damaged. Please make this right."
+tools, effects = make_environment()
+scripted = ScriptedModel(turns=[
+    tool_call_message("call_1", "lookup_order", {"order_id": "A-17"}),
+    tool_call_message("call_2", "refund_order", {"order_id": "A-17", "amount_cents": 4999}),
+    answer_message("Order A-17 arrived damaged, so I refunded the 4999 cents you paid."),
+])
+result = run_agent(task, scripted, tools, allow_all)
+print_transcript(result.state)
+print(f"\nstop={result.stop.value}  turns={result.state.turns}  effects={effects}")
+```
 
-Repeated denials reveal one form of no progress. The artifact hashes the tool name and canonicalized arguments, counts repeated denied proposals, and ends with `NO_PROGRESS` when the threshold is reached. This is intentionally narrower than a semantic stuck detector. A strategy that alternates between two denied values can evade it; Exercise 3 asks you to close that gap without treating a legitimate transient retry as a loop.
+Three turns, two tool calls, one receipt, a typed `answered` ending — and every line of it sitting in `result.state.messages` as plain data. This is a good moment to name the separation the transcript makes visible, because the words *model*, *harness*, and *environment* will carry weight for the rest of the book. The **model** proposes: it maps a transcript to a next message and has no other power. The **harness** is everything we just wrote — prompts, tool registry, gate, budgets, the loop — and it owns every decision. The **environment** is the world the tools touch: the order table and the effect log, which record what actually happened regardless of what anyone said. @fig-ch16-boundaries locates the three.
 
 ```{mermaid}
+%%| echo: false
+%%| label: fig-ch16-boundaries
+%%| fig-cap: "Who owns what around the loop? The model only proposes; the harness (this chapter's code) decides and executes; the environment records what actually happened."
+flowchart LR
+    Model(["Model<br/>proposes next message"])
+    subgraph Harness["Harness — this chapter's ~150 lines"]
+      Loop["run_agent loop<br/>budgets + transcript"]
+      Gate["gate<br/>policy on exact arguments"]
+      Reg["tool registry<br/>declared contracts"]
+    end
+    Env[("Environment<br/>orders, money, effect log")]
+    Model -->|assistant message| Loop
+    Loop -->|tool message| Model
+    Loop --> Gate --> Reg -->|effect| Env
+    Env -->|observation| Loop
+```
+
+## The effect boundary: a denial that must not happen {#sec-ch16-denial}
+
+The happy path ran with `allow_all`, and that should make you nervous. Let us make the danger concrete with a model script that over-reaches: it looks up the order, proposes a 9,999-cent refund — twice what the customer paid — and, *if it ever sees a denial*, falls back to refunding exactly the paid amount. The fallback lives in the script's reaction table, so this stub reacts to what the loop feeds back the way a capable instructed model would.
+
+```{python}
+# @save
+def overreaching_model() -> ScriptedModel:
+    """Build the chapter's over-reaching support model, fresh for each run.
+
+    Its script looks up the order, proposes a 9999-cent refund — twice the
+    amount paid — and, if it ever sees a denial, falls back to refunding
+    exactly what the order cost. A capable model behaves this way when its
+    instructions say to read denials; here the reaction is scripted so every
+    run of the book reproduces it.
+
+    Returns:
+        A fresh ``ScriptedModel`` with the same three turns and one reaction.
+    """
+    return ScriptedModel(
+        turns=[
+            tool_call_message("call_1", "lookup_order", {"order_id": "A-17"}),
+            tool_call_message("call_2", "refund_order",
+                              {"order_id": "A-17", "amount_cents": 9999}),
+            answer_message("I have issued the refund for order A-17."),
+        ],
+        reactions={
+            "denied": tool_call_message("call_3", "refund_order",
+                                        {"order_id": "A-17", "amount_cents": 4999}),
+        },
+    )
+```
+
+First, the world as it is today: the same loop, no policy.
+
+```{python}
+tools, effects_ungated = make_environment()
+result_ungated = run_agent(task, overreaching_model(), tools, allow_all)
+print(f"stop={result_ungated.stop.value}  turns={result_ungated.state.turns}")
+print("effect log:", effects_ungated)
+```
+
+The 9,999-cent refund landed. Note that the system prompt was present the whole time — it says to use the tools responsibly — and it changed nothing, because a prompt is an input to a distribution, not a constraint on execution. The fix is not a sterner prompt. It is a few lines of policy evaluated against the *exact arguments* immediately before execution.
+
+```{python}
+# @save
+AUTO_REFUND_LIMIT_CENTS = 5000
+
+
+def refund_gate(call: ToolCall) -> tuple[bool, str]:
+    """The support desk's policy, applied at the effect boundary.
+
+    It examines the exact arguments about to run — not what the prompt said,
+    not what the model intended — and refuses any refund above the automatic
+    authority limit. Everything else passes.
+
+    Args:
+        call: The validated proposal about to be executed.
+
+    Returns:
+        ``(allowed, reason)``; the reason travels back to the model either way.
+    """
+    if call.name == "refund_order" and call.arguments["amount_cents"] > AUTO_REFUND_LIMIT_CENTS:
+        return False, f"refund exceeds automatic authority of {AUTO_REFUND_LIMIT_CENTS} cents"
+    return True, "within policy"
+```
+
+Same task, same over-reaching model, one changed argument: the gate.
+
+```{python}
+tools, effects_gated = make_environment()
+result_gated = run_agent(task, overreaching_model(), tools, refund_gate)
+print_transcript(result_gated.state)
+print(f"\nstop={result_gated.stop.value}  turns={result_gated.state.turns}")
+print("effect log:", effects_gated)
+```
+
+Read the middle of that transcript carefully — it is the most important trace in the chapter. The 9,999-cent proposal was denied, and the denial did not crash anything: it became an ordinary tool message carrying a readable reason. The model's next turn (the scripted reaction) used that information to propose 4,999 instead, which passed. Adaptation happened *without weakening the gate*: the model stayed free to propose any value, and our code stayed free to refuse it. The effect log — the only witness that cannot be talked out of its story — shows exactly one receipt at 4,999 cents. @fig-ch16-gate-effect puts the two runs side by side.
+
+```{python}
+#| label: fig-ch16-gate-effect
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What actually bounded the refund? With no gate, the same model script moves 9,999 cents; with the gate, the denial re-routes it to 4,999. The dashed line is the 5,000-cent policy — enforced only when code enforces it."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(5.8, 3.2))
+amounts = [effects_ungated[0]["refunded_cents"], effects_gated[0]["refunded_cents"]]
+bars = ax.bar(["allow_all gate", "refund_gate"], amounts, width=0.5,
+              color=["#b13f3f", "#2a7f9e"])
+ax.axhline(AUTO_REFUND_LIMIT_CENTS, ls="--", color="0.4")
+ax.text(1.32, AUTO_REFUND_LIMIT_CENTS + 120, "policy limit (5000)", fontsize=8,
+        ha="right", color="0.3")
+for bar, amount in zip(bars, amounts):
+    ax.text(bar.get_x() + bar.get_width() / 2, amount + 120, str(amount),
+            ha="center", fontsize=9)
+ax.set_ylabel("cents actually refunded")
+fig.tight_layout()
+plt.show()
+```
+
+Honesty about scope: `refund_gate` proves one value-limit property and nothing broader. It does not check that the caller owns A-17, that the currency matches, that this order was not already refunded, or that 4,999 cents is the right remedy — a production authorization layer owns those, and Chapter 24 builds it. What the small gate does establish is the architectural point: within this process, a denied call cannot reach a handler through `run_agent`, no matter what the model writes. When we want to *test* that claim, we assert on `effects_gated`, never on the model's apology — the model saying "I was denied" tests obedience, while the empty log tests containment.
+
+::: {.callout-note title="In the interview"}
+**Q. Your agent's system prompt says "never refund more than \$50." A red-teamer gets the model to emit `amount_cents=999999`. What happens, and what should?**
+What happens depends on one thing only: whether code inspects the arguments at the execution boundary. A prompt is an input to a probability distribution — it shifts behavior, it enforces nothing. The answer they want: policy lives in a gate that evaluates the exact arguments immediately before the handler runs, and the test asserts on the effect log (no receipt appears), not on the model's reply. The trap is describing better prompting, or testing that the model *says* it refused.
+:::
+
+## Termination, budgets, and typed endings {#sec-ch16-lifecycle}
+
+A gate can contain every action while the loop still fails operationally: a model can wander across harmless reads forever, or repeat a denied proposal until the caller's budget is gone. "The model will eventually stop" is not a termination condition — our `while` loop needs its own. The `Limits` we wrote in @sec-ch16-loop give it three, and we can trigger each one on demand. First the wanderer, a script that reacts to every lookup result by looking up again.
+
+```{python}
+tools, _ = make_environment()
+lookup_again = tool_call_message("call_w", "lookup_order", {"order_id": "A-17"})
+wanderer = ScriptedModel(turns=[lookup_again], reactions={"order_id": lookup_again})
+result_w = run_agent("Investigate order A-17.", wanderer, tools, refund_gate,
+                     Limits(max_turns=5))
+print(f"stop={result_w.stop.value}  turns={result_w.state.turns}  "
+      f"observations={len(result_w.state.observations)}")
+```
+
+Each iteration consumes one turn, so the loop must return within `max_turns` decisions — a liveness guarantee that holds even for a model that never chooses to stop. Next, the stubborn model: it proposes the over-limit refund and reacts to every denial by proposing it again, unchanged.
+
+```{python}
+tools, effects_stub = make_environment()
+insist = tool_call_message("call_s", "refund_order",
+                           {"order_id": "A-17", "amount_cents": 9999})
+stubborn = ScriptedModel(turns=[insist], reactions={"denied": insist})
+result_s = run_agent("Refund order A-17.", stubborn, tools, refund_gate)
+print(f"stop={result_s.stop.value}  turns={result_s.state.turns}")
+print("denied observations:",
+      sum(1 for o in result_s.state.observations if o.kind == "denied"))
+print("effect log:", effects_stub)
+```
+
+The loop fingerprints each denied proposal by tool name and canonical arguments; the second identical denial trips `repeated_denials` and the run ends `no_progress` after two turns instead of burning six more. The detector is deliberately narrow — a model alternating between 9,998 and 9,999 would evade it, and Exercise 3 asks you to close that gap without punishing a legitimate retry. Third, the budget that bites in production: tokens. Every turn resends the whole transcript, so cost per turn grows even when the model does nothing new.
+
+```{python}
+tools, _ = make_environment()
+wanderer = ScriptedModel(turns=[lookup_again], reactions={"order_id": lookup_again})
+result_t = run_agent("Investigate order A-17.", wanderer, tools, refund_gate,
+                     Limits(max_turns=40, max_prompt_tokens=1200))
+print(f"stop={result_t.stop.value}  turns={result_t.state.turns}")
+print("prompt tokens per turn:", result_t.state.prompt_token_log[:6], "...",
+      result_t.state.prompt_token_log[-2:])
+```
+
+Fourteen turns in, the next prompt would exceed 1,200 estimated tokens and the loop refuses to admit another model call. The per-turn log climbs from 54 to 1,192 in nearly even steps of about 88 tokens — the price of appending one proposal and one observation — and @fig-ch16-growth plots that climb against the four-turn denial run, whose transcript stayed small because it finished.
+
+```{python}
+#| label: fig-ch16-growth
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why must the loop own a token budget? The transcript is resent on every turn, so prompt size grows linearly even when the model makes no progress; the budget line is what turns unbounded spend into a typed ending."
+fig, ax = plt.subplots(figsize=(6.2, 3.2))
+ax.plot(range(1, len(result_t.state.prompt_token_log) + 1),
+        result_t.state.prompt_token_log, marker="o", label="wanderer (no progress)")
+ax.plot(range(1, len(result_gated.state.prompt_token_log) + 1),
+        result_gated.state.prompt_token_log, marker="s", label="denial run (finished)")
+ax.axhline(1200, ls="--", color="0.4")
+ax.text(1.1, 1240, "max_prompt_tokens = 1200", fontsize=8, color="0.3")
+ax.set_xlabel("model call number")
+ax.set_ylabel("estimated prompt tokens")
+ax.legend(loc="center right", fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+The four endings we have now produced are not interchangeable failures, and that is why `Stop` is an enum rather than a string. `answered` can proceed to outcome verification; `no_progress` should surface the last denial to a human; `step_limit` can return partial findings; `token_limit` should stop admitting paid calls *before* the next one, not after. A caller who receives "agent failed" has lost the information needed to choose among those responses. @fig-ch16-lifecycle draws the full machine — every path from `Ready` reaches an absorbing state, which is the property the budgets buy.
+
+```{mermaid}
+%%| echo: false
 %%| label: fig-ch16-lifecycle
-%%| fig-cap: "Which typed states make every in-process run end?"
+%%| fig-cap: "Which typed states make every run end? Each loop iteration either answers, executes and returns to Ready, or moves toward one of the four absorbing endings enforced by budgets and the no-progress counter."
 stateDiagram-v2
     [*] --> Ready
-    Ready --> Proposed: strategy decision
-    Proposed --> Answered: final answer
-    Proposed --> Denied: validation or policy rejects
-    Proposed --> Executing: gate allows
-    Denied --> Ready: new information and budget remain
-    Denied --> NoProgress: repeat threshold reached
-    Executing --> Observed: result / transient / permanent
-    Observed --> Ready: budget remains
-    Ready --> StepLimit: no step remains
-    Ready --> CostLimit: next call exceeds budget
+    Ready --> Proposing: budget admits another call
+    Proposing --> Answered: plain assistant message
+    Proposing --> Executing: gate allows
+    Proposing --> Denied: invalid or denied
+    Executing --> Ready: typed observation appended
+    Denied --> Ready: below repeat threshold
+    Denied --> NoProgress: identical proposal denied again
+    Ready --> StepLimit: max_turns reached
+    Ready --> TokenLimit: next prompt exceeds budget
     Answered --> [*]
     NoProgress --> [*]
     StepLimit --> [*]
-    CostLimit --> [*]
+    TokenLimit --> [*]
 ```
 
-Typed endings let callers choose different recovery policies. `ANSWERED` can proceed to outcome verification. `NO_PROGRESS` can request a human decision with the last denial. `STEP_LIMIT` can return partial findings. `COST_LIMIT` can stop before admitting another paid call. Merging all four into a string such as “Agent failed” discards the state needed for safe recovery.
+One production caveat belongs here in plain text: checking budgets between calls prevents *admitting* another call after a limit; it does not preempt a model or tool already in flight, and it says nothing about an effect that may have completed remotely when a timeout fired. Durable, exactly-once effects are Chapter 26's problem, and they are much harder than this loop makes termination look.
 
-Expected tool failures are observations too. A timeout is usually transient: retry may be legal if the operation is idempotent and the deadline allows it. A missing order is permanent for the current identifier: blind retry wastes budget. A policy denial is neither; changing the proposal or escalating may help. The artifact catches only the expected exceptions used by the fixture:
+## The workflow canon: strategies over one kernel {#sec-ch16-workflows}
 
-```python
-# agent_loop.py — execution delta for typed expected failures
-try:
-    content = tool.handler(**decision.arguments)
-    observation = Observation(decision.call_id, True, "result", content)
-except TimeoutError as exc:
-    observation = Observation(decision.call_id, False, "transient", str(exc))
-except (KeyError, ValueError) as exc:
-    observation = Observation(decision.call_id, False, "permanent", str(exc))
+The same refund task can be organized under very different control policies, and the industry has settled on a small canon of named patterns: the prompt chain, the router, the parallel fan-out, the evaluator–optimizer, and the adaptive agent [@anthropic2024effectiveagents]. Implementing them as five separate runtimes would duplicate message handling, dispatch, and safety behavior — and let the copies drift. The discipline that keeps a codebase sane is to fix what must be shared and vary only what genuinely differs. What must be shared is the effect boundary: every pattern executes tools through the same `execute_call` and the same `refund_gate`. What varies is exactly one thing: *who chooses the next step*. To compare the patterns fairly we also need shared accounting.
 
-state.observations.append(observation)
-state.trace.append({"event": "observation", "value": asdict(observation)})
+```{python}
+# @save
+@dataclass
+class Meter:
+    """Measure what a pattern actually spends.
+
+    Wraps model calls and tool executions so every pattern is charged in the
+    same three currencies: model calls, tool calls, and estimated prompt
+    tokens. The differences between patterns then come from control policy,
+    not from accounting.
+    """
+
+    model_calls: int = 0
+    tool_calls: int = 0
+    prompt_tokens: int = 0
+
+    def chat(self, model: Any, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Charge one model call and forward it to the model.
+
+        Args:
+            model: The model being consulted.
+            messages: The prompt about to be sent; its size is charged.
+
+        Returns:
+            The assistant message the model produced.
+        """
+        self.model_calls += 1
+        self.prompt_tokens += estimate_tokens(messages)
+        return model.chat(messages)
+
+    def execute(self, call: ToolCall, tools: dict[str, ToolSpec], gate: Gate) -> Observation:
+        """Charge one tool call and route it through the shared effect boundary.
+
+        Args:
+            call: The proposal to execute.
+            tools: The registry.
+            gate: The policy gate — the same one every pattern must pass.
+
+        Returns:
+            The typed observation from ``execute_call``.
+        """
+        self.tool_calls += 1
+        return execute_call(call, tools, gate)
 ```
 
-Do not turn every exception into an observation. An assertion failure, corrupted registry, or programming error should normally stop the process and alert an operator. Otherwise the model may improvise around broken safety code.
+The **chain** is the pattern to reach for when the path is known in advance: code owns the whole sequence and consults the model exactly once, for the only genuinely semantic step.
 
-The deadline in a production runtime also needs precise semantics. Checking elapsed time between calls prevents admission of another call after a deadline; it does not preempt a model or tool already in flight. Stronger cancellation requires timeouts propagated to the client, cooperative cancellation inside tools, and a plan for effects that may have completed remotely. Chapter 26 owns that durable-effect problem.
+```{python}
+# @save
+def run_chain(model: Any, tools: dict[str, ToolSpec], gate: Gate, meter: Meter) -> str:
+    """The chain pattern: code owns the whole sequence.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `agent_loop.py` with limits and typed failures | 34 lines shown | Wandering, repeated denial, and expected tool failure end in distinguishable states. |
-:::
+    Look up the order, refund exactly what was paid, then consult the model
+    once — for the only genuinely semantic step, drafting the reply. When the
+    path is known in advance, this is the cheapest and most testable shape.
 
-## Workflows are strategies, not new loops {#sec-ch16-workflows}
+    Args:
+        model: Drafting model (one call).
+        tools: The registry.
+        gate: The shared policy gate.
+        meter: The accounting for this run.
 
-The same task can be organized by different control policies. Implementing a prompt chain, router, evaluator loop, and adaptive agent as four separate runtimes repeats message handling, tool dispatch, trace capture, and error handling. The duplicated machinery hides the policy difference and lets safety behavior drift across paths.
-
-Keep the execution kernel fixed and vary only the strategy that selects the next proposal. Then every comparison shares the same gate, effect handler, budget accounting, and trace contract; the strategy is the only meaningful variable.
-
-```{dot}
-//| label: fig-ch16-strategies
-//| fig-cap: "What changes across workflow patterns, and what must remain shared?"
-digraph strategies {
-  graph [rankdir=LR, bgcolor="transparent", nodesep=0.28, ranksep=0.5]
-  node [shape=box, style="rounded,filled", fillcolor="#eef4f8", color="#40637a"]
-  chain [label="Prompt chain\nfixed next step"]
-  router [label="Router\ncode/model selects branch"]
-  eval [label="Evaluator–optimizer\nrevise until criterion"]
-  adaptive [label="Adaptive agent\nmodel selects next action"]
-  kernel [label="Shared kernel\npropose → gate → execute → observe", fillcolor="#e7f2e8", color="#3a7d44"]
-  trace [label="Shared typed trace + budgets", fillcolor="#f4eee2", color="#9a6b1f"]
-  chain -> kernel
-  router -> kernel
-  eval -> kernel
-  adaptive -> kernel
-  kernel -> trace
-}
+    Returns:
+        The drafted customer reply.
+    """
+    order = meter.execute(ToolCall("c1", "lookup_order", {"order_id": "A-17"}),
+                          tools, gate).content
+    receipt = meter.execute(
+        ToolCall("c2", "refund_order",
+                 {"order_id": "A-17", "amount_cents": order["paid_cents"]}),
+        tools, gate).content
+    reply = meter.chat(model, [{"role": "user", "content":
+                                f"Draft one sentence for the customer citing this receipt: "
+                                f"{json.dumps(receipt)}"}])
+    return reply["content"]
 ```
 
-A **prompt chain** chooses a fixed sequence: extract fields, retrieve policy, draft answer. It is easy to test and should be the default when the path is known. A **router** selects one of several bounded branches, such as billing versus technical support. A **parallel fan-out** sends independent subproblems to workers and joins typed results; it is useful only when the subproblems are genuinely independent and write conflicts are controlled. An **evaluator–optimizer** alternates generation with an external criterion until the criterion passes or a budget ends. An **adaptive agent** lets the proposal policy choose among available tools based on observations.
+The **parallel fan-out** dispatches independent, effect-free reads together and joins the typed results before acting — safe here precisely because the two reads cannot conflict.
 
-The differences belong in a small strategy surface:
+```{python}
+# @save
+def run_parallel(model: Any, tools: dict[str, ToolSpec], gate: Gate, meter: Meter) -> str:
+    """The parallel fan-out pattern: independent reads dispatched together.
 
-```python
-# agent_loop.py — the only behavior a strategy must provide
-class Strategy(Protocol):
-    """Choose the next proposal from explicit run state."""
-    def decide(self, state: RunState) -> Decision: ...
+    Code fires both reads, joins the typed results, refunds the amount the
+    order reports, and consults the model once with everything in view. The
+    fan-out is safe because the reads are independent and effect-free.
+
+    Args:
+        model: Drafting model (one call).
+        tools: The registry.
+        gate: The shared policy gate.
+        meter: The accounting for this run.
+
+    Returns:
+        The drafted customer reply.
+    """
+    reads = [ToolCall("p1", "lookup_order", {"order_id": "A-17"}),
+             ToolCall("p2", "read_policy", {})]
+    joined = {c.name: meter.execute(c, tools, gate).content for c in reads}
+    receipt = meter.execute(
+        ToolCall("p3", "refund_order",
+                 {"order_id": "A-17",
+                  "amount_cents": joined["lookup_order"]["paid_cents"]}),
+        tools, gate).content
+    reply = meter.chat(model, [{"role": "user", "content":
+                                f"Order and policy: {json.dumps(joined)}. "
+                                f"Draft one sentence citing {json.dumps(receipt)}."}])
+    return reply["content"]
 ```
 
-The chapter fixture implements chain, router, evaluator, and adaptive modes as thin deterministic strategies. They all use the same tool registry, validation, gate, budgets, trace, and stop types. This makes a cost/reliability comparison meaningful: the measured delta comes from control policy rather than from four unrelated implementations.
+The **router** grants the model one bounded decision — classify the request — and code owns everything after it. The failure mode is proportionate to the grant: a misroute contaminates the entire branch, which is why the branch set stays small and the routing decision is worth logging.
 
-| Pattern | Who chooses the next branch? | Best fit | Characteristic failure |
+```{python}
+# @save
+def run_router(task: str, model: Any, tools: dict[str, ToolSpec], gate: Gate,
+               meter: Meter) -> str:
+    """The router pattern: one bounded model decision picks a code-owned branch.
+
+    The model answers a single classification question; code owns everything
+    after it. A misroute contaminates the whole branch, which is why the
+    branch set stays small and the routing decision is worth logging.
+
+    Args:
+        task: The customer request being routed.
+        model: The routing (and drafting) model.
+        tools: The registry.
+        gate: The shared policy gate.
+        meter: The accounting for this run.
+
+    Returns:
+        The branch's final reply.
+    """
+    route = meter.chat(model, [{"role": "user", "content":
+                                f"Answer 'billing' or 'policy' only. Request: {task}"}])
+    branch = route["content"].strip()
+    if branch == "policy":
+        policy = meter.execute(ToolCall("r1", "read_policy", {}), tools, gate).content
+        return f"Our policy: {policy}"
+    return run_chain(model, tools, gate, meter)
+```
+
+The **evaluator–optimizer** alternates generation with a check, and the check is what makes it more than retry-until-tired: code owns an acceptance criterion — here, that the draft states the exact refunded amount — and each rejection feeds a concrete critique back into the next attempt. A weak criterion rewards cosmetic revision, so the criterion deserves as much design attention as the prompt.
+
+```{python}
+# @save
+def run_evaluator(model: Any, tools: dict[str, ToolSpec], gate: Gate, meter: Meter,
+                  max_rounds: int = 3) -> str:
+    """The evaluator-optimizer pattern: generate, check, revise until it passes.
+
+    Code performs the transaction, then loops the model against an acceptance
+    criterion owned by code — here, that the draft states the exact refunded
+    amount. The criterion is what makes revision meaningful; a weak one
+    rewards cosmetic edits.
+
+    Args:
+        model: The drafting model, consulted once per round.
+        tools: The registry.
+        gate: The shared policy gate.
+        meter: The accounting for this run.
+        max_rounds: The revision budget.
+
+    Returns:
+        The first draft that passes the criterion, or the last draft.
+    """
+    order = meter.execute(ToolCall("e1", "lookup_order", {"order_id": "A-17"}),
+                          tools, gate).content
+    receipt = meter.execute(
+        ToolCall("e2", "refund_order",
+                 {"order_id": "A-17", "amount_cents": order["paid_cents"]}),
+        tools, gate).content
+    critique = ""
+    draft = ""
+    for _ in range(max_rounds):
+        prompt = f"Draft a reply for this receipt: {json.dumps(receipt)}.{critique}"
+        draft = meter.chat(model, [{"role": "user", "content": prompt}])["content"]
+        if str(receipt["refunded_cents"]) in draft:
+            return draft
+        critique = " Critique: the draft must state the exact refunded amount."
+    return draft
+```
+
+Two of these deserve to be seen actually exercising their distinctive move. The router, given two different requests (with routing turns scripted accordingly), takes two different branches — note the second task never touches the refund tool at all.
+
+```{python}
+for routed_task, script in [
+    ("Order A-17 arrived damaged. Please make this right.",
+     ScriptedModel(turns=[answer_message("billing"),
+                          answer_message("We refunded 4999 cents for order A-17.")])),
+    ("What is your refund policy for damaged orders?",
+     ScriptedModel(turns=[answer_message("policy")])),
+]:
+    tools, effects_r = make_environment()
+    meter = Meter()
+    reply = run_router(routed_task, script, tools, refund_gate, meter)
+    print(f"task: {routed_task}")
+    print(f"  -> {reply}")
+    print(f"  model_calls={meter.model_calls}  tool_calls={meter.tool_calls}  "
+          f"effects={len(effects_r)}")
+```
+
+And the evaluator, given a scripted drafter whose first attempt omits the amount, visibly spends a second round to satisfy the criterion.
+
+```{python}
+tools, effects_e = make_environment()
+meter = Meter()
+draft_model = ScriptedModel(turns=[
+    answer_message("We are sorry about the damage - your refund is on its way."),
+    answer_message("We are sorry about the damage - we refunded 4999 cents for order A-17."),
+])
+final = run_evaluator(draft_model, tools, refund_gate, meter)
+print("accepted draft:", final)
+print(f"model_calls={meter.model_calls}  (round 1 failed the criterion)")
+```
+
+Now the comparison. We run all five patterns — the fifth being the adaptive agent, our `run_agent` loop with the over-reaching model from @sec-ch16-denial — on the same task against fresh environments, and read off what each spent and whether the correct refund landed. A small helper keeps the accounting uniform.
+
+```{python}
+def measure(name: str, run_fn: Callable[..., Any]) -> dict[str, Any]:
+    """Run one pattern against a fresh environment and record what it spent."""
+    tools, fx = make_environment()
+    meter = Meter()
+    run_fn(tools, meter)
+    return {"pattern": name, "model_calls": meter.model_calls,
+            "tool_calls": meter.tool_calls, "prompt_tokens": meter.prompt_tokens,
+            "refund_landed": fx == [{"order_id": "A-17", "refunded_cents": 4999}]}
+
+
+def drafter() -> ScriptedModel:
+    """A one-turn scripted drafter for the patterns that consult the model once."""
+    return ScriptedModel(turns=[
+        answer_message("We refunded 4999 cents for damaged order A-17."),
+    ])
+```
+
+```{python}
+rows = [
+    measure("chain", lambda t, m: run_chain(drafter(), t, refund_gate, m)),
+    measure("router", lambda t, m: run_router(task, ScriptedModel(
+        turns=[answer_message("billing"), answer_message("We refunded 4999 cents for A-17.")]),
+        t, refund_gate, m)),
+    measure("parallel", lambda t, m: run_parallel(drafter(), t, refund_gate, m)),
+    measure("evaluator", lambda t, m: run_evaluator(ScriptedModel(
+        turns=[answer_message("We are sorry - your refund is on its way."),
+               answer_message("We refunded 4999 cents for damaged order A-17.")]),
+        t, refund_gate, m)),
+]
+tools_a, fx_a = make_environment()
+result_a = run_agent(task, overreaching_model(), tools_a, refund_gate)
+rows.append({"pattern": "agent", "model_calls": result_a.state.turns,
+             "tool_calls": len(result_a.state.observations),
+             "prompt_tokens": sum(result_a.state.prompt_token_log),
+             "refund_landed": fx_a == [{"order_id": "A-17", "refunded_cents": 4999}]})
+for row in rows:
+    print(f"{row['pattern']:10} model_calls={row['model_calls']}  "
+          f"tool_calls={row['tool_calls']}  prompt_tokens={row['prompt_tokens']:4}  "
+          f"refund_landed={row['refund_landed']}")
+```
+
+Every pattern reached the same correct outcome — same receipt, same gate — but at visibly different prices, and the price differences are structural, not incidental. The chain spent one model call and 34 estimated prompt tokens because code carried all the control flow. The agent spent four model calls and 774 tokens — roughly twenty times the chain's context bill — because each turn resends the growing transcript, and one of those turns was the denied over-reach. That ratio is measured on scripted drafts, so it says nothing about output *quality*; what it measures honestly is the overhead each control policy pays before quality even enters the question. @fig-ch16-patterns draws both currencies.
+
+```{python}
+#| label: fig-ch16-patterns
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does each control policy spend on the identical task? Calls (left) and estimated prompt tokens (right), measured through the same gate and meter. The adaptive agent's freedom is paid for in transcript resends."
+names = [row["pattern"] for row in rows]
+x = range(len(names))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 3.2))
+ax1.bar([i - 0.18 for i in x], [row["model_calls"] for row in rows], width=0.36,
+        label="model calls", color="#2a7f9e")
+ax1.bar([i + 0.18 for i in x], [row["tool_calls"] for row in rows], width=0.36,
+        label="tool calls", color="#b7791f")
+ax1.set_xticks(list(x)); ax1.set_xticklabels(names, rotation=25, fontsize=8)
+ax1.set_ylabel("calls"); ax1.legend(fontsize=8)
+ax2.bar(list(x), [row["prompt_tokens"] for row in rows], width=0.5, color="#557a3c")
+ax2.set_xticks(list(x)); ax2.set_xticklabels(names, rotation=25, fontsize=8)
+ax2.set_ylabel("estimated prompt tokens")
+fig.tight_layout()
+plt.show()
+```
+
+The canon in one view, with the question that actually selects among them — who chooses the next step — and the failure each choice buys:
+
+| Pattern | Who chooses the next step | Best fit | Characteristic failure |
 |---|---|---|---|
-| Chain | Code | Stable, known sequence | Cannot adapt to an unmodeled branch |
-| Router | Code or one bounded model decision | Distinct task families | Misrouting contaminates the entire branch |
-| Parallel fan-out | Code-owned scheduler | Independent reads or analyses | Cost growth and conflicting writes |
-| Evaluator–optimizer | Code owns loop; verifier decides acceptance | Output with an executable rubric | Weak verifier rewards cosmetic revision |
-| Adaptive agent | Model within a bounded action space | Path depends on new observations | Wandering, compounding error, larger attack surface |
+| Chain | Code, fixed in advance | Stable, known sequence | Cannot adapt to an unmodeled case |
+| Router | One bounded model decision, then code | Distinct task families | Misroute contaminates the branch |
+| Parallel fan-out | Code-owned dispatcher | Independent, effect-free subtasks | Cost growth; conflicting writes |
+| Evaluator–optimizer | Code loops; criterion decides acceptance | Output with a checkable rubric | Weak criterion rewards cosmetic revision |
+| Adaptive agent | Model, within the gated action space | Path depends on observations | Wandering, compounding cost, larger attack surface |
 
-The autonomy slider is continuous. A system can use deterministic routing and an agentic substep, or an adaptive read phase followed by a deterministic write transaction. The engineering question is not “workflow or agent?” as a global label. It is “which transition benefits from model choice, and what evidence pays for that choice?”
+The table's rows are not rungs of sophistication — they are positions on the autonomy slider from @sec-ch01-agency-budget, and the slider is set *per transition*, not per system. A production support desk might route deterministically, run an agentic read phase, and then execute the refund as a fixed, gated transaction. The engineering question is never "workflow or agent?" as an identity; it is "which transition benefits from model choice, and what measured evidence pays for that choice?"
 
 ## ReAct, planning, and replanning {#sec-ch16-planning}
 
-ReAct popularized an effective pattern: interleave reasoning with environment actions and observations rather than asking the model to produce a complete answer from its initial context. The engineering value is not that private reasoning text becomes trustworthy. The value is that each consequential step can be grounded in a new observation before the next proposal.
+The adaptive agent we have run so far acts without narrating. ReAct — reason and act — added a simple, influential discipline: interleave visible reasoning with actions and observations, so that each consequential step is grounded in what the environment just said rather than in a plan hallucinated whole at turn one [@yao2023react]. Our wire format already has the slot for it — the `content` field that rides alongside `tool_calls` — so a ReAct turn is an assistant message carrying both a thought and an action. Here is a full trace through the gated loop; the thoughts are scripted, like every model output in this chapter, but the interleaving machinery — thought and action arriving together, each next step conditioned on a fresh observation — is exactly the mechanism, and the trace below is really executed.
 
-A production loop should therefore make **actions and observations** explicit. It need not expose or persist hidden chain-of-thought. A concise decision summary, cited evidence, and structured action are usually better operational records: they are smaller, easier to redact, and tied to observable behavior. Chapter 25 returns to the limits of chain-of-thought monitoring.
-
-Planning adds a proposed future path. A plan is not an execution grant. It is a hypothesis about dependencies and useful next actions. Treat its steps as typed intentions, then apply the normal gate at execution time. This matters because state can change between planning and acting.
-
-Three planning styles cover many systems:
-
-**Plan then execute.** The model produces a dependency graph or ordered list once. Code executes eligible steps and verifies results. This works when the environment is stable and the cost of planning is small relative to execution.
-
-**Rolling plan.** The model maintains a short horizon and revises after each observation. This reduces stale long plans but spends more model calls and can oscillate.
-
-**Planner–executor–verifier.** Separate roles propose steps, execute through the same gate, and check outcomes. Separation can reduce correlated errors only when the verifier receives independent evidence or a different capability. Three prompts to the same model over the same context do not automatically create independence.
-
-Replanning should be triggered by code-visible events: a precondition failed, a dependency changed, a verifier rejected an outcome, a budget crossed a threshold, or a human altered the goal. “Reflect whenever uncertain” gives neither the runtime nor evaluator a stable event to inspect.
-
-Search over possible reasoning paths and verifier-guided allocation were developed in Chapter 8. Here the systems conclusion is narrower: any search procedure must consume an explicit budget, and a candidate plan must still pass the action gate one step at a time. More inference-time thought does not enlarge authority.
-
-## Execution-grounded verification {#sec-ch16-verification}
-
-The kernel returns `ANSWERED` when the strategy emits a final answer. That is a control-flow fact, not a task-quality judgment. The build evaluates a refund task by inspecting the effect log for exactly one receipt with the intended order and amount. A response saying “Your refund is complete” receives a zero if no receipt exists.
-
-Verifiers come in three useful layers:
-
-1. **Invariant checks** ask whether the system stayed inside its rules: no denied handler invocation, no unmatched call identifier, no budget overrun.
-2. **Process checks** ask whether required evidence or steps occurred: the order was read before a refund, the final answer cites the resulting receipt, the test command ran after a code edit.
-3. **Outcome checks** inspect the environment: database state, passing tests, a compiled artifact, account balance, or simulator goal state.
-
-Outcome checks are strongest when the environment exposes a deterministic final-state predicate. Process checks are necessary when some outcomes are delayed or partially observable. Model-based judges can cover semantic qualities that code cannot express, but they need calibration and isolation from hostile candidate content. Chapter 22 treats that measurement problem in depth.
-
-The chapter's four tests form a small executable specification:
-
-- an over-limit refund creates no effect;
-- an adaptive strategy can use a denial as information and complete within policy;
-- a strategy that keeps reading stops at the step budget;
-- a final answer ends with `ANSWERED` and causes no effect by itself.
-
-These tests point toward framework-independent operating principles:
-
-- Keep control flow and budgets in code.
-- Treat model outputs as untrusted typed proposals.
-- Keep state explicit at every recoverable boundary.
-- Correlate every observation to the proposal that caused it.
-- Gate the exact arguments immediately before execution.
-- Verify outcomes from environment state when possible.
-- Distinguish answer completion, task success, denial, escalation, and exhaustion.
-- Record enough typed evidence to reproduce a decision without logging secrets or hidden reasoning.
-
-They also expose the remaining work. Chapter 17 designs tool surfaces, workspaces, approval binding, and the harness. Chapter 18 owns cross-session memory policy. Chapter 19 shows protocol and framework state machinery. Chapter 24 develops the full action-security architecture. Chapter 26 makes effects durable across crashes. The raw loop is valuable because those later abstractions can be judged against a mechanism the reader already understands.
-
-## Build {#sec-ch16-build}
-
-The build uses only the Python standard library. From the `newbook` directory, run:
-
-```powershell
-python code/ch16/fixture.py --pretty
-python -m pytest tests/test_ch16_agent_loop.py -q
+```{python}
+tools, effects_react = make_environment()
+react_model = ScriptedModel(turns=[
+    tool_call_message("t1", "lookup_order", {"order_id": "A-17"},
+                      thought="Thought: before promising anything, see what A-17 actually is."),
+    tool_call_message("t2", "read_policy", {},
+                      thought="Thought: damaged, paid 4999 cents. Check what I may do automatically."),
+    tool_call_message("t3", "refund_order", {"order_id": "A-17", "amount_cents": 4999},
+                      thought="Thought: 4999 is within the 5000-cent limit; refund exactly what was paid."),
+    answer_message("Your order arrived damaged, so I refunded the full 4999 cents you paid."),
+])
+result_react = run_agent(task, react_model, tools, refund_gate)
+print_transcript(result_react.state)
+print(f"\nstop={result_react.stop.value}  effects={effects_react}")
 ```
 
-The comparison command sends four thin policies through one kernel. On the deterministic fixture, the expected result is:
+Read the rhythm: thought, action, observation, next thought conditioned on that observation. The engineering value of ReAct is *not* that the thought text becomes trustworthy — a model can narrate one plan and execute another, which is why our gate never reads the thoughts at all. The value is grounding (the refund amount came from a lookup, not from the model's prior) plus an operational record: a concise stated reason next to each structured action is easier to audit and redact than raw hidden reasoning, and Chapter 25 examines how far such narrations can be trusted as evidence. ReAct's successors keep the skeleton and extend the feedback: Reflexion, for example, feeds verbal self-critique from failed episodes back into the next attempt, a memory-shaped idea we build properly in Chapter 18 [@shinn2023reflexion].
 
-| Mode | Answer boundary | Steps | Cost units | Effects | Outcome verifier |
-|---|---|---:|---:|---:|---|
-| chain | answered | 3 | 6 | 1 | pass |
-| router | answered | 3 | 6 | 1 | pass |
-| evaluator | answered | 3 | 6 | 1 | pass |
-| adaptive | answered | 4 | 8 | 1 | pass after one denial |
+Planning goes one step further than a per-turn thought: the model proposes a *future* — several steps at once. The temptation is to treat an approved-looking plan as permission to execute it. Resist that: a plan is a hypothesis about dependencies, not an execution grant, and the world can change between planning and acting. Mechanically that means each planned step passes the same gate at execution time, and the executor stops at the first failure so the planner can revise with fresh information.
 
-The first three rows share the happy path in this tiny fixture, so equal measurements are expected. The adaptive row spends one extra proposal because it begins above its authority and recovers from a typed denial. The table is not evidence that these patterns have equal reliability in general. It establishes that the harness can compare them without changing the kernel.
+```{python}
+# @save
+def execute_plan(plan: list[dict[str, Any]], tools: dict[str, ToolSpec],
+                 gate: Gate) -> tuple[list[Observation], int]:
+    """Execute a model-proposed plan step by step through the normal gate.
 
-Now break the system deliberately:
+    A plan is a hypothesis about the future, not an execution grant: each
+    step is gated at execution time, and the executor stops at the first
+    step that fails so the planner can revise with fresh information.
 
-1. Set the chain's refund to 9,999 cents and `repeated_denials=1`.
-2. Run the denial test and inspect both the typed stop reason and the effect log.
-3. Remove the gate call temporarily; confirm that the test fails because the receipt appears.
-4. Restore the gate before continuing.
+    Args:
+        plan: Steps of the form ``{"tool": name, "arguments": {...}}``.
+        tools: The registry.
+        gate: The same policy gate every other pattern uses.
 
-Next, add one outcome verifier to `compare_modes()` rather than trusting `Stop.ANSWERED`. The shipped fixture already reports `task_success` from the exact receipt. Add a second condition that the lookup observation preceded the effect, then make the router violate it. You should see control-flow completion remain `answered` while task success becomes false.
+    Returns:
+        The observations for the executed prefix, and the index of the first
+        failed step (``len(plan)`` when every step succeeded).
+    """
+    observations: list[Observation] = []
+    for index, step in enumerate(plan):
+        observation = execute_call(
+            ToolCall(f"s{index}", step["tool"], step["arguments"]), tools, gate)
+        observations.append(observation)
+        if not observation.ok:
+            return observations, index
+    return observations, len(plan)
+```
 
-For an optional live adapter, implement `Strategy.decide()` with raw OpenAI-compatible HTTP against a local vLLM endpoint. Serialize only `RunState.task` and typed observations; publish the tool schemas; parse either one tool call or a final answer into the existing union. Do not change `run_agent`, `ToolSpec`, the gate, or the tests. The adapter is successful when replacing the deterministic strategy cannot bypass a single invariant.
+Our scripted planner drafts its plan before looking anything up, and guesses the refund at 9,999 cents — a stale-information mistake real planners make constantly. Watch the plan survive parsing, start executing, and hit the gate mid-plan.
 
-### Acceptance checks
+```{python}
+tools, effects_plan = make_environment()
+planner = ScriptedModel(turns=[
+    answer_message(json.dumps([
+        {"tool": "lookup_order", "arguments": {"order_id": "A-17"}},
+        {"tool": "refund_order", "arguments": {"order_id": "A-17", "amount_cents": 9999}},
+    ])),
+    answer_message(json.dumps([
+        {"tool": "refund_order", "arguments": {"order_id": "A-17", "amount_cents": 4999}},
+    ])),
+])
+plan = json.loads(planner.chat([{"role": "user", "content": task}])["content"])
+print("plan v1:", json.dumps(plan, indent=2))
+observations, failed_at = execute_plan(plan, tools, refund_gate)
+for observation in observations:
+    print(observation)
+print(f"stopped at step {failed_at}; effect log: {effects_plan}")
+```
 
-- All four shipped tests pass.
-- A denied proposal leaves `effects` empty.
-- A wanderer stops after exactly the configured number of decisions.
-- Every observation has a call identifier present in a prior proposal.
-- The live adapter, if added, changes only proposal selection.
-- Task success is computed from fixture state, not the final prose.
+Step 0 executed and step 1 was denied, so the effect log is still empty — the bad half of the plan simply never ran. Now the replanning move: we hand the planner the failure and the fresh observation, and it produces a corrected plan.
 
-### Honesty note
+```{python}
+replan_prompt = (f"Step {failed_at} failed: {observations[-1].content}. "
+                 f"The order shows paid_cents={observations[0].content['paid_cents']}. Replan.")
+plan2 = json.loads(planner.chat([{"role": "user", "content": replan_prompt}])["content"])
+print("plan v2:", json.dumps(plan2))
+observations2, failed_at2 = execute_plan(plan2, tools, refund_gate)
+print(f"completed {failed_at2}/{len(plan2)} steps; effect log: {effects_plan}")
+```
 
-This build is an in-process control kernel. It does not provide authenticated tenant context, distributed cancellation, durable checkpoints, exactly-once effects, sandbox isolation, schema evolution, concurrent branch merging, human approval, or remote-effect reconciliation. The code is complete for the invariants it claims and deliberately silent about guarantees it does not implement.
+The trigger for replanning was a *code-visible event* — a step failed — not a vibe. That is the durable rule: replan on a failed precondition, a denied step, a rejected outcome, or a crossed budget, because those are events a runtime can log and an evaluator can count; "reflect when uncertain" gives neither one anything to inspect. The three planning shapes you will meet are all variations on this cell: **plan-then-execute** (one plan, executed with verification — what we just did), a **rolling plan** (revise a short horizon after every observation — more model calls, less staleness), and **planner–executor–verifier** (separate roles, which reduce correlated error only when the verifier gets independent evidence rather than a third read of the same context). Search over candidate plans with verifier guidance is Chapter 8's machinery; the systems rule it inherits here is that search consumes explicit budget and every surviving step still passes the gate one at a time. More thinking never enlarges authority.
 
-## What endures, what changes {#sec-ch16-endures}
+## A specification you can test against {#sec-ch16-verification}
 
-**What endures.** A model proposes; code grants authority. State, observations, budgets, stop reasons, and success predicates should be explicit. Denials and expected failures are information. A workflow and an agent can share the same execution kernel; the difference is who selects transitions. Task success should be grounded in the environment rather than inferred from confident language.
+Now that the loop exists and has run, the formal skeleton underneath it is cheap to state and worth owning, because it tells us what to test. A run is a growing **history** — our `messages` list — and each iteration applies one step relation:
 
-**What changes.** Provider tool-call envelopes, model reasoning surfaces, context limits, agent SDK APIs, and orchestration products will keep changing. Frameworks will package different combinations of harness, runtime, memory, tracing, and deployment. Those changes do not remove the need to locate the proposal boundary, the policy decision, the effect path, and the outcome verifier.
+$$
+h_{t+1} \;=\; h_t \oplus \bigl(a_t,\, o_t\bigr), \qquad a_t = \pi(h_t), \qquad o_t = E\bigl(a_t,\, G(a_t)\bigr),
+$$ {#eq-ch16-step}
 
-## Exercises {#sec-ch16-exercises}
+where $h_t$ is the transcript at turn $t$, $\pi$ is the proposal policy (the model — `ScriptedModel.chat` here, a hosted model in production), $a_t$ its proposed action, $G$ the gate, $E$ the executor that produces observation $o_t$ (a denial when $G$ refuses), and $\oplus$ appends both to the history. The endings in @fig-ch16-lifecycle are the absorbing states of the machine @eq-ch16-step defines, and the budgets guarantee one is reached. Five invariants make the specification testable, and each one is a line of code you have already read: **effect authorization** — no handler runs without validation and gate approval (`execute_call` is the only call site); **correlation** — every observation carries the id of the proposal that caused it (the `tool_call_id` echo); **boundedness** — the loop returns within its budgets (the `while` condition and the token check); **typed endings** — every return path names a `Stop`; and **outcome separation** — "the model answered" and "the task succeeded" are different predicates, which the rest of this section makes concrete. Because the state is plain data, checking the first four needs no re-running:
 
-1. **Trace by hand.** For `Limits(max_steps=3, max_cost_units=4)`, write the exact stop reason and counters for a strategy that proposes two successful reads and then a final answer. Run it and reconcile any difference.
-2. **Schema before policy.** Propose `{"order": "A-17", "amount_cents": 4999}`. Verify that exact-field validation denies it before the policy function. Add a range constraint without mixing it into business authorization.
-3. **Detect oscillation.** Defeat the current no-progress detector by alternating between refunds of 9,998 and 9,999 cents. Extend detection to a bounded recent window while allowing one retry after a `transient` observation.
-4. **Add parallel reads.** Add a code-owned fan-out strategy for order and policy reads. Preserve call correlation when observations arrive in reverse order. Do not create a second execution kernel.
-5. **Separate completion from success.** Make a strategy answer “refund complete” without calling the refund tool. Add an outcome verifier that rejects it and a process verifier that explains the missing step.
-6. **Design defense.** A reviewer proposes moving the 5,000-cent rule into the system prompt so policy can change without deployment. Defend or reject the proposal, identify a safe configuration boundary, and name the residual stale-policy risk.
+```{python}
+# @save
+def check_run(result: RunResult, effects: list[dict[str, Any]],
+              limits: Limits) -> dict[str, bool]:
+    """Check a finished run's mechanical invariants from its own record.
 
-## Notes and sources {#sec-ch16-sources}
+    These are the properties the loop must guarantee no matter how the model
+    behaved: every effect was authorized through an allowed observation,
+    every tool message correlates to a proposed call id, the turn budget was
+    respected, and the ending is one of the typed stops.
 
-The workflow-versus-agent distinction and “start with the simplest sufficient pattern” are consistent with Anthropic's [Building effective agents](https://www.anthropic.com/research/building-effective-agents). The interleaving of reasoning, action, and observation originates in the [ReAct paper](https://arxiv.org/abs/2210.03629). The practical emphasis on owning control flow and keeping state explicit is also developed in [12-Factor Agents](https://github.com/humanlayer/12-factor-agents).
+    Args:
+        result: The finished run.
+        effects: The environment's effect log for the same run.
+        limits: The limits the run was given.
 
-Those sources motivate patterns; the executable specification, effect-boundary invariant, typed endings, and one-kernel comparison in this chapter are the book's organizing treatment. Framework-specific execution begins in Chapter 19 after the raw mechanism is established.
+    Returns:
+        A mapping from invariant name to whether it held.
+    """
+    state = result.state
+    proposed_ids = {item["id"]
+                    for message in state.messages if message.get("tool_calls")
+                    for item in message["tool_calls"]}
+    return {
+        "effects_authorized": all(
+            any(o.ok and o.content == receipt for o in state.observations)
+            for receipt in effects),
+        "observations_correlated": all(
+            message["tool_call_id"] in proposed_ids
+            for message in state.messages if message["role"] == "tool"),
+        "bounded": state.turns <= limits.max_turns,
+        "typed_ending": isinstance(result.stop, Stop),
+    }
+```
+
+```{python}
+print(check_run(result_gated, effects_gated, Limits()))
+print(check_run(result_s, effects_stub, Limits()))
+```
+
+Both the successful denial-recovery run and the no-progress run satisfy all four — which is the point of a specification: the *unsuccessful* run is still a *correct* run, because failing inside the rules is an outcome the system was designed to produce. The fifth invariant needs the environment. `answered` is a control-flow fact; whether the customer was actually made whole is a question only the effect log can answer, and conflating the two is the most common measurement error in agent systems. The verifier is three lines:
+
+```{python}
+# @save
+def verify_refund(effects: list[dict[str, Any]], order_id: str, amount_cents: int) -> bool:
+    """Decide task success from the environment, not from the answer text.
+
+    Success is exactly one receipt for the right order and the right amount.
+    A polite "your refund is complete" beside an empty effect log fails this
+    check, which is the entire point of grounding verification in state the
+    model cannot narrate its way around.
+
+    Args:
+        effects: The environment's append-only effect log.
+        order_id: The order that should have been refunded.
+        amount_cents: The exact amount that should have moved.
+
+    Returns:
+        True when the log contains exactly the one intended receipt.
+    """
+    return effects == [{"order_id": order_id, "refunded_cents": amount_cents}]
+```
+
+And here is the model it exists to catch — one that announces success without ever proposing a tool call:
+
+```{python}
+tools, effects_liar = make_environment()
+liar = ScriptedModel(turns=[
+    answer_message("Good news - your refund for order A-17 is complete!"),
+])
+result_liar = run_agent(task, liar, tools, refund_gate)
+print(f"stop={result_liar.stop.value}")
+print(f"answer: {result_liar.answer}")
+print(f"effect log: {effects_liar}")
+print(f"verified: {verify_refund(effects_liar, 'A-17', 4999)}")
+```
+
+The run ended `answered` — truthfully, as a statement about control flow — and verification failed, truthfully, as a statement about the world. Keeping both signals is what lets an evaluator score the run zero while the loop reports it terminated normally. In practice verification comes in three layers of increasing grip: **invariant checks** like `check_run` (did the system stay inside its own rules?), **process checks** (did required evidence exist — was the order read before the refund, does the answer cite the receipt?), and **outcome checks** like `verify_refund` (is the environment in the goal state?). Outcome checks are the strongest when the environment exposes a deterministic predicate — database state, passing tests, a compiled artifact. Model-based judges cover semantic qualities code cannot express, at the price of their own calibration problem, which is Chapter 22's subject; @sec-ch08 already showed why an external verifier outranks a model revising its own text.
+
+Step back and the chapter's design stance has a public name: it is most of *12-Factor Agents*, a practitioner distillation of what survives contact with production [@horthy2025twelvefactor]. Own your control flow (the `while` loop is ours, not a framework's); own your context and state (the transcript is plain data we can persist, replay, and resume); treat tool calls as structured outputs to parse and judge, never as capabilities the model holds. Everything this kernel deliberately does not do — authenticate tenants, isolate untrusted code, bind human approvals, survive crashes mid-effect, reconcile ambiguous remote failures — has an owner in the chapters ahead: the harness in Chapter 17, protocols and frameworks in Chapter 19, security in Chapter 24, durable execution in Chapter 26. The raw loop is worth having built precisely so that each of those can be judged as an addition to a mechanism you already understand.
+
+## Summary
+
+An agent is a model proposing typed actions inside a loop that code owns. We built the whole thing: tools with declared contracts, the tool-call wire format and its failure-tolerant parse, the propose-gate-execute-observe loop, and the gate that turned a 9,999-cent over-reach into a denial the model recovered from — with the effect log, not the model's prose, as witness. Budgets gave every run a typed ending; the workflow canon became five control policies over one kernel, measured at 1–4 model calls and 34–774 prompt tokens; verification checked the environment instead of believing the answer. Chapter 17 builds the harness around this loop.
+
+## Exercises
+
+1. **Trace by hand.** Before running anything: for the happy-path script of @sec-ch16-loop under `Limits(max_turns=2)`, predict the stop reason, `turns`, the length of `observations`, and the effect log. Run it and reconcile every difference.
+2. **Find the layer.** Construct three bad proposals: `amount_cents` as the string `"4999"`, an arguments field that is not valid JSON, and a refund of 999,999 cents. Predict which layer — parse, validation, or gate — converts each into which `Observation.kind`, then confirm with `execute_call`. Explain why the three layers should not be merged into one check.
+3. **Detect oscillation.** Defeat the no-progress counter with a script that alternates denied refunds of 9,998 and 9,999 cents (use `reactions` keyed on `"denied"` plus a mutating closure, or subclass `ScriptedModel`). Extend `run_agent` to end the run when *any* recent window of denials repeats, while still allowing one legitimate retry after an `error` observation. State the window size you chose and what it costs in false positives.
+4. **Parallel proposals.** The wire format carries a *list* of tool calls, and `run_agent` already executes all of them in order.
+    a. Build one assistant message proposing `lookup_order` and `read_policy` together and run it; confirm both observations appear and `check_run` passes.
+    b. Reverse the order in which the two tool messages are appended and re-run `check_run`. Which invariant would break if results were matched by list position instead of `tool_call_id`?
+    c. Add a second `refund_order` to the same message and decide: should the loop execute effectful calls in parallel batches at all? Defend your answer with the effect log.
+5. **Completion versus success.** Extend the liar of @sec-ch16-verification so it fabricates a plausible receipt id in its answer. Write a process check that requires a successful `lookup_order` observation to precede any refund receipt, and show it rejecting a run where the refund happened without a prior lookup.
+6. **Budget the evaluator.** Give `run_evaluator` a drafter whose scripted drafts never satisfy the criterion. Measure model calls and prompt tokens as `max_rounds` sweeps 1 to 6, plot the growth, and decide which `Stop` value an exhausted revision budget should map to — then argue where that budget belongs: inside the pattern, or in the caller's `Limits`.
+7. **Prompt versus gate.** A reviewer proposes moving the 5,000-cent rule out of `refund_gate` and into `SYSTEM_PROMPT` so policy can change without a deploy. Using the two runs of @sec-ch16-denial as evidence, write the rebuttal; then design the compromise — the limit as configuration read by the gate at call time — and name the one residual risk (stale configuration) your design still carries.
