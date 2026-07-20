@@ -437,7 +437,7 @@ window.Quarto = {
           <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="../chapters/03-attention-position-long-context.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">Attention, Position, and Long Context [F+S]</span></span></a>
+ <span class="menu-text"><span class="chapter-number">3</span>&nbsp; <span class="chapter-title">Attention, Position, and Long Context</span></span></a>
   </div>
 </li>
           <li class="sidebar-item">
@@ -784,18 +784,6 @@ p_\theta(y_{1:m}\mid x_{1:n}) = \prod_{t=1}^{m} p_\theta\!\left(y_t \mid x_{1:n}
 \tag{1.1}</span></span></p>
 <p>At each output position the network emits one logit per vocabulary token; a decoding policy turns those logits into a choice; the chosen token is appended and the loop repeats until a stop token, a length cap, or a serving rule ends it. “Generate an answer” is therefore a chain of conditional next-token decisions, not a database lookup. The caller never touches the raw tensor. It sends an envelope — messages, decoding controls, output limits, maybe a schema or tool declarations — and receives text plus optional measurements. <a href="#fig-ch01-call-contract" class="quarto-xref">Figure&nbsp;<span>1.1</span></a> draws that boundary.</p>
 <div class="cell" data-layout-align="default">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode default code-with-copy"><code class="sourceCode default"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>sequenceDiagram</span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>    participant C as Caller</span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    participant S as Model server</span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    participant M as Autoregressive model</span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>    C-&gt;&gt;S: messages + limits + sampling controls</span>
-<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    S-&gt;&gt;M: tokenized context</span>
-<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    loop each output position</span>
-<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>        M--&gt;&gt;S: next-token logits</span>
-<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>        S-&gt;&gt;S: apply decoding policy</span>
-<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>        S-&gt;&gt;M: append chosen token</span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>    end</span>
-<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    S--&gt;&gt;C: text + token scores + usage + timing</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output-display">
 <div id="fig-ch01-call-contract" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
@@ -824,72 +812,72 @@ Figure&nbsp;1.1: What does the caller control, and what does the server return? 
 </div>
 </div>
 <p>Two boundaries in <a href="#fig-ch01-call-contract" class="quarto-xref">Figure&nbsp;<span>1.1</span></a> are easy to blur, and both cause bugs. The caller controls <em>what context and permissions to supply</em>; it does not control how the server decodes or batches. And the model does not retrieve an omitted policy, remember a previous request, or gain permission to run a tool merely because the chat syntax names one. To keep those measurements beside the text where an attractive answer cannot hide them, we carry a small provider-neutral result type through the whole chapter. The cell below is marked <code># @save</code>, so <code>scripts/tangle.py</code> exports it to <code>code/ch01/_generated.py</code> for the tests to import.</p>
-<div id="22eba0d1" class="cell" data-execution_count="1">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TokenScore:</span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One returned token paired with its log probability under the model.</span></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="co">    The log probability is what the API exposes about the model's own certainty</span></span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="co">    for that token. It is a statement about likely text, not about truth, and</span></span>
-<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="co">    keeping it beside the token is what lets us exponentiate it later.</span></span>
-<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>    token: <span class="bu">str</span></span>
-<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>    logprob: <span class="bu">float</span></span>
-<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Completion:</span>
-<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A minimal, provider-neutral result for one model call.</span></span>
-<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a><span class="co">    Every field is a thing the caller can measure without trusting the prose:</span></span>
-<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a><span class="co">    the text, the per-token scores, the token counts (never guessed from</span></span>
-<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a><span class="co">    characters), and the two latencies that a streaming client can observe.</span></span>
-<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>    text: <span class="bu">str</span></span>
-<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>    token_scores: <span class="bu">tuple</span>[TokenScore, ...]</span>
-<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a>    prompt_tokens: <span class="bu">int</span></span>
-<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a>    output_tokens: <span class="bu">int</span></span>
-<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>    ttft_ms: <span class="bu">float</span></span>
-<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>    total_ms: <span class="bu">float</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="3514442f" class="cell" data-execution_count="1">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TokenScore:</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One returned token paired with its log probability under the model.</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="co">    The log probability is what the API exposes about the model's own certainty</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="co">    for that token. It is a statement about likely text, not about truth, and</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="co">    keeping it beside the token is what lets us exponentiate it later.</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>    token: <span class="bu">str</span></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>    logprob: <span class="bu">float</span></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Completion:</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A minimal, provider-neutral result for one model call.</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a><span class="co">    Every field is a thing the caller can measure without trusting the prose:</span></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a><span class="co">    the text, the per-token scores, the token counts (never guessed from</span></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="co">    characters), and the two latencies that a streaming client can observe.</span></span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a>    text: <span class="bu">str</span></span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a>    token_scores: <span class="bu">tuple</span>[TokenScore, ...]</span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a>    prompt_tokens: <span class="bu">int</span></span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>    output_tokens: <span class="bu">int</span></span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a>    ttft_ms: <span class="bu">float</span></span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a>    total_ms: <span class="bu">float</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A value of this type carries the answer and its measurements together, so we build one and read the log probabilities back out.</p>
-<div id="13305964" class="cell" data-execution_count="2">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>example <span class="op">=</span> Completion(</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    text<span class="op">=</span><span class="st">"not covered"</span>,</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    token_scores<span class="op">=</span>(TokenScore(<span class="st">"not"</span>, <span class="op">-</span><span class="fl">0.11</span>), TokenScore(<span class="st">" covered"</span>, <span class="op">-</span><span class="fl">0.42</span>)),</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    prompt_tokens<span class="op">=</span><span class="dv">18</span>,</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    output_tokens<span class="op">=</span><span class="dv">2</span>,</span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>    ttft_ms<span class="op">=</span><span class="fl">41.0</span>,</span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>    total_ms<span class="op">=</span><span class="fl">77.0</span>,</span>
-<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(example.text, <span class="st">"-&gt;"</span>, [<span class="bu">round</span>(s.logprob, <span class="dv">2</span>) <span class="cf">for</span> s <span class="kw">in</span> example.token_scores])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="3237b0e1" class="cell" data-execution_count="2">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>example <span class="op">=</span> Completion(</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    text<span class="op">=</span><span class="st">"not covered"</span>,</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    token_scores<span class="op">=</span>(TokenScore(<span class="st">"not"</span>, <span class="op">-</span><span class="fl">0.11</span>), TokenScore(<span class="st">" covered"</span>, <span class="op">-</span><span class="fl">0.42</span>)),</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    prompt_tokens<span class="op">=</span><span class="dv">18</span>,</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    output_tokens<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    ttft_ms<span class="op">=</span><span class="fl">41.0</span>,</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    total_ms<span class="op">=</span><span class="fl">77.0</span>,</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(example.text, <span class="st">"-&gt;"</span>, [<span class="bu">round</span>(s.logprob, <span class="dv">2</span>) <span class="cf">for</span> s <span class="kw">in</span> example.token_scores])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>not covered -&gt; [-0.11, -0.42]</code></pre>
 </div>
 </div>
 <p>The interface records counts and timing as first-class data. A production version would add finish reasons, request ids, and errors, but the contract we are teaching does not change. What does a real server put in these fields? The following cell issues one streaming chat completion with log probabilities against any OpenAI-compatible endpoint. It does not run in the book — it needs a network and a served model — so it is a <code>#| eval: false</code> cell, and the block after it shows a representative response with the exact shape any OpenAI-compatible endpoint returns; run the cell against your own endpoint to capture the real thing.</p>
-<div id="0d5ca103" class="cell" data-execution_count="3">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> httpx</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>payload <span class="op">=</span> {</span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"model"</span>: <span class="st">"an-8b-instruct"</span>,</span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">"messages"</span>: [{<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: <span class="st">"Refund after 45 days?"</span>}],</span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"temperature"</span>: <span class="fl">0.7</span>, <span class="st">"seed"</span>: <span class="dv">7</span>, <span class="st">"max_tokens"</span>: <span class="dv">24</span>, <span class="st">"logprobs"</span>: <span class="va">True</span>,</span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>}</span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>resp <span class="op">=</span> httpx.post(<span class="st">"http://localhost:8000/v1/chat/completions"</span>, json<span class="op">=</span>payload).json()</span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>choice <span class="op">=</span> resp[<span class="st">"choices"</span>][<span class="dv">0</span>]</span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(choice[<span class="st">"message"</span>][<span class="st">"content"</span>])</span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> item <span class="kw">in</span> choice[<span class="st">"logprobs"</span>][<span class="st">"content"</span>][:<span class="dv">4</span>]:</span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f'</span><span class="sc">{</span>item[<span class="st">"token"</span>]<span class="sc">!r:14}</span><span class="ss"> logprob=</span><span class="sc">{</span>item[<span class="st">"logprob"</span>]<span class="sc">:.3f}</span><span class="ss">'</span>)</span>
-<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"usage:"</span>, resp[<span class="st">"usage"</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="7c0f2a51" class="cell" data-execution_count="3">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> httpx</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>payload <span class="op">=</span> {</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"model"</span>: <span class="st">"an-8b-instruct"</span>,</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">"messages"</span>: [{<span class="st">"role"</span>: <span class="st">"user"</span>, <span class="st">"content"</span>: <span class="st">"Refund after 45 days?"</span>}],</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"temperature"</span>: <span class="fl">0.7</span>, <span class="st">"seed"</span>: <span class="dv">7</span>, <span class="st">"max_tokens"</span>: <span class="dv">24</span>, <span class="st">"logprobs"</span>: <span class="va">True</span>,</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>resp <span class="op">=</span> httpx.post(<span class="st">"http://localhost:8000/v1/chat/completions"</span>, json<span class="op">=</span>payload).json()</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>choice <span class="op">=</span> resp[<span class="st">"choices"</span>][<span class="dv">0</span>]</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(choice[<span class="st">"message"</span>][<span class="st">"content"</span>])</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> item <span class="kw">in</span> choice[<span class="st">"logprobs"</span>][<span class="st">"content"</span>][:<span class="dv">4</span>]:</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f'</span><span class="sc">{</span>item[<span class="st">"token"</span>]<span class="sc">!r:14}</span><span class="ss"> logprob=</span><span class="sc">{</span>item[<span class="st">"logprob"</span>]<span class="sc">:.3f}</span><span class="ss">'</span>)</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"usage:"</span>, resp[<span class="st">"usage"</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <pre class="text"><code>Representative response (an 8B-class instruct model behind an OpenAI-compatible endpoint):
 
@@ -904,98 +892,98 @@ usage: {'prompt_tokens': 18, 'completion_tokens': 21, 'total_tokens': 39}</code>
 <section id="sec-ch01-context" class="level2" data-number="1.2">
 <h2 data-number="1.2" class="anchored" data-anchor-id="sec-ch01-context"><span class="header-section-number">1.2</span> Tokens and context are budgets</h2>
 <p>Before a model sees text it sees token ids, and the mapping is not one token per word. A <strong>tokenizer</strong> maps text spans to integers from a fixed vocabulary; frequent strings become single tokens while rare ones fragment. That is exactly what byte-pair encoding produces: it starts every word as a sequence of characters and repeatedly merges the most frequent adjacent pair, so common words and suffixes collapse to one piece while an unfamiliar name stays split <span class="citation" data-cites="sennrich2016neural">(<a href="../references.html#ref-sennrich2016neural" role="doc-biblioref">Sennrich et al. 2016</a>)</span>. We can watch this happen by training a tiny encoder on a handful of sentences.</p>
-<div id="96c09768" class="cell" data-execution_count="4">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections <span class="im">import</span> Counter</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> train_bpe(corpus: <span class="bu">list</span>[<span class="bu">str</span>], num_merges: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]]:</span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Learn byte-pair-encoding merge rules from a small corpus.</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Every word starts split into characters plus an end-of-word marker. At each</span></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="co">    step we count adjacent symbol pairs across the whole corpus and merge the</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="co">    most frequent one; frequent sequences become single tokens, which is why a</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="co">    common word ends up cheaper (fewer tokens) than a rare name.</span></span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="co">        corpus: Whitespace-tokenizable training sentences.</span></span>
-<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="co">        num_merges: How many merge rules to learn; more merges means a larger</span></span>
-<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="co">            vocabulary and shorter encodings.</span></span>
-<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a><span class="co">        The learned merges in application order, each a pair of symbols to join.</span></span>
-<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a>    words <span class="op">=</span> Counter(word <span class="cf">for</span> line <span class="kw">in</span> corpus <span class="cf">for</span> word <span class="kw">in</span> line.split())</span>
-<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a>    splits <span class="op">=</span> {word: <span class="bu">list</span>(word) <span class="op">+</span> [<span class="st">"&lt;/w&gt;"</span>] <span class="cf">for</span> word <span class="kw">in</span> words}</span>
-<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>    merges: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]] <span class="op">=</span> []</span>
-<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(num_merges):</span>
-<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a>        pairs: Counter[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]] <span class="op">=</span> Counter()</span>
-<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> word, freq <span class="kw">in</span> words.items():</span>
-<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a>            symbols <span class="op">=</span> splits[word]</span>
-<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a>            <span class="cf">for</span> pair <span class="kw">in</span> <span class="bu">zip</span>(symbols, symbols[<span class="dv">1</span>:]):</span>
-<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a>                pairs[pair] <span class="op">+=</span> freq</span>
-<span id="cb7-30"><a href="#cb7-30" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="kw">not</span> pairs:</span>
-<span id="cb7-31"><a href="#cb7-31" aria-hidden="true" tabindex="-1"></a>            <span class="cf">break</span></span>
-<span id="cb7-32"><a href="#cb7-32" aria-hidden="true" tabindex="-1"></a>        best <span class="op">=</span> <span class="bu">max</span>(pairs, key<span class="op">=</span><span class="kw">lambda</span> pair: (pairs[pair], pair))</span>
-<span id="cb7-33"><a href="#cb7-33" aria-hidden="true" tabindex="-1"></a>        merges.append(best)</span>
-<span id="cb7-34"><a href="#cb7-34" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> word, symbols <span class="kw">in</span> splits.items():</span>
-<span id="cb7-35"><a href="#cb7-35" aria-hidden="true" tabindex="-1"></a>            merged, i <span class="op">=</span> [], <span class="dv">0</span></span>
-<span id="cb7-36"><a href="#cb7-36" aria-hidden="true" tabindex="-1"></a>            <span class="cf">while</span> i <span class="op">&lt;</span> <span class="bu">len</span>(symbols):</span>
-<span id="cb7-37"><a href="#cb7-37" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> (symbols[i], symbols[i <span class="op">+</span> <span class="dv">1</span>] <span class="cf">if</span> i <span class="op">+</span> <span class="dv">1</span> <span class="op">&lt;</span> <span class="bu">len</span>(symbols) <span class="cf">else</span> <span class="va">None</span>) <span class="op">==</span> best:</span>
-<span id="cb7-38"><a href="#cb7-38" aria-hidden="true" tabindex="-1"></a>                    merged.append(symbols[i] <span class="op">+</span> symbols[i <span class="op">+</span> <span class="dv">1</span>])</span>
-<span id="cb7-39"><a href="#cb7-39" aria-hidden="true" tabindex="-1"></a>                    i <span class="op">+=</span> <span class="dv">2</span></span>
-<span id="cb7-40"><a href="#cb7-40" aria-hidden="true" tabindex="-1"></a>                <span class="cf">else</span>:</span>
-<span id="cb7-41"><a href="#cb7-41" aria-hidden="true" tabindex="-1"></a>                    merged.append(symbols[i])</span>
-<span id="cb7-42"><a href="#cb7-42" aria-hidden="true" tabindex="-1"></a>                    i <span class="op">+=</span> <span class="dv">1</span></span>
-<span id="cb7-43"><a href="#cb7-43" aria-hidden="true" tabindex="-1"></a>            splits[word] <span class="op">=</span> merged</span>
-<span id="cb7-44"><a href="#cb7-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> merges</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="de50f377" class="cell" data-execution_count="4">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections <span class="im">import</span> Counter</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> train_bpe(corpus: <span class="bu">list</span>[<span class="bu">str</span>], num_merges: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]]:</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Learn byte-pair-encoding merge rules from a small corpus.</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Every word starts split into characters plus an end-of-word marker. At each</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="co">    step we count adjacent symbol pairs across the whole corpus and merge the</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="co">    most frequent one; frequent sequences become single tokens, which is why a</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="co">    common word ends up cheaper (fewer tokens) than a rare name.</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="co">        corpus: Whitespace-tokenizable training sentences.</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="co">        num_merges: How many merge rules to learn; more merges means a larger</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="co">            vocabulary and shorter encodings.</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="co">        The learned merges in application order, each a pair of symbols to join.</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>    words <span class="op">=</span> Counter(word <span class="cf">for</span> line <span class="kw">in</span> corpus <span class="cf">for</span> word <span class="kw">in</span> line.split())</span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a>    splits <span class="op">=</span> {word: <span class="bu">list</span>(word) <span class="op">+</span> [<span class="st">"&lt;/w&gt;"</span>] <span class="cf">for</span> word <span class="kw">in</span> words}</span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a>    merges: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]] <span class="op">=</span> []</span>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(num_merges):</span>
+<span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a>        pairs: Counter[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]] <span class="op">=</span> Counter()</span>
+<span id="cb6-26"><a href="#cb6-26" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> word, freq <span class="kw">in</span> words.items():</span>
+<span id="cb6-27"><a href="#cb6-27" aria-hidden="true" tabindex="-1"></a>            symbols <span class="op">=</span> splits[word]</span>
+<span id="cb6-28"><a href="#cb6-28" aria-hidden="true" tabindex="-1"></a>            <span class="cf">for</span> pair <span class="kw">in</span> <span class="bu">zip</span>(symbols, symbols[<span class="dv">1</span>:]):</span>
+<span id="cb6-29"><a href="#cb6-29" aria-hidden="true" tabindex="-1"></a>                pairs[pair] <span class="op">+=</span> freq</span>
+<span id="cb6-30"><a href="#cb6-30" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="kw">not</span> pairs:</span>
+<span id="cb6-31"><a href="#cb6-31" aria-hidden="true" tabindex="-1"></a>            <span class="cf">break</span></span>
+<span id="cb6-32"><a href="#cb6-32" aria-hidden="true" tabindex="-1"></a>        best <span class="op">=</span> <span class="bu">max</span>(pairs, key<span class="op">=</span><span class="kw">lambda</span> pair: (pairs[pair], pair))</span>
+<span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a>        merges.append(best)</span>
+<span id="cb6-34"><a href="#cb6-34" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> word, symbols <span class="kw">in</span> splits.items():</span>
+<span id="cb6-35"><a href="#cb6-35" aria-hidden="true" tabindex="-1"></a>            merged, i <span class="op">=</span> [], <span class="dv">0</span></span>
+<span id="cb6-36"><a href="#cb6-36" aria-hidden="true" tabindex="-1"></a>            <span class="cf">while</span> i <span class="op">&lt;</span> <span class="bu">len</span>(symbols):</span>
+<span id="cb6-37"><a href="#cb6-37" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> (symbols[i], symbols[i <span class="op">+</span> <span class="dv">1</span>] <span class="cf">if</span> i <span class="op">+</span> <span class="dv">1</span> <span class="op">&lt;</span> <span class="bu">len</span>(symbols) <span class="cf">else</span> <span class="va">None</span>) <span class="op">==</span> best:</span>
+<span id="cb6-38"><a href="#cb6-38" aria-hidden="true" tabindex="-1"></a>                    merged.append(symbols[i] <span class="op">+</span> symbols[i <span class="op">+</span> <span class="dv">1</span>])</span>
+<span id="cb6-39"><a href="#cb6-39" aria-hidden="true" tabindex="-1"></a>                    i <span class="op">+=</span> <span class="dv">2</span></span>
+<span id="cb6-40"><a href="#cb6-40" aria-hidden="true" tabindex="-1"></a>                <span class="cf">else</span>:</span>
+<span id="cb6-41"><a href="#cb6-41" aria-hidden="true" tabindex="-1"></a>                    merged.append(symbols[i])</span>
+<span id="cb6-42"><a href="#cb6-42" aria-hidden="true" tabindex="-1"></a>                    i <span class="op">+=</span> <span class="dv">1</span></span>
+<span id="cb6-43"><a href="#cb6-43" aria-hidden="true" tabindex="-1"></a>            splits[word] <span class="op">=</span> merged</span>
+<span id="cb6-44"><a href="#cb6-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> merges</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Encoding a new word means replaying those merges greedily until nothing more joins. The pieces that come out are the tokens the model would actually charge for.</p>
-<div id="70db476b" class="cell" data-execution_count="5">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bpe_encode(word: <span class="bu">str</span>, merges: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">str</span>]:</span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Encode one word into subword pieces by replaying learned merges.</span></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="co">        word: A single whitespace-free token.</span></span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="co">        merges: Merge rules from :func:`train_bpe`, applied in order.</span></span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="co">        The word's pieces, ending in the ``&lt;/w&gt;`` marker; a frequent word may</span></span>
-<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="co">        collapse to a single piece while a rare word stays fragmented.</span></span>
-<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>    symbols <span class="op">=</span> <span class="bu">list</span>(word) <span class="op">+</span> [<span class="st">"&lt;/w&gt;"</span>]</span>
-<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> left, right <span class="kw">in</span> merges:</span>
-<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a>        merged, i <span class="op">=</span> [], <span class="dv">0</span></span>
-<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">while</span> i <span class="op">&lt;</span> <span class="bu">len</span>(symbols):</span>
-<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> i <span class="op">+</span> <span class="dv">1</span> <span class="op">&lt;</span> <span class="bu">len</span>(symbols) <span class="kw">and</span> symbols[i] <span class="op">==</span> left <span class="kw">and</span> symbols[i <span class="op">+</span> <span class="dv">1</span>] <span class="op">==</span> right:</span>
-<span id="cb8-18"><a href="#cb8-18" aria-hidden="true" tabindex="-1"></a>                merged.append(left <span class="op">+</span> right)</span>
-<span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a>                i <span class="op">+=</span> <span class="dv">2</span></span>
-<span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a>            <span class="cf">else</span>:</span>
-<span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a>                merged.append(symbols[i])</span>
-<span id="cb8-22"><a href="#cb8-22" aria-hidden="true" tabindex="-1"></a>                i <span class="op">+=</span> <span class="dv">1</span></span>
-<span id="cb8-23"><a href="#cb8-23" aria-hidden="true" tabindex="-1"></a>        symbols <span class="op">=</span> merged</span>
-<span id="cb8-24"><a href="#cb8-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> symbols</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="690044c1" class="cell" data-execution_count="5">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bpe_encode(word: <span class="bu">str</span>, merges: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">str</span>]:</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Encode one word into subword pieces by replaying learned merges.</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="co">        word: A single whitespace-free token.</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="co">        merges: Merge rules from :func:`train_bpe`, applied in order.</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="co">        The word's pieces, ending in the ``&lt;/w&gt;`` marker; a frequent word may</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="co">        collapse to a single piece while a rare word stays fragmented.</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>    symbols <span class="op">=</span> <span class="bu">list</span>(word) <span class="op">+</span> [<span class="st">"&lt;/w&gt;"</span>]</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> left, right <span class="kw">in</span> merges:</span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a>        merged, i <span class="op">=</span> [], <span class="dv">0</span></span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>        <span class="cf">while</span> i <span class="op">&lt;</span> <span class="bu">len</span>(symbols):</span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> i <span class="op">+</span> <span class="dv">1</span> <span class="op">&lt;</span> <span class="bu">len</span>(symbols) <span class="kw">and</span> symbols[i] <span class="op">==</span> left <span class="kw">and</span> symbols[i <span class="op">+</span> <span class="dv">1</span>] <span class="op">==</span> right:</span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a>                merged.append(left <span class="op">+</span> right)</span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>                i <span class="op">+=</span> <span class="dv">2</span></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a>            <span class="cf">else</span>:</span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a>                merged.append(symbols[i])</span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a>                i <span class="op">+=</span> <span class="dv">1</span></span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>        symbols <span class="op">=</span> merged</span>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> symbols</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We train on a small, repetitive corpus so common words earn their own tokens, then encode a sentence that mixes ordinary words with an invented name. Watch the token count diverge from the word count.</p>
-<div id="10771af4" class="cell" data-execution_count="6">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>corpus <span class="op">=</span> [</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the refund policy covers the standard window"</span>,</span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the policy covers refunds inside the window"</span>,</span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"a refund after the window needs an exception"</span>,</span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the standard refund window is short"</span>,</span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"refunds and the refund policy and the window"</span>,</span>
-<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>] <span class="op">*</span> <span class="dv">6</span></span>
-<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>merges <span class="op">=</span> train_bpe(corpus, num_merges<span class="op">=</span><span class="dv">80</span>)</span>
-<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>sentence <span class="op">=</span> <span class="st">"the refund policy denies Wagnersløv a refund"</span></span>
-<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>pieces <span class="op">=</span> {word: bpe_encode(word, merges) <span class="cf">for</span> word <span class="kw">in</span> sentence.split()}</span>
-<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> word, toks <span class="kw">in</span> pieces.items():</span>
-<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>word<span class="sc">:12}</span><span class="ss"> -&gt; </span><span class="sc">{</span><span class="bu">len</span>(toks)<span class="sc">:2d}</span><span class="ss"> tokens  </span><span class="sc">{</span>toks<span class="sc">}</span><span class="ss">"</span>)</span>
-<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>n_words <span class="op">=</span> <span class="bu">len</span>(sentence.split())</span>
-<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>n_tokens <span class="op">=</span> <span class="bu">sum</span>(<span class="bu">len</span>(t) <span class="cf">for</span> t <span class="kw">in</span> pieces.values())</span>
-<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="ch">\n</span><span class="sc">{</span>n_words<span class="sc">}</span><span class="ss"> words -&gt; </span><span class="sc">{</span>n_tokens<span class="sc">}</span><span class="ss"> tokens"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="b66f5681" class="cell" data-execution_count="6">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>corpus <span class="op">=</span> [</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the refund policy covers the standard window"</span>,</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the policy covers refunds inside the window"</span>,</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"a refund after the window needs an exception"</span>,</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">"the standard refund window is short"</span>,</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"refunds and the refund policy and the window"</span>,</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>] <span class="op">*</span> <span class="dv">6</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>merges <span class="op">=</span> train_bpe(corpus, num_merges<span class="op">=</span><span class="dv">80</span>)</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>sentence <span class="op">=</span> <span class="st">"the refund policy denies Wagnersløv a refund"</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>pieces <span class="op">=</span> {word: bpe_encode(word, merges) <span class="cf">for</span> word <span class="kw">in</span> sentence.split()}</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> word, toks <span class="kw">in</span> pieces.items():</span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>word<span class="sc">:12}</span><span class="ss"> -&gt; </span><span class="sc">{</span><span class="bu">len</span>(toks)<span class="sc">:2d}</span><span class="ss"> tokens  </span><span class="sc">{</span>toks<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a>n_words <span class="op">=</span> <span class="bu">len</span>(sentence.split())</span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a>n_tokens <span class="op">=</span> <span class="bu">sum</span>(<span class="bu">len</span>(t) <span class="cf">for</span> t <span class="kw">in</span> pieces.values())</span>
+<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="ch">\n</span><span class="sc">{</span>n_words<span class="sc">}</span><span class="ss"> words -&gt; </span><span class="sc">{</span>n_tokens<span class="sc">}</span><span class="ss"> tokens"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>the          -&gt;  1 tokens  ['the&lt;/w&gt;']
 refund       -&gt;  1 tokens  ['refund&lt;/w&gt;']
@@ -1008,10 +996,10 @@ a            -&gt;  1 tokens  ['a&lt;/w&gt;']
 </div>
 </div>
 <p>The common words that appeared often in training — <code>the</code>, <code>refund</code>, <code>policy</code> — each collapse to a single piece, while <code>denies</code> (never seen) and the invented name <code>Wagnersløv</code> shatter into many, so seven words become twenty tokens. That is the general rule: token count tracks familiarity, not word count, so character or word counts are poor proxies for what a call costs. Every token id is also an entry in a fixed vocabulary; assigning ids makes the point that the model reasons over integers, not letters.</p>
-<div id="c4b32c01" class="cell" data-execution_count="7">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>vocab <span class="op">=</span> {piece: i <span class="cf">for</span> i, piece <span class="kw">in</span> <span class="bu">enumerate</span>(<span class="bu">sorted</span>({t <span class="cf">for</span> toks <span class="kw">in</span> pieces.values() <span class="cf">for</span> t <span class="kw">in</span> toks}))}</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"first ids:"</span>, <span class="bu">dict</span>(<span class="bu">list</span>(vocab.items())[:<span class="dv">6</span>]))</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"ids for 'refund':"</span>, [vocab[t] <span class="cf">for</span> t <span class="kw">in</span> pieces[<span class="st">"refund"</span>]])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="b817cad3" class="cell" data-execution_count="7">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>vocab <span class="op">=</span> {piece: i <span class="cf">for</span> i, piece <span class="kw">in</span> <span class="bu">enumerate</span>(<span class="bu">sorted</span>({t <span class="cf">for</span> toks <span class="kw">in</span> pieces.values() <span class="cf">for</span> t <span class="kw">in</span> toks}))}</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"first ids:"</span>, <span class="bu">dict</span>(<span class="bu">list</span>(vocab.items())[:<span class="dv">6</span>]))</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"ids for 'refund':"</span>, [vocab[t] <span class="cf">for</span> t <span class="kw">in</span> pieces[<span class="st">"refund"</span>]])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>first ids: {'&lt;/w&gt;': 0, 'W': 1, 'a': 2, 'a&lt;/w&gt;': 3, 'd': 4, 'e': 5}
 ids for 'refund': [12]</code></pre>
@@ -1026,39 +1014,39 @@ ids for 'refund': [12]</code></pre>
 p_i(T) = \frac{\exp(z_i / T)}{\sum_{j=1}^{V} \exp(z_j / T)}.
 \tag{1.2}</span></span></p>
 <p>Low <span class="math inline">T</span> sharpens the differences between logits toward the top token; high <span class="math inline">T</span> flattens them toward uniform. It reshapes <em>which continuations are likely</em> — it adds no evidence and cannot turn the distribution into a truth estimator. Here is <a href="#eq-ch01-softmax" class="quarto-xref">Equation&nbsp;<span>1.2</span></a> as code.</p>
-<div id="cd7d9c50" class="cell" data-execution_count="8">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
-<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> softmax(logits: <span class="bu">list</span>[<span class="bu">float</span>], temperature: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
-<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Turn next-token logits into a probability distribution over candidates.</span></span>
-<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Temperature rescales the logits before exponentiation: below 1 sharpens the</span></span>
-<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="co">    distribution toward the top token, above 1 flattens it toward uniform. The</span></span>
-<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a><span class="co">    subtraction of the maximum is numerical hygiene and does not change the</span></span>
-<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a><span class="co">    result.</span></span>
-<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a><span class="co">        logits: Unnormalized scores, one per candidate token.</span></span>
-<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a><span class="co">        temperature: Positive scale; smaller is greedier, larger is flatter.</span></span>
-<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a><span class="co">        Probabilities in the same order as ``logits``, summing to 1.</span></span>
-<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>    scaled <span class="op">=</span> [value <span class="op">/</span> temperature <span class="cf">for</span> value <span class="kw">in</span> logits]</span>
-<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>    ceiling <span class="op">=</span> <span class="bu">max</span>(scaled)</span>
-<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> [math.exp(value <span class="op">-</span> ceiling) <span class="cf">for</span> value <span class="kw">in</span> scaled]</span>
-<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> <span class="bu">sum</span>(weights)</span>
-<span id="cb13-24"><a href="#cb13-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [weight <span class="op">/</span> total <span class="cf">for</span> weight <span class="kw">in</span> weights]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="b04e9c1f" class="cell" data-execution_count="8">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> softmax(logits: <span class="bu">list</span>[<span class="bu">float</span>], temperature: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Turn next-token logits into a probability distribution over candidates.</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Temperature rescales the logits before exponentiation: below 1 sharpens the</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a><span class="co">    distribution toward the top token, above 1 flattens it toward uniform. The</span></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a><span class="co">    subtraction of the maximum is numerical hygiene and does not change the</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="co">    result.</span></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a><span class="co">        logits: Unnormalized scores, one per candidate token.</span></span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a><span class="co">        temperature: Positive scale; smaller is greedier, larger is flatter.</span></span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a><span class="co">        Probabilities in the same order as ``logits``, summing to 1.</span></span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a>    scaled <span class="op">=</span> [value <span class="op">/</span> temperature <span class="cf">for</span> value <span class="kw">in</span> logits]</span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a>    ceiling <span class="op">=</span> <span class="bu">max</span>(scaled)</span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>    weights <span class="op">=</span> [math.exp(value <span class="op">-</span> ceiling) <span class="cf">for</span> value <span class="kw">in</span> scaled]</span>
+<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> <span class="bu">sum</span>(weights)</span>
+<span id="cb12-24"><a href="#cb12-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [weight <span class="op">/</span> total <span class="cf">for</span> weight <span class="kw">in</span> weights]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Take one concrete case. After the prompt “A refund after 45 days is”, suppose the model’s four candidate next words carry logits <code>[1.6, 0.9, 0.3, -0.4]</code> for <code>not</code>, <code>sometimes</code>, <code>usually</code>, <code>always</code>. We push those exact numbers through <a href="#eq-ch01-softmax" class="quarto-xref">Equation&nbsp;<span>1.2</span></a> at three temperatures and print the distribution.</p>
-<div id="414fd0e7" class="cell" data-execution_count="9">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>candidates <span class="op">=</span> [<span class="st">"not"</span>, <span class="st">"sometimes"</span>, <span class="st">"usually"</span>, <span class="st">"always"</span>]</span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>logits <span class="op">=</span> [<span class="fl">1.6</span>, <span class="fl">0.9</span>, <span class="fl">0.3</span>, <span class="op">-</span><span class="fl">0.4</span>]</span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> temp <span class="kw">in</span> (<span class="fl">0.5</span>, <span class="fl">1.0</span>, <span class="fl">2.0</span>):</span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    probs <span class="op">=</span> softmax(logits, temp)</span>
-<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"T=</span><span class="sc">{</span>temp<span class="sc">}</span><span class="ss">:  "</span> <span class="op">+</span> <span class="st">"  "</span>.join(<span class="ss">f"</span><span class="sc">{</span>c<span class="sc">}</span><span class="ss">=</span><span class="sc">{</span>p<span class="sc">:.3f}</span><span class="ss">"</span> <span class="cf">for</span> c, p <span class="kw">in</span> <span class="bu">zip</span>(candidates, probs)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="1200e259" class="cell" data-execution_count="9">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>candidates <span class="op">=</span> [<span class="st">"not"</span>, <span class="st">"sometimes"</span>, <span class="st">"usually"</span>, <span class="st">"always"</span>]</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>logits <span class="op">=</span> [<span class="fl">1.6</span>, <span class="fl">0.9</span>, <span class="fl">0.3</span>, <span class="op">-</span><span class="fl">0.4</span>]</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> temp <span class="kw">in</span> (<span class="fl">0.5</span>, <span class="fl">1.0</span>, <span class="fl">2.0</span>):</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    probs <span class="op">=</span> softmax(logits, temp)</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"T=</span><span class="sc">{</span>temp<span class="sc">}</span><span class="ss">:  "</span> <span class="op">+</span> <span class="st">"  "</span>.join(<span class="ss">f"</span><span class="sc">{</span>c<span class="sc">}</span><span class="ss">=</span><span class="sc">{</span>p<span class="sc">:.3f}</span><span class="ss">"</span> <span class="cf">for</span> c, p <span class="kw">in</span> <span class="bu">zip</span>(candidates, probs)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>T=0.5:  not=0.747  sometimes=0.184  usually=0.055  always=0.014
 T=1.0:  not=0.525  sometimes=0.261  usually=0.143  always=0.071
@@ -1067,18 +1055,21 @@ T=2.0:  not=0.385  sometimes=0.272  usually=0.201  always=0.142</code></pre>
 </div>
 <p>At <span class="math inline">T=0.5</span> the correct-ish <code>not</code> holds about three-quarters of the mass; at <span class="math inline">T=2.0</span> the field has flattened and the dangerous <code>always</code> has climbed from about one percent to fourteen. Raising temperature literally makes a confidently wrong continuation more probable. <a href="#fig-ch01-temperature" class="quarto-xref">Figure&nbsp;<span>1.2</span></a> shows the same three distributions side by side.</p>
 <div id="cell-fig-ch01-temperature" class="cell" data-execution_count="10">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> matplotlib.pyplot <span class="im">as</span> plt</span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> <span class="bu">range</span>(<span class="bu">len</span>(candidates))</span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.4</span>, <span class="fl">3.4</span>))</span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> offset, temp <span class="kw">in</span> <span class="bu">zip</span>((<span class="op">-</span><span class="fl">0.25</span>, <span class="fl">0.0</span>, <span class="fl">0.25</span>), (<span class="fl">0.5</span>, <span class="fl">1.0</span>, <span class="fl">2.0</span>)):</span>
-<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    ax.bar([i <span class="op">+</span> offset <span class="cf">for</span> i <span class="kw">in</span> x], softmax(logits, temp), width<span class="op">=</span><span class="fl">0.25</span>, label<span class="op">=</span><span class="ss">f"T=</span><span class="sc">{</span>temp<span class="sc">}</span><span class="ss">"</span>)</span>
-<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>ax.set_xticks(<span class="bu">list</span>(x))</span>
-<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>ax.set_xticklabels(candidates)</span>
-<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"probability"</span>)</span>
-<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>ax.legend(title<span class="op">=</span><span class="st">"temperature"</span>)</span>
-<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
-<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> matplotlib.pyplot <span class="im">as</span> plt</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> <span class="bu">range</span>(<span class="bu">len</span>(candidates))</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.4</span>, <span class="fl">3.4</span>))</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> offset, temp <span class="kw">in</span> <span class="bu">zip</span>((<span class="op">-</span><span class="fl">0.25</span>, <span class="fl">0.0</span>, <span class="fl">0.25</span>), (<span class="fl">0.5</span>, <span class="fl">1.0</span>, <span class="fl">2.0</span>)):</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    ax.bar([i <span class="op">+</span> offset <span class="cf">for</span> i <span class="kw">in</span> x], softmax(logits, temp), width<span class="op">=</span><span class="fl">0.25</span>, label<span class="op">=</span><span class="ss">f"T=</span><span class="sc">{</span>temp<span class="sc">}</span><span class="ss">"</span>)</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>ax.set_xticks(<span class="bu">list</span>(x))</span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>ax.set_xticklabels(candidates)</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"probability"</span>)</span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>ax.legend(title<span class="op">=</span><span class="st">"temperature"</span>)</span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-display">
 <div id="fig-ch01-temperature" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
@@ -1093,47 +1084,47 @@ Figure&nbsp;1.2: How does temperature reshape one next-token distribution? Low T
 </div>
 </div>
 <p>A distribution is only visible if we draw from it. The server samples one token per step; we reproduce that with a seeded inverse-CDF draw, which also shows why a seed makes the <em>offline</em> probe reproducible.</p>
-<div id="1767cd1b" class="cell" data-execution_count="11">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> random</span>
-<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sample_token(probs: <span class="bu">list</span>[<span class="bu">float</span>], rng: random.Random) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
-<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Draw one token index from a categorical distribution.</span></span>
-<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Walks the cumulative probability and stops where a uniform draw lands</span></span>
-<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="co">    (inverse-CDF sampling). Passing a seeded ``random.Random`` makes the draw</span></span>
-<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a><span class="co">    reproducible, which is how an offline probe pins nondeterminism it cannot</span></span>
-<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="co">    control on a real server.</span></span>
-<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a><span class="co">        probs: A probability vector that sums to 1.</span></span>
-<span id="cb17-15"><a href="#cb17-15" aria-hidden="true" tabindex="-1"></a><span class="co">        rng: A seeded random generator supplying the uniform draw.</span></span>
-<span id="cb17-16"><a href="#cb17-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-17"><a href="#cb17-17" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb17-18"><a href="#cb17-18" aria-hidden="true" tabindex="-1"></a><span class="co">        The index of the sampled token.</span></span>
-<span id="cb17-19"><a href="#cb17-19" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb17-20"><a href="#cb17-20" aria-hidden="true" tabindex="-1"></a>    threshold <span class="op">=</span> rng.random()</span>
-<span id="cb17-21"><a href="#cb17-21" aria-hidden="true" tabindex="-1"></a>    cumulative <span class="op">=</span> <span class="fl">0.0</span></span>
-<span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> index, prob <span class="kw">in</span> <span class="bu">enumerate</span>(probs):</span>
-<span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a>        cumulative <span class="op">+=</span> prob</span>
-<span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> threshold <span class="op">&lt;=</span> cumulative:</span>
-<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> index</span>
-<span id="cb17-26"><a href="#cb17-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">len</span>(probs) <span class="op">-</span> <span class="dv">1</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="e19ceb40" class="cell" data-execution_count="11">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> random</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sample_token(probs: <span class="bu">list</span>[<span class="bu">float</span>], rng: random.Random) <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Draw one token index from a categorical distribution.</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Walks the cumulative probability and stops where a uniform draw lands</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="co">    (inverse-CDF sampling). Passing a seeded ``random.Random`` makes the draw</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="co">    reproducible, which is how an offline probe pins nondeterminism it cannot</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="co">    control on a real server.</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a><span class="co">        probs: A probability vector that sums to 1.</span></span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a><span class="co">        rng: A seeded random generator supplying the uniform draw.</span></span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a><span class="co">        The index of the sampled token.</span></span>
+<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a>    threshold <span class="op">=</span> rng.random()</span>
+<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a>    cumulative <span class="op">=</span> <span class="fl">0.0</span></span>
+<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> index, prob <span class="kw">in</span> <span class="bu">enumerate</span>(probs):</span>
+<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a>        cumulative <span class="op">+=</span> prob</span>
+<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> threshold <span class="op">&lt;=</span> cumulative:</span>
+<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> index</span>
+<span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">len</span>(probs) <span class="op">-</span> <span class="dv">1</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The same seed and temperature reproduce the same token; different seeds explore the distribution. We show both, then measure how diversity grows with temperature by drawing many samples and counting distinct outcomes and their entropy.</p>
-<div id="21240cf9" class="cell" data-execution_count="12">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>probs <span class="op">=</span> softmax(logits, <span class="fl">1.0</span>)</span>
-<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"same seed twice:"</span>, sample_token(probs, random.Random(<span class="dv">3</span>)), sample_token(probs, random.Random(<span class="dv">3</span>)))</span>
-<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"seeds 0..5:     "</span>, [candidates[sample_token(probs, random.Random(s))] <span class="cf">for</span> s <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">6</span>)])</span>
-<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> temp <span class="kw">in</span> (<span class="fl">0.5</span>, <span class="fl">1.0</span>, <span class="fl">2.0</span>):</span>
-<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> softmax(logits, temp)</span>
-<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>    draws <span class="op">=</span> [sample_token(p, random.Random(s)) <span class="cf">for</span> s <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">400</span>)]</span>
-<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>    counts <span class="op">=</span> Counter(candidates[i] <span class="cf">for</span> i <span class="kw">in</span> draws)</span>
-<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>    top_share <span class="op">=</span> counts.most_common(<span class="dv">1</span>)[<span class="dv">0</span>][<span class="dv">1</span>] <span class="op">/</span> <span class="bu">len</span>(draws)</span>
-<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>    entropy <span class="op">=</span> <span class="op">-</span><span class="bu">sum</span>(q <span class="op">*</span> math.log2(q) <span class="cf">for</span> q <span class="kw">in</span> p <span class="cf">if</span> q <span class="op">&gt;</span> <span class="dv">0</span>)</span>
-<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"T=</span><span class="sc">{</span>temp<span class="sc">}</span><span class="ss">:  top-token share=</span><span class="sc">{</span>top_share<span class="sc">:.2f}</span><span class="ss">  entropy=</span><span class="sc">{</span>entropy<span class="sc">:.2f}</span><span class="ss"> bits  </span><span class="sc">{</span><span class="bu">dict</span>(counts)<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="1ebbe75a" class="cell" data-execution_count="12">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>probs <span class="op">=</span> softmax(logits, <span class="fl">1.0</span>)</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"same seed twice:"</span>, sample_token(probs, random.Random(<span class="dv">3</span>)), sample_token(probs, random.Random(<span class="dv">3</span>)))</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"seeds 0..5:     "</span>, [candidates[sample_token(probs, random.Random(s))] <span class="cf">for</span> s <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">6</span>)])</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> temp <span class="kw">in</span> (<span class="fl">0.5</span>, <span class="fl">1.0</span>, <span class="fl">2.0</span>):</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> softmax(logits, temp)</span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>    draws <span class="op">=</span> [sample_token(p, random.Random(s)) <span class="cf">for</span> s <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">400</span>)]</span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>    counts <span class="op">=</span> Counter(candidates[i] <span class="cf">for</span> i <span class="kw">in</span> draws)</span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>    top_share <span class="op">=</span> counts.most_common(<span class="dv">1</span>)[<span class="dv">0</span>][<span class="dv">1</span>] <span class="op">/</span> <span class="bu">len</span>(draws)</span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>    entropy <span class="op">=</span> <span class="op">-</span><span class="bu">sum</span>(q <span class="op">*</span> math.log2(q) <span class="cf">for</span> q <span class="kw">in</span> p <span class="cf">if</span> q <span class="op">&gt;</span> <span class="dv">0</span>)</span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"T=</span><span class="sc">{</span>temp<span class="sc">}</span><span class="ss">:  top-token share=</span><span class="sc">{</span>top_share<span class="sc">:.2f}</span><span class="ss">  entropy=</span><span class="sc">{</span>entropy<span class="sc">:.2f}</span><span class="ss"> bits  </span><span class="sc">{</span><span class="bu">dict</span>(counts)<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>same seed twice: 0 0
 seeds 0..5:      ['usually', 'not', 'always', 'not', 'not', 'sometimes']
@@ -1144,15 +1135,18 @@ T=2.0:  top-token share=0.40  entropy=1.91 bits  {'usually': 68, 'not': 159, 'al
 </div>
 <p>As temperature rises the top token’s share of the samples falls from about three-quarters to two-fifths and the entropy climbs, and <a href="#fig-ch01-diversity" class="quarto-xref">Figure&nbsp;<span>1.3</span></a> traces that entropy across a finer sweep so the trend is unmistakable — it rises toward the two-bit ceiling of four equally likely tokens.</p>
 <div id="cell-fig-ch01-diversity" class="cell" data-execution_count="13">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>temps <span class="op">=</span> [<span class="fl">0.2</span> <span class="op">*</span> s <span class="cf">for</span> s <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">12</span>)]</span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>entropies <span class="op">=</span> [<span class="op">-</span><span class="bu">sum</span>(q <span class="op">*</span> math.log2(q) <span class="cf">for</span> q <span class="kw">in</span> softmax(logits, t) <span class="cf">if</span> q <span class="op">&gt;</span> <span class="dv">0</span>) <span class="cf">for</span> t <span class="kw">in</span> temps]</span>
-<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.4</span>, <span class="fl">3.2</span>))</span>
-<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>ax.plot(temps, entropies, marker<span class="op">=</span><span class="st">"o"</span>)</span>
-<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>ax.axhline(<span class="fl">2.0</span>, ls<span class="op">=</span><span class="st">"--"</span>, color<span class="op">=</span><span class="st">"0.6"</span>)</span>
-<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"temperature"</span>)</span>
-<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"entropy (bits)"</span>)</span>
-<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
-<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>temps <span class="op">=</span> [<span class="fl">0.2</span> <span class="op">*</span> s <span class="cf">for</span> s <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">12</span>)]</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>entropies <span class="op">=</span> [<span class="op">-</span><span class="bu">sum</span>(q <span class="op">*</span> math.log2(q) <span class="cf">for</span> q <span class="kw">in</span> softmax(logits, t) <span class="cf">if</span> q <span class="op">&gt;</span> <span class="dv">0</span>) <span class="cf">for</span> t <span class="kw">in</span> temps]</span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.4</span>, <span class="fl">3.2</span>))</span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>ax.plot(temps, entropies, marker<span class="op">=</span><span class="st">"o"</span>)</span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>ax.axhline(<span class="fl">2.0</span>, ls<span class="op">=</span><span class="st">"--"</span>, color<span class="op">=</span><span class="st">"0.6"</span>)</span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"temperature"</span>)</span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"entropy (bits)"</span>)</span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-display">
 <div id="fig-ch01-diversity" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
@@ -1171,19 +1165,19 @@ Figure&nbsp;1.3: How does output entropy grow with temperature? Sampled diversit
 <section id="sec-ch01-confabulation" class="level2" data-number="1.4">
 <h2 data-number="1.4" class="anchored" data-anchor-id="sec-ch01-confabulation"><span class="header-section-number">1.4</span> Confabulation, confidence, and abstention</h2>
 <p>Now the treaty. Ask the model “What did the 1912 Alpine Berry Treaty establish?” and it may answer fluently about seasonal quotas and an inspection council. The treaty is invented. This is compatible with the modeling objective in <a href="#eq-ch01-autoregressive" class="quarto-xref">Equation&nbsp;<span>1.1</span></a>: the model estimates likely continuations of the supplied text, and a false premise phrased like a real historical question has a coherent, high-probability continuation. Dates, treaties, and councils co-occur in training-like text; nothing in next-token prediction forces an existence check first. The trap is that the model’s certainty about its <em>tokens</em> is high, and it is easy to read that as certainty about the <em>world</em>. Take per-token log probabilities representative of such an answer and exponentiate them — recall from <a href="#eq-ch01-autoregressive" class="quarto-xref">Equation&nbsp;<span>1.1</span></a> that a token’s model probability is <span class="math inline">\exp(\ell)</span>.</p>
-<div id="9c8b9dc6" class="cell" data-execution_count="14">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> token_confidence(logprob: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return exp(logprob): the model's probability for that single token."""</span></span>
-<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> math.exp(logprob)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="e628ffd8" class="cell" data-execution_count="14">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> token_confidence(logprob: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return exp(logprob): the model's probability for that single token."""</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> math.exp(logprob)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="b6c8566a" class="cell" data-execution_count="15">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Representative per-token log probabilities of a confabulated treaty answer.</span></span>
-<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>treaty_logprobs <span class="op">=</span> [<span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.05</span>, <span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.04</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.06</span>, <span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.04</span>]</span>
-<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>per_token <span class="op">=</span> [token_confidence(lp) <span class="cf">for</span> lp <span class="kw">in</span> treaty_logprobs]</span>
-<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"per-token confidence:"</span>, [<span class="bu">round</span>(p, <span class="dv">3</span>) <span class="cf">for</span> p <span class="kw">in</span> per_token])</span>
-<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"mean per-token confidence:"</span>, <span class="bu">round</span>(<span class="bu">sum</span>(per_token) <span class="op">/</span> <span class="bu">len</span>(per_token), <span class="dv">3</span>))</span>
-<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"factual correctness:"</span>, <span class="st">"FALSE — the treaty does not exist"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="38bd352a" class="cell" data-execution_count="15">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Representative per-token log probabilities of a confabulated treaty answer.</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>treaty_logprobs <span class="op">=</span> [<span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.05</span>, <span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.04</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.06</span>, <span class="op">-</span><span class="fl">0.03</span>, <span class="op">-</span><span class="fl">0.02</span>, <span class="op">-</span><span class="fl">0.04</span>]</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>per_token <span class="op">=</span> [token_confidence(lp) <span class="cf">for</span> lp <span class="kw">in</span> treaty_logprobs]</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"per-token confidence:"</span>, [<span class="bu">round</span>(p, <span class="dv">3</span>) <span class="cf">for</span> p <span class="kw">in</span> per_token])</span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"mean per-token confidence:"</span>, <span class="bu">round</span>(<span class="bu">sum</span>(per_token) <span class="op">/</span> <span class="bu">len</span>(per_token), <span class="dv">3</span>))</span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"factual correctness:"</span>, <span class="st">"FALSE — the treaty does not exist"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>per-token confidence: [0.97, 0.98, 0.951, 0.97, 0.961, 0.98, 0.942, 0.97, 0.98, 0.961]
 mean per-token confidence: 0.967
@@ -1192,14 +1186,17 @@ factual correctness: FALSE — the treaty does not exist</code></pre>
 </div>
 <p>A mean per-token confidence near 0.97 sits directly beside a claim that is false. <a href="#fig-ch01-confidence" class="quarto-xref">Figure&nbsp;<span>1.4</span></a> makes the gap visual: the model was almost maximally confident at every token, and none of that height is evidence the treaty is real.</p>
 <div id="cell-fig-ch01-confidence" class="cell" data-execution_count="16">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.4</span>, <span class="fl">3.0</span>))</span>
-<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>ax.bar(<span class="bu">range</span>(<span class="bu">len</span>(per_token)), per_token, color<span class="op">=</span><span class="st">"#b13f3f"</span>)</span>
-<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>ax.axhline(<span class="fl">1.0</span>, ls<span class="op">=</span><span class="st">"--"</span>, color<span class="op">=</span><span class="st">"0.6"</span>)</span>
-<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="dv">0</span>, <span class="fl">1.05</span>)</span>
-<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"token position in the (false) answer"</span>)</span>
-<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"model probability"</span>)</span>
-<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
-<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.4</span>, <span class="fl">3.0</span>))</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>ax.bar(<span class="bu">range</span>(<span class="bu">len</span>(per_token)), per_token, color<span class="op">=</span><span class="st">"#b13f3f"</span>)</span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>ax.axhline(<span class="fl">1.0</span>, ls<span class="op">=</span><span class="st">"--"</span>, color<span class="op">=</span><span class="st">"0.6"</span>)</span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="dv">0</span>, <span class="fl">1.05</span>)</span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"token position in the (false) answer"</span>)</span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"model probability"</span>)</span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-display">
 <div id="fig-ch01-confidence" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
@@ -1214,14 +1211,14 @@ Figure&nbsp;1.4: Why does a high log probability not mean the claim is true? Per
 </div>
 </div>
 <p>Keep three quantities apart. <strong>Token likelihood</strong> asks how probable a token is under the model given the context; the API may expose its logarithm, and that is what we just exponentiated. <strong>Semantic confidence</strong> asks whether independently sampled generations agree in meaning; methods like semantic entropy estimate it, but it is still a measurement of model behavior, not of the world <span class="citation" data-cites="farquhar2024semantic">(<a href="../references.html#ref-farquhar2024semantic" role="doc-biblioref">Farquhar et al. 2024</a>)</span>. <strong>Factual correctness</strong> asks whether a claim matches an authoritative source, and it requires evidence, a verifier, or a human — it is not contained in a log probability. Calibration is the bridge between a stated confidence and observed frequency. If answers rated 0.9 are correct 90% of the time on a task, the score is calibrated there. It rarely is out of the box, and we can see the miscalibration in a representative evaluation slice.</p>
-<div id="7bf60ca1" class="cell" data-execution_count="17">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="co"># A representative evaluation slice: (stated_confidence, was_correct) pairs.</span></span>
-<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>slice_ <span class="op">=</span> [(<span class="fl">0.95</span>, <span class="dv">1</span>), (<span class="fl">0.92</span>, <span class="dv">0</span>), (<span class="fl">0.91</span>, <span class="dv">1</span>), (<span class="fl">0.90</span>, <span class="dv">0</span>), (<span class="fl">0.72</span>, <span class="dv">1</span>),</span>
-<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>          (<span class="fl">0.70</span>, <span class="dv">0</span>), (<span class="fl">0.68</span>, <span class="dv">1</span>), (<span class="fl">0.65</span>, <span class="dv">0</span>), (<span class="fl">0.55</span>, <span class="dv">1</span>), (<span class="fl">0.52</span>, <span class="dv">0</span>)]</span>
-<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> lo, hi <span class="kw">in</span> [(<span class="fl">0.9</span>, <span class="fl">1.01</span>), (<span class="fl">0.6</span>, <span class="fl">0.9</span>), (<span class="fl">0.0</span>, <span class="fl">0.6</span>)]:</span>
-<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a>    bucket <span class="op">=</span> [ok <span class="cf">for</span> conf, ok <span class="kw">in</span> slice_ <span class="cf">if</span> lo <span class="op">&lt;=</span> conf <span class="op">&lt;</span> hi]</span>
-<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> bucket:</span>
-<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>        <span class="bu">print</span>(<span class="ss">f"stated </span><span class="sc">{</span>lo<span class="sc">:.1f}</span><span class="ss">-</span><span class="sc">{</span>hi<span class="sc">:.2f}</span><span class="ss">: empirical accuracy </span><span class="sc">{</span><span class="bu">sum</span>(bucket)<span class="op">/</span><span class="bu">len</span>(bucket)<span class="sc">:.2f}</span><span class="ss">  (n=</span><span class="sc">{</span><span class="bu">len</span>(bucket)<span class="sc">}</span><span class="ss">)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="8568a87b" class="cell" data-execution_count="17">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># A representative evaluation slice: (stated_confidence, was_correct) pairs.</span></span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>slice_ <span class="op">=</span> [(<span class="fl">0.95</span>, <span class="dv">1</span>), (<span class="fl">0.92</span>, <span class="dv">0</span>), (<span class="fl">0.91</span>, <span class="dv">1</span>), (<span class="fl">0.90</span>, <span class="dv">0</span>), (<span class="fl">0.72</span>, <span class="dv">1</span>),</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>          (<span class="fl">0.70</span>, <span class="dv">0</span>), (<span class="fl">0.68</span>, <span class="dv">1</span>), (<span class="fl">0.65</span>, <span class="dv">0</span>), (<span class="fl">0.55</span>, <span class="dv">1</span>), (<span class="fl">0.52</span>, <span class="dv">0</span>)]</span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> lo, hi <span class="kw">in</span> [(<span class="fl">0.9</span>, <span class="fl">1.01</span>), (<span class="fl">0.6</span>, <span class="fl">0.9</span>), (<span class="fl">0.0</span>, <span class="fl">0.6</span>)]:</span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a>    bucket <span class="op">=</span> [ok <span class="cf">for</span> conf, ok <span class="kw">in</span> slice_ <span class="cf">if</span> lo <span class="op">&lt;=</span> conf <span class="op">&lt;</span> hi]</span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> bucket:</span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>        <span class="bu">print</span>(<span class="ss">f"stated </span><span class="sc">{</span>lo<span class="sc">:.1f}</span><span class="ss">-</span><span class="sc">{</span>hi<span class="sc">:.2f}</span><span class="ss">: empirical accuracy </span><span class="sc">{</span><span class="bu">sum</span>(bucket)<span class="op">/</span><span class="bu">len</span>(bucket)<span class="sc">:.2f}</span><span class="ss">  (n=</span><span class="sc">{</span><span class="bu">len</span>(bucket)<span class="sc">}</span><span class="ss">)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>stated 0.9-1.01: empirical accuracy 0.50  (n=4)
 stated 0.6-0.90: empirical accuracy 0.50  (n=4)
@@ -1229,35 +1226,35 @@ stated 0.0-0.60: empirical accuracy 0.50  (n=2)</code></pre>
 </div>
 </div>
 <p>The high-confidence bucket is right only about half the time here — badly overconfident — which is why a raw threshold on model confidence is not an abstention policy. An <strong>abstention policy</strong> is software: it decides, given an uncertainty estimate <em>and</em> whether evidence supports the claim, whether to answer, gather evidence, or decline. The model may supply a number; ordinary code enforces the boundary. “Only answer when certain” in a prompt is a request, not a gate.</p>
-<div id="70a85400" class="cell" data-execution_count="18">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> decide_response(confidence: <span class="bu">float</span>, evidence_score: <span class="bu">float</span>, threshold: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.7</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
-<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Turn an uncertainty estimate into a concrete system action.</span></span>
-<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a><span class="co">    Abstention keys on evidence, not on raw token confidence. A high confidence</span></span>
-<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a><span class="co">    with no supporting evidence still routes to ``abstain``, because token</span></span>
-<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a><span class="co">    likelihood is not a check that a claim is real; genuine support with an</span></span>
-<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a><span class="co">    adequate confidence answers; anything else asks for more evidence.</span></span>
-<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a><span class="co">        confidence: A calibrated confidence in [0, 1] for the candidate answer.</span></span>
-<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a><span class="co">        evidence_score: Support from retrieval or a verifier in [0, 1].</span></span>
-<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a><span class="co">        threshold: Minimum confidence required to answer directly.</span></span>
-<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb27-15"><a href="#cb27-15" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb27-16"><a href="#cb27-16" aria-hidden="true" tabindex="-1"></a><span class="co">        One of ``"answer"``, ``"retrieve"``, or ``"abstain"``.</span></span>
-<span id="cb27-17"><a href="#cb27-17" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb27-18"><a href="#cb27-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> evidence_score <span class="op">&gt;=</span> <span class="fl">0.5</span> <span class="kw">and</span> confidence <span class="op">&gt;=</span> threshold:</span>
-<span id="cb27-19"><a href="#cb27-19" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">"answer"</span></span>
-<span id="cb27-20"><a href="#cb27-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> confidence <span class="op">&gt;=</span> threshold <span class="kw">and</span> evidence_score <span class="op">&lt;</span> <span class="fl">0.5</span>:</span>
-<span id="cb27-21"><a href="#cb27-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">"abstain"</span></span>
-<span id="cb27-22"><a href="#cb27-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"retrieve"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="c74df2a9" class="cell" data-execution_count="18">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> decide_response(confidence: <span class="bu">float</span>, evidence_score: <span class="bu">float</span>, threshold: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.7</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Turn an uncertainty estimate into a concrete system action.</span></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a><span class="co">    Abstention keys on evidence, not on raw token confidence. A high confidence</span></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a><span class="co">    with no supporting evidence still routes to ``abstain``, because token</span></span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a><span class="co">    likelihood is not a check that a claim is real; genuine support with an</span></span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a><span class="co">    adequate confidence answers; anything else asks for more evidence.</span></span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb26-11"><a href="#cb26-11" aria-hidden="true" tabindex="-1"></a><span class="co">        confidence: A calibrated confidence in [0, 1] for the candidate answer.</span></span>
+<span id="cb26-12"><a href="#cb26-12" aria-hidden="true" tabindex="-1"></a><span class="co">        evidence_score: Support from retrieval or a verifier in [0, 1].</span></span>
+<span id="cb26-13"><a href="#cb26-13" aria-hidden="true" tabindex="-1"></a><span class="co">        threshold: Minimum confidence required to answer directly.</span></span>
+<span id="cb26-14"><a href="#cb26-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-15"><a href="#cb26-15" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb26-16"><a href="#cb26-16" aria-hidden="true" tabindex="-1"></a><span class="co">        One of ``"answer"``, ``"retrieve"``, or ``"abstain"``.</span></span>
+<span id="cb26-17"><a href="#cb26-17" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb26-18"><a href="#cb26-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> evidence_score <span class="op">&gt;=</span> <span class="fl">0.5</span> <span class="kw">and</span> confidence <span class="op">&gt;=</span> threshold:</span>
+<span id="cb26-19"><a href="#cb26-19" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">"answer"</span></span>
+<span id="cb26-20"><a href="#cb26-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> confidence <span class="op">&gt;=</span> threshold <span class="kw">and</span> evidence_score <span class="op">&lt;</span> <span class="fl">0.5</span>:</span>
+<span id="cb26-21"><a href="#cb26-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">"abstain"</span></span>
+<span id="cb26-22"><a href="#cb26-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"retrieve"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run the policy on the two cases from the opening: the fluent treaty answer (high confidence, no evidence) and a refund question backed by a retrieved policy passage (confident and supported).</p>
-<div id="77dd2280" class="cell" data-execution_count="19">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"treaty (0.97 conf, 0.0 evidence):"</span>, decide_response(<span class="fl">0.97</span>, <span class="fl">0.0</span>))</span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"refund (0.90 conf, 0.9 evidence):"</span>, decide_response(<span class="fl">0.90</span>, <span class="fl">0.9</span>))</span>
-<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"vague  (0.60 conf, 0.3 evidence):"</span>, decide_response(<span class="fl">0.60</span>, <span class="fl">0.3</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="e574ac56" class="cell" data-execution_count="19">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"treaty (0.97 conf, 0.0 evidence):"</span>, decide_response(<span class="fl">0.97</span>, <span class="fl">0.0</span>))</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"refund (0.90 conf, 0.9 evidence):"</span>, decide_response(<span class="fl">0.90</span>, <span class="fl">0.9</span>))</span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"vague  (0.60 conf, 0.3 evidence):"</span>, decide_response(<span class="fl">0.60</span>, <span class="fl">0.3</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>treaty (0.97 conf, 0.0 evidence): abstain
 refund (0.90 conf, 0.9 evidence): answer
@@ -1331,58 +1328,58 @@ Instruction-tuned model (illustrative):
 \mathrm{TPOT} = \frac{t_N - t_1}{N - 1}.
 \tag{1.3}</span></span></p>
 <p>We simulate a decode loop with a deterministic fake clock so we can exercise the same arithmetic a real stream would drive, then read TTFT and TPOT off the timestamps.</p>
-<div id="6f057a41" class="cell" data-execution_count="20">
+<div id="a7ff80a6" class="cell" data-execution_count="20">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> simulate_decode(prompt_tokens: <span class="bu">int</span>, output_tokens: <span class="bu">int</span>, <span class="op">*</span>,</span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>                    prefill_ms_per_token: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.4</span>, decode_ms_per_token: <span class="bu">float</span> <span class="op">=</span> <span class="fl">18.0</span>,</span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>                    jitter_ms: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.5</span>, seed: <span class="bu">int</span> <span class="op">=</span> <span class="dv">0</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Simulate the arrival times of one streaming generation.</span></span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a><span class="co">    Prefill processes the whole prompt in parallel to produce the first token</span></span>
+<span id="cb30-8"><a href="#cb30-8" aria-hidden="true" tabindex="-1"></a><span class="co">    (its cost scales with prompt length); decode then emits tokens serially with</span></span>
+<span id="cb30-9"><a href="#cb30-9" aria-hidden="true" tabindex="-1"></a><span class="co">    small per-step jitter. Returning arrival times lets the same TTFT/TPOT</span></span>
+<span id="cb30-10"><a href="#cb30-10" aria-hidden="true" tabindex="-1"></a><span class="co">    formulas used on a real stream run offline and deterministically.</span></span>
+<span id="cb30-11"><a href="#cb30-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-12"><a href="#cb30-12" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb30-13"><a href="#cb30-13" aria-hidden="true" tabindex="-1"></a><span class="co">        prompt_tokens: Number of input tokens, driving prefill time.</span></span>
+<span id="cb30-14"><a href="#cb30-14" aria-hidden="true" tabindex="-1"></a><span class="co">        output_tokens: Number of tokens to emit.</span></span>
+<span id="cb30-15"><a href="#cb30-15" aria-hidden="true" tabindex="-1"></a><span class="co">        prefill_ms_per_token: Prefill cost charged per prompt token.</span></span>
+<span id="cb30-16"><a href="#cb30-16" aria-hidden="true" tabindex="-1"></a><span class="co">        decode_ms_per_token: Mean serial cost per output token.</span></span>
+<span id="cb30-17"><a href="#cb30-17" aria-hidden="true" tabindex="-1"></a><span class="co">        jitter_ms: Symmetric per-token noise around the decode mean.</span></span>
+<span id="cb30-18"><a href="#cb30-18" aria-hidden="true" tabindex="-1"></a><span class="co">        seed: Seed for the jitter, so runs reproduce.</span></span>
+<span id="cb30-19"><a href="#cb30-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-20"><a href="#cb30-20" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb30-21"><a href="#cb30-21" aria-hidden="true" tabindex="-1"></a><span class="co">        Arrival time in milliseconds of each output token, first to last.</span></span>
+<span id="cb30-22"><a href="#cb30-22" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb30-23"><a href="#cb30-23" aria-hidden="true" tabindex="-1"></a>    rng <span class="op">=</span> random.Random(seed)</span>
+<span id="cb30-24"><a href="#cb30-24" aria-hidden="true" tabindex="-1"></a>    ttft <span class="op">=</span> <span class="fl">8.0</span> <span class="op">+</span> prompt_tokens <span class="op">*</span> prefill_ms_per_token</span>
+<span id="cb30-25"><a href="#cb30-25" aria-hidden="true" tabindex="-1"></a>    times <span class="op">=</span> [ttft]</span>
+<span id="cb30-26"><a href="#cb30-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, output_tokens):</span>
+<span id="cb30-27"><a href="#cb30-27" aria-hidden="true" tabindex="-1"></a>        times.append(times[<span class="op">-</span><span class="dv">1</span>] <span class="op">+</span> decode_ms_per_token <span class="op">+</span> rng.uniform(<span class="op">-</span>jitter_ms, jitter_ms))</span>
+<span id="cb30-28"><a href="#cb30-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> times</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div id="2aa5463c" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> simulate_decode(prompt_tokens: <span class="bu">int</span>, output_tokens: <span class="bu">int</span>, <span class="op">*</span>,</span>
-<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>                    prefill_ms_per_token: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.4</span>, decode_ms_per_token: <span class="bu">float</span> <span class="op">=</span> <span class="fl">18.0</span>,</span>
-<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>                    jitter_ms: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.5</span>, seed: <span class="bu">int</span> <span class="op">=</span> <span class="dv">0</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
-<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Simulate the arrival times of one streaming generation.</span></span>
-<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a><span class="co">    Prefill processes the whole prompt in parallel to produce the first token</span></span>
-<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a><span class="co">    (its cost scales with prompt length); decode then emits tokens serially with</span></span>
-<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a><span class="co">    small per-step jitter. Returning arrival times lets the same TTFT/TPOT</span></span>
-<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a><span class="co">    formulas used on a real stream run offline and deterministically.</span></span>
-<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a><span class="co">        prompt_tokens: Number of input tokens, driving prefill time.</span></span>
-<span id="cb31-14"><a href="#cb31-14" aria-hidden="true" tabindex="-1"></a><span class="co">        output_tokens: Number of tokens to emit.</span></span>
-<span id="cb31-15"><a href="#cb31-15" aria-hidden="true" tabindex="-1"></a><span class="co">        prefill_ms_per_token: Prefill cost charged per prompt token.</span></span>
-<span id="cb31-16"><a href="#cb31-16" aria-hidden="true" tabindex="-1"></a><span class="co">        decode_ms_per_token: Mean serial cost per output token.</span></span>
-<span id="cb31-17"><a href="#cb31-17" aria-hidden="true" tabindex="-1"></a><span class="co">        jitter_ms: Symmetric per-token noise around the decode mean.</span></span>
-<span id="cb31-18"><a href="#cb31-18" aria-hidden="true" tabindex="-1"></a><span class="co">        seed: Seed for the jitter, so runs reproduce.</span></span>
-<span id="cb31-19"><a href="#cb31-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb31-20"><a href="#cb31-20" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb31-21"><a href="#cb31-21" aria-hidden="true" tabindex="-1"></a><span class="co">        Arrival time in milliseconds of each output token, first to last.</span></span>
-<span id="cb31-22"><a href="#cb31-22" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb31-23"><a href="#cb31-23" aria-hidden="true" tabindex="-1"></a>    rng <span class="op">=</span> random.Random(seed)</span>
-<span id="cb31-24"><a href="#cb31-24" aria-hidden="true" tabindex="-1"></a>    ttft <span class="op">=</span> <span class="fl">8.0</span> <span class="op">+</span> prompt_tokens <span class="op">*</span> prefill_ms_per_token</span>
-<span id="cb31-25"><a href="#cb31-25" aria-hidden="true" tabindex="-1"></a>    times <span class="op">=</span> [ttft]</span>
-<span id="cb31-26"><a href="#cb31-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">1</span>, output_tokens):</span>
-<span id="cb31-27"><a href="#cb31-27" aria-hidden="true" tabindex="-1"></a>        times.append(times[<span class="op">-</span><span class="dv">1</span>] <span class="op">+</span> decode_ms_per_token <span class="op">+</span> rng.uniform(<span class="op">-</span>jitter_ms, jitter_ms))</span>
-<span id="cb31-28"><a href="#cb31-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> times</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> tpot_ms(token_times_ms: <span class="bu">list</span>[<span class="bu">float</span>]) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Compute time per output token from a decode loop's arrival times.</span></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a><span class="co">        token_times_ms: Arrival time in milliseconds of each output token.</span></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a><span class="co">        The request-level TPOT, (t_N - t_1) / (N - 1); 0.0 for a single token.</span></span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="bu">len</span>(token_times_ms) <span class="op">&lt;</span> <span class="dv">2</span>:</span>
+<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="fl">0.0</span></span>
+<span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (token_times_ms[<span class="op">-</span><span class="dv">1</span>] <span class="op">-</span> token_times_ms[<span class="dv">0</span>]) <span class="op">/</span> (<span class="bu">len</span>(token_times_ms) <span class="op">-</span> <span class="dv">1</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="d241dd1c" class="cell" data-execution_count="21">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> tpot_ms(token_times_ms: <span class="bu">list</span>[<span class="bu">float</span>]) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
-<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Compute time per output token from a decode loop's arrival times.</span></span>
-<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb32-6"><a href="#cb32-6" aria-hidden="true" tabindex="-1"></a><span class="co">        token_times_ms: Arrival time in milliseconds of each output token.</span></span>
-<span id="cb32-7"><a href="#cb32-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb32-8"><a href="#cb32-8" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb32-9"><a href="#cb32-9" aria-hidden="true" tabindex="-1"></a><span class="co">        The request-level TPOT, (t_N - t_1) / (N - 1); 0.0 for a single token.</span></span>
-<span id="cb32-10"><a href="#cb32-10" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb32-11"><a href="#cb32-11" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="bu">len</span>(token_times_ms) <span class="op">&lt;</span> <span class="dv">2</span>:</span>
-<span id="cb32-12"><a href="#cb32-12" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="fl">0.0</span></span>
-<span id="cb32-13"><a href="#cb32-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (token_times_ms[<span class="op">-</span><span class="dv">1</span>] <span class="op">-</span> token_times_ms[<span class="dv">0</span>]) <span class="op">/</span> (<span class="bu">len</span>(token_times_ms) <span class="op">-</span> <span class="dv">1</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
-</div>
-<div id="5b43ff02" class="cell" data-execution_count="22">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>times <span class="op">=</span> simulate_decode(prompt_tokens<span class="op">=</span><span class="dv">800</span>, output_tokens<span class="op">=</span><span class="dv">20</span>)</span>
-<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>ttft <span class="op">=</span> times[<span class="dv">0</span>]</span>
-<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>total <span class="op">=</span> times[<span class="op">-</span><span class="dv">1</span>]</span>
-<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"TTFT   = </span><span class="sc">{</span>ttft<span class="sc">:6.1f}</span><span class="ss"> ms   (queue + prefill of 800 tokens + first token)"</span>)</span>
-<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"TPOT   = </span><span class="sc">{</span>tpot_ms(times)<span class="sc">:6.1f}</span><span class="ss"> ms   (mean gap across </span><span class="sc">{</span><span class="bu">len</span>(times)<span class="sc">}</span><span class="ss"> tokens)"</span>)</span>
-<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"total  = </span><span class="sc">{</span>total<span class="sc">:6.1f}</span><span class="ss"> ms"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="0eb04d77" class="cell" data-execution_count="22">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>times <span class="op">=</span> simulate_decode(prompt_tokens<span class="op">=</span><span class="dv">800</span>, output_tokens<span class="op">=</span><span class="dv">20</span>)</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>ttft <span class="op">=</span> times[<span class="dv">0</span>]</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>total <span class="op">=</span> times[<span class="op">-</span><span class="dv">1</span>]</span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"TTFT   = </span><span class="sc">{</span>ttft<span class="sc">:6.1f}</span><span class="ss"> ms   (queue + prefill of 800 tokens + first token)"</span>)</span>
+<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"TPOT   = </span><span class="sc">{</span>tpot_ms(times)<span class="sc">:6.1f}</span><span class="ss"> ms   (mean gap across </span><span class="sc">{</span><span class="bu">len</span>(times)<span class="sc">}</span><span class="ss"> tokens)"</span>)</span>
+<span id="cb32-6"><a href="#cb32-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"total  = </span><span class="sc">{</span>total<span class="sc">:6.1f}</span><span class="ss"> ms"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>TTFT   =  328.0 ms   (queue + prefill of 800 tokens + first token)
 TPOT   =   18.3 ms   (mean gap across 20 tokens)
@@ -1391,16 +1388,19 @@ total  =  675.6 ms</code></pre>
 </div>
 <p><a href="#fig-ch01-timeline" class="quarto-xref">Figure&nbsp;<span>1.5</span></a> turns those timestamps into a picture: a long prefill segment up to the first token, then a run of near-even decode intervals.</p>
 <div id="cell-fig-ch01-timeline" class="cell" data-execution_count="23">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.6</span>, <span class="fl">1.8</span>))</span>
-<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>ax.barh(<span class="dv">0</span>, ttft, color<span class="op">=</span><span class="st">"#2a7f9e"</span>, label<span class="op">=</span><span class="st">"prefill -&gt; first token (TTFT)"</span>)</span>
-<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>ax.barh(<span class="dv">0</span>, total <span class="op">-</span> ttft, left<span class="op">=</span>ttft, color<span class="op">=</span><span class="st">"#b7791f"</span>, label<span class="op">=</span><span class="st">"decode (TPOT x tokens)"</span>)</span>
-<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> t <span class="kw">in</span> times:</span>
-<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a>    ax.plot([t, t], [<span class="op">-</span><span class="fl">0.4</span>, <span class="fl">0.4</span>], color<span class="op">=</span><span class="st">"0.2"</span>, lw<span class="op">=</span><span class="fl">0.6</span>)</span>
-<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a>ax.set_yticks([])</span>
-<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"milliseconds"</span>)</span>
-<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">"upper center"</span>, ncol<span class="op">=</span><span class="dv">2</span>, fontsize<span class="op">=</span><span class="dv">8</span>)</span>
-<span id="cb35-9"><a href="#cb35-9" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
-<span id="cb35-10"><a href="#cb35-10" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.6</span>, <span class="fl">1.8</span>))</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>ax.barh(<span class="dv">0</span>, ttft, color<span class="op">=</span><span class="st">"#2a7f9e"</span>, label<span class="op">=</span><span class="st">"prefill -&gt; first token (TTFT)"</span>)</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>ax.barh(<span class="dv">0</span>, total <span class="op">-</span> ttft, left<span class="op">=</span>ttft, color<span class="op">=</span><span class="st">"#b7791f"</span>, label<span class="op">=</span><span class="st">"decode (TPOT x tokens)"</span>)</span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> t <span class="kw">in</span> times:</span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a>    ax.plot([t, t], [<span class="op">-</span><span class="fl">0.4</span>, <span class="fl">0.4</span>], color<span class="op">=</span><span class="st">"0.2"</span>, lw<span class="op">=</span><span class="fl">0.6</span>)</span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a>ax.set_yticks([])</span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">"milliseconds"</span>)</span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">"upper center"</span>, ncol<span class="op">=</span><span class="dv">2</span>, fontsize<span class="op">=</span><span class="dv">8</span>)</span>
+<span id="cb34-9"><a href="#cb34-9" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb34-10"><a href="#cb34-10" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-display">
 <div id="fig-ch01-timeline" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
@@ -1415,12 +1415,12 @@ Figure&nbsp;1.5: Where does the time go? A single prefill segment reaches the fi
 </div>
 </div>
 <p>The phases explain the cost asymmetry. A longer <em>input</em> inflates prefill and occupies context capacity; a longer <em>output</em> extends serial decoding and keeps accelerator state resident. The two are not interchangeable, and the useful denominator is not raw token price but a successful, policy-compliant outcome — a cheaper model that triggers more retries or human corrections can cost more per resolved task. We can make that concrete: charge input and output tokens, then divide by a success rate.</p>
-<div id="aaa1de6e" class="cell" data-execution_count="24">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>prompt_toks, output_toks <span class="op">=</span> <span class="dv">800</span>, <span class="dv">200</span></span>
-<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>in_rate, out_rate <span class="op">=</span> <span class="fl">0.05</span> <span class="op">/</span> <span class="dv">1000</span>, <span class="fl">0.40</span> <span class="op">/</span> <span class="dv">1000</span>   <span class="co"># dollars per token; output is dearer</span></span>
-<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>raw <span class="op">=</span> prompt_toks <span class="op">*</span> in_rate <span class="op">+</span> output_toks <span class="op">*</span> out_rate</span>
-<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> success <span class="kw">in</span> (<span class="fl">0.95</span>, <span class="fl">0.6</span>):</span>
-<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"raw call = </span><span class="sc">{</span>raw<span class="sc">:.4f}</span><span class="ss"> USD   success=</span><span class="sc">{</span>success<span class="sc">:.2f}</span><span class="ss">   cost per resolved task = </span><span class="sc">{</span>raw<span class="op">/</span>success<span class="sc">:.4f}</span><span class="ss"> USD"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="5a581681" class="cell" data-execution_count="24">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>prompt_toks, output_toks <span class="op">=</span> <span class="dv">800</span>, <span class="dv">200</span></span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>in_rate, out_rate <span class="op">=</span> <span class="fl">0.05</span> <span class="op">/</span> <span class="dv">1000</span>, <span class="fl">0.40</span> <span class="op">/</span> <span class="dv">1000</span>   <span class="co"># dollars per token; output is dearer</span></span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>raw <span class="op">=</span> prompt_toks <span class="op">*</span> in_rate <span class="op">+</span> output_toks <span class="op">*</span> out_rate</span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> success <span class="kw">in</span> (<span class="fl">0.95</span>, <span class="fl">0.6</span>):</span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"raw call = </span><span class="sc">{</span>raw<span class="sc">:.4f}</span><span class="ss"> USD   success=</span><span class="sc">{</span>success<span class="sc">:.2f}</span><span class="ss">   cost per resolved task = </span><span class="sc">{</span>raw<span class="op">/</span>success<span class="sc">:.4f}</span><span class="ss"> USD"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>raw call = 0.1200 USD   success=0.95   cost per resolved task = 0.1263 USD
 raw call = 0.1200 USD   success=0.60   cost per resolved task = 0.2000 USD</code></pre>
@@ -1435,21 +1435,6 @@ raw call = 0.1200 USD   success=0.60   cost per resolved task = 0.2000 USD</code
 <h2 data-number="1.7" class="anchored" data-anchor-id="sec-ch01-least-autonomous"><span class="header-section-number">1.7</span> Choose the least autonomous design</h2>
 <p>With the component understood, the refund proposal becomes a design question, not a capability question. An agent is one option in a large space, and the discipline is to start from the shape of the problem rather than the wish to use a model. Ask what determines the desired output: stable rules, authoritative data, an explicit objective, or judgment over unstructured evidence. <a href="#fig-ch01-least-autonomous" class="quarto-xref">Figure&nbsp;<span>1.6</span></a> walks that question to the least autonomous mechanism that can verify its own part.</p>
 <div class="cell" data-layout-align="default">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode default code-with-copy"><code class="sourceCode default"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>flowchart TD</span>
-<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>    Q[Define the measurable outcome] --&gt; R{Stable rules cover it?}</span>
-<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    R -- yes --&gt; C[Ordinary code or rules]</span>
-<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>    R -- no --&gt; D{Authoritative structured data?}</span>
-<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a>    D -- yes --&gt; SQL[SQL or typed API query]</span>
-<span id="cb38-6"><a href="#cb38-6" aria-hidden="true" tabindex="-1"></a>    D -- no --&gt; I{Need matching evidence?}</span>
-<span id="cb38-7"><a href="#cb38-7" aria-hidden="true" tabindex="-1"></a>    I -- yes --&gt; S[Search or retrieval]</span>
-<span id="cb38-8"><a href="#cb38-8" aria-hidden="true" tabindex="-1"></a>    I -- no --&gt; O{Explicit objective and constraints?}</span>
-<span id="cb38-9"><a href="#cb38-9" aria-hidden="true" tabindex="-1"></a>    O -- yes --&gt; V[Solver or optimizer]</span>
-<span id="cb38-10"><a href="#cb38-10" aria-hidden="true" tabindex="-1"></a>    O -- no --&gt; J{Judgment over text or images?}</span>
-<span id="cb38-11"><a href="#cb38-11" aria-hidden="true" tabindex="-1"></a>    J -- yes --&gt; M[One model call or fixed workflow]</span>
-<span id="cb38-12"><a href="#cb38-12" aria-hidden="true" tabindex="-1"></a>    J -- no --&gt; H[Human process or redesign]</span>
-<span id="cb38-13"><a href="#cb38-13" aria-hidden="true" tabindex="-1"></a>    M --&gt; A{Must the next step depend on an observation?}</span>
-<span id="cb38-14"><a href="#cb38-14" aria-hidden="true" tabindex="-1"></a>    A -- no --&gt; W[Keep the workflow fixed]</span>
-<span id="cb38-15"><a href="#cb38-15" aria-hidden="true" tabindex="-1"></a>    A -- yes --&gt; B[Consider a bounded agent]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output-display">
 <div id="fig-ch01-least-autonomous" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
@@ -1497,59 +1482,59 @@ Figure&nbsp;1.7: The authority ladder, levels 0–5. Each rung buys one capabili
 </figure>
 </div>
 <p>These levels describe permissions, not intelligence: a powerful model can sit at L0 while a modest classifier triggers an L4 effect if software wires it that way. Each increment also has a countable price, and “the model will handle it” is never a budget. We cost the increments explicitly. Represent each rung by the per-task overhead it adds — extra model calls, expected retries, and operator review minutes — and accumulate.</p>
-<div id="be2759de" class="cell" data-execution_count="25">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
-<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
-<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Rung:</span>
-<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One rung of the authority ladder and the per-task overhead it adds.</span></span>
-<span id="cb39-5"><a href="#cb39-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb39-6"><a href="#cb39-6" aria-hidden="true" tabindex="-1"></a><span class="co">    The fields are deliberately countable — calls, retries, review minutes, and</span></span>
-<span id="cb39-7"><a href="#cb39-7" aria-hidden="true" tabindex="-1"></a><span class="co">    the number of records a failure can touch — because a budget stated in</span></span>
-<span id="cb39-8"><a href="#cb39-8" aria-hidden="true" tabindex="-1"></a><span class="co">    countable units is the only kind you can enforce or promote against.</span></span>
-<span id="cb39-9"><a href="#cb39-9" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb39-10"><a href="#cb39-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb39-11"><a href="#cb39-11" aria-hidden="true" tabindex="-1"></a>    name: <span class="bu">str</span></span>
-<span id="cb39-12"><a href="#cb39-12" aria-hidden="true" tabindex="-1"></a>    extra_calls: <span class="bu">float</span></span>
-<span id="cb39-13"><a href="#cb39-13" aria-hidden="true" tabindex="-1"></a>    expected_retries: <span class="bu">float</span></span>
-<span id="cb39-14"><a href="#cb39-14" aria-hidden="true" tabindex="-1"></a>    review_minutes: <span class="bu">float</span></span>
-<span id="cb39-15"><a href="#cb39-15" aria-hidden="true" tabindex="-1"></a>    blast_radius_records: <span class="bu">int</span></span>
-<span id="cb39-16"><a href="#cb39-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb39-17"><a href="#cb39-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb39-18"><a href="#cb39-18" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> autonomy_costs(rungs: <span class="bu">list</span>[Rung], call_cost: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.02</span>,</span>
-<span id="cb39-19"><a href="#cb39-19" aria-hidden="true" tabindex="-1"></a>                   reviewer_cost_per_minute: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">float</span>, <span class="bu">float</span>]]:</span>
-<span id="cb39-20"><a href="#cb39-20" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Cost each authority increment in the dollars used to justify the project.</span></span>
-<span id="cb39-21"><a href="#cb39-21" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb39-22"><a href="#cb39-22" aria-hidden="true" tabindex="-1"></a><span class="co">    Every rung is charged for the model calls and retries it adds and for the</span></span>
-<span id="cb39-23"><a href="#cb39-23" aria-hidden="true" tabindex="-1"></a><span class="co">    operator minutes it consumes; the running total shows that autonomy is</span></span>
-<span id="cb39-24"><a href="#cb39-24" aria-hidden="true" tabindex="-1"></a><span class="co">    bought one action at a time, each increment with an explicit price.</span></span>
-<span id="cb39-25"><a href="#cb39-25" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb39-26"><a href="#cb39-26" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
-<span id="cb39-27"><a href="#cb39-27" aria-hidden="true" tabindex="-1"></a><span class="co">        rungs: The ladder rungs in ascending order of authority.</span></span>
-<span id="cb39-28"><a href="#cb39-28" aria-hidden="true" tabindex="-1"></a><span class="co">        call_cost: Dollar cost of one model call (and of one retry).</span></span>
-<span id="cb39-29"><a href="#cb39-29" aria-hidden="true" tabindex="-1"></a><span class="co">        reviewer_cost_per_minute: Dollar cost of one operator-review minute.</span></span>
-<span id="cb39-30"><a href="#cb39-30" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb39-31"><a href="#cb39-31" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
-<span id="cb39-32"><a href="#cb39-32" aria-hidden="true" tabindex="-1"></a><span class="co">        One ``(name, incremental_cost, cumulative_cost)`` triple per rung.</span></span>
-<span id="cb39-33"><a href="#cb39-33" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
-<span id="cb39-34"><a href="#cb39-34" aria-hidden="true" tabindex="-1"></a>    rows, cumulative <span class="op">=</span> [], <span class="fl">0.0</span></span>
-<span id="cb39-35"><a href="#cb39-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> rung <span class="kw">in</span> rungs:</span>
-<span id="cb39-36"><a href="#cb39-36" aria-hidden="true" tabindex="-1"></a>        incremental <span class="op">=</span> (rung.extra_calls <span class="op">+</span> rung.expected_retries) <span class="op">*</span> call_cost <span class="op">\</span></span>
-<span id="cb39-37"><a href="#cb39-37" aria-hidden="true" tabindex="-1"></a>            <span class="op">+</span> rung.review_minutes <span class="op">*</span> reviewer_cost_per_minute</span>
-<span id="cb39-38"><a href="#cb39-38" aria-hidden="true" tabindex="-1"></a>        cumulative <span class="op">+=</span> incremental</span>
-<span id="cb39-39"><a href="#cb39-39" aria-hidden="true" tabindex="-1"></a>        rows.append((rung.name, incremental, cumulative))</span>
-<span id="cb39-40"><a href="#cb39-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="765a6521" class="cell" data-execution_count="25">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Rung:</span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""One rung of the authority ladder and the per-task overhead it adds.</span></span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a><span class="co">    The fields are deliberately countable — calls, retries, review minutes, and</span></span>
+<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a><span class="co">    the number of records a failure can touch — because a budget stated in</span></span>
+<span id="cb37-8"><a href="#cb37-8" aria-hidden="true" tabindex="-1"></a><span class="co">    countable units is the only kind you can enforce or promote against.</span></span>
+<span id="cb37-9"><a href="#cb37-9" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb37-10"><a href="#cb37-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-11"><a href="#cb37-11" aria-hidden="true" tabindex="-1"></a>    name: <span class="bu">str</span></span>
+<span id="cb37-12"><a href="#cb37-12" aria-hidden="true" tabindex="-1"></a>    extra_calls: <span class="bu">float</span></span>
+<span id="cb37-13"><a href="#cb37-13" aria-hidden="true" tabindex="-1"></a>    expected_retries: <span class="bu">float</span></span>
+<span id="cb37-14"><a href="#cb37-14" aria-hidden="true" tabindex="-1"></a>    review_minutes: <span class="bu">float</span></span>
+<span id="cb37-15"><a href="#cb37-15" aria-hidden="true" tabindex="-1"></a>    blast_radius_records: <span class="bu">int</span></span>
+<span id="cb37-16"><a href="#cb37-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-17"><a href="#cb37-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-18"><a href="#cb37-18" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> autonomy_costs(rungs: <span class="bu">list</span>[Rung], call_cost: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.02</span>,</span>
+<span id="cb37-19"><a href="#cb37-19" aria-hidden="true" tabindex="-1"></a>                   reviewer_cost_per_minute: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.0</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">float</span>, <span class="bu">float</span>]]:</span>
+<span id="cb37-20"><a href="#cb37-20" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Cost each authority increment in the dollars used to justify the project.</span></span>
+<span id="cb37-21"><a href="#cb37-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-22"><a href="#cb37-22" aria-hidden="true" tabindex="-1"></a><span class="co">    Every rung is charged for the model calls and retries it adds and for the</span></span>
+<span id="cb37-23"><a href="#cb37-23" aria-hidden="true" tabindex="-1"></a><span class="co">    operator minutes it consumes; the running total shows that autonomy is</span></span>
+<span id="cb37-24"><a href="#cb37-24" aria-hidden="true" tabindex="-1"></a><span class="co">    bought one action at a time, each increment with an explicit price.</span></span>
+<span id="cb37-25"><a href="#cb37-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-26"><a href="#cb37-26" aria-hidden="true" tabindex="-1"></a><span class="co">    Args:</span></span>
+<span id="cb37-27"><a href="#cb37-27" aria-hidden="true" tabindex="-1"></a><span class="co">        rungs: The ladder rungs in ascending order of authority.</span></span>
+<span id="cb37-28"><a href="#cb37-28" aria-hidden="true" tabindex="-1"></a><span class="co">        call_cost: Dollar cost of one model call (and of one retry).</span></span>
+<span id="cb37-29"><a href="#cb37-29" aria-hidden="true" tabindex="-1"></a><span class="co">        reviewer_cost_per_minute: Dollar cost of one operator-review minute.</span></span>
+<span id="cb37-30"><a href="#cb37-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-31"><a href="#cb37-31" aria-hidden="true" tabindex="-1"></a><span class="co">    Returns:</span></span>
+<span id="cb37-32"><a href="#cb37-32" aria-hidden="true" tabindex="-1"></a><span class="co">        One ``(name, incremental_cost, cumulative_cost)`` triple per rung.</span></span>
+<span id="cb37-33"><a href="#cb37-33" aria-hidden="true" tabindex="-1"></a><span class="co">    """</span></span>
+<span id="cb37-34"><a href="#cb37-34" aria-hidden="true" tabindex="-1"></a>    rows, cumulative <span class="op">=</span> [], <span class="fl">0.0</span></span>
+<span id="cb37-35"><a href="#cb37-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> rung <span class="kw">in</span> rungs:</span>
+<span id="cb37-36"><a href="#cb37-36" aria-hidden="true" tabindex="-1"></a>        incremental <span class="op">=</span> (rung.extra_calls <span class="op">+</span> rung.expected_retries) <span class="op">*</span> call_cost <span class="op">\</span></span>
+<span id="cb37-37"><a href="#cb37-37" aria-hidden="true" tabindex="-1"></a>            <span class="op">+</span> rung.review_minutes <span class="op">*</span> reviewer_cost_per_minute</span>
+<span id="cb37-38"><a href="#cb37-38" aria-hidden="true" tabindex="-1"></a>        cumulative <span class="op">+=</span> incremental</span>
+<span id="cb37-39"><a href="#cb37-39" aria-hidden="true" tabindex="-1"></a>        rows.append((rung.name, incremental, cumulative))</span>
+<span id="cb37-40"><a href="#cb37-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="c723dda3" class="cell" data-execution_count="26">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>ladder <span class="op">=</span> [</span>
-<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"conventional"</span>, <span class="dv">0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="dv">1</span>),</span>
-<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"one model call"</span>, <span class="dv">1</span>, <span class="fl">0.0</span>, <span class="fl">0.5</span>, <span class="dv">1</span>),</span>
-<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"fixed workflow"</span>, <span class="dv">3</span>, <span class="fl">0.2</span>, <span class="fl">1.0</span>, <span class="dv">5</span>),</span>
-<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"bounded agent"</span>, <span class="dv">6</span>, <span class="fl">1.0</span>, <span class="fl">3.0</span>, <span class="dv">25</span>),</span>
-<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"coordinated agents"</span>, <span class="dv">15</span>, <span class="fl">2.0</span>, <span class="fl">4.0</span>, <span class="dv">100</span>),</span>
-<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"delegated operation"</span>, <span class="dv">30</span>, <span class="fl">4.0</span>, <span class="fl">8.0</span>, <span class="dv">500</span>),</span>
-<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a>]</span>
-<span id="cb40-9"><a href="#cb40-9" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, inc, cum <span class="kw">in</span> autonomy_costs(ladder):</span>
-<span id="cb40-10"><a href="#cb40-10" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:20}</span><span class="ss"> +</span><span class="sc">{</span>inc<span class="sc">:6.2f}</span><span class="ss"> USD/task   cumulative </span><span class="sc">{</span>cum<span class="sc">:6.2f}</span><span class="ss"> USD/task"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div id="07785421" class="cell" data-execution_count="26">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>ladder <span class="op">=</span> [</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"conventional"</span>, <span class="dv">0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="dv">1</span>),</span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"one model call"</span>, <span class="dv">1</span>, <span class="fl">0.0</span>, <span class="fl">0.5</span>, <span class="dv">1</span>),</span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"fixed workflow"</span>, <span class="dv">3</span>, <span class="fl">0.2</span>, <span class="fl">1.0</span>, <span class="dv">5</span>),</span>
+<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"bounded agent"</span>, <span class="dv">6</span>, <span class="fl">1.0</span>, <span class="fl">3.0</span>, <span class="dv">25</span>),</span>
+<span id="cb38-6"><a href="#cb38-6" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"coordinated agents"</span>, <span class="dv">15</span>, <span class="fl">2.0</span>, <span class="fl">4.0</span>, <span class="dv">100</span>),</span>
+<span id="cb38-7"><a href="#cb38-7" aria-hidden="true" tabindex="-1"></a>    Rung(<span class="st">"delegated operation"</span>, <span class="dv">30</span>, <span class="fl">4.0</span>, <span class="fl">8.0</span>, <span class="dv">500</span>),</span>
+<span id="cb38-8"><a href="#cb38-8" aria-hidden="true" tabindex="-1"></a>]</span>
+<span id="cb38-9"><a href="#cb38-9" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, inc, cum <span class="kw">in</span> autonomy_costs(ladder):</span>
+<span id="cb38-10"><a href="#cb38-10" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:20}</span><span class="ss"> +</span><span class="sc">{</span>inc<span class="sc">:6.2f}</span><span class="ss"> USD/task   cumulative </span><span class="sc">{</span>cum<span class="sc">:6.2f}</span><span class="ss"> USD/task"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>conventional         +  0.00 USD/task   cumulative   0.00 USD/task
 one model call       +  0.52 USD/task   cumulative   0.52 USD/task
@@ -1561,13 +1546,16 @@ delegated operation  +  8.68 USD/task   cumulative  17.74 USD/task</code></pre>
 </div>
 <p>The jump from a fixed workflow to a bounded agent roughly triples the per-task cost here, and most of that is operator review, not compute — a pattern <a href="#fig-ch01-autonomy-cost" class="quarto-xref">Figure&nbsp;<span>1.8</span></a> makes plain.</p>
 <div id="cell-fig-ch01-autonomy-cost" class="cell" data-execution_count="27">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>rows <span class="op">=</span> autonomy_costs(ladder)</span>
-<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.6</span>, <span class="fl">3.2</span>))</span>
-<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>ax.plot([r[<span class="dv">0</span>] <span class="cf">for</span> r <span class="kw">in</span> rows], [r[<span class="dv">2</span>] <span class="cf">for</span> r <span class="kw">in</span> rows], marker<span class="op">=</span><span class="st">"o"</span>)</span>
-<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"cumulative USD per task"</span>)</span>
-<span id="cb42-5"><a href="#cb42-5" aria-hidden="true" tabindex="-1"></a>ax.tick_params(axis<span class="op">=</span><span class="st">"x"</span>, labelrotation<span class="op">=</span><span class="dv">30</span>)</span>
-<span id="cb42-6"><a href="#cb42-6" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
-<span id="cb42-7"><a href="#cb42-7" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<details class="code-fold">
+<summary>Show the code that draws this figure</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>rows <span class="op">=</span> autonomy_costs(ladder)</span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="fl">6.6</span>, <span class="fl">3.2</span>))</span>
+<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>ax.plot([r[<span class="dv">0</span>] <span class="cf">for</span> r <span class="kw">in</span> rows], [r[<span class="dv">2</span>] <span class="cf">for</span> r <span class="kw">in</span> rows], marker<span class="op">=</span><span class="st">"o"</span>)</span>
+<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">"cumulative USD per task"</span>)</span>
+<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a>ax.tick_params(axis<span class="op">=</span><span class="st">"x"</span>, labelrotation<span class="op">=</span><span class="dv">30</span>)</span>
+<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()</span>
+<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a>plt.show()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-display">
 <div id="fig-ch01-autonomy-cost" class="quarto-float quarto-figure quarto-figure-center anchored">
 <figure class="quarto-float quarto-float-fig figure">
