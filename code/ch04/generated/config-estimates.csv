@@ -1,4 +1,0 @@
-name,kind,total_params,active_params,reported_total_params,reported_active_params,total_error_percent,active_fraction,kv_bytes_per_token,fixed_state_bytes,context_state_gib_32k,source,verified_on
-DeepSeek-V3,MoE + MLA,671026404352,37552282624,671000000000,37000000000,0.003935074813710879,0.05596245152269927,70272,0,2.14453125,https://huggingface.co/deepseek-ai/DeepSeek-V3-Base/blob/main/config.json,2026-07-19
-Llama 3.1 8B,dense GQA,8030261248,8030261248,8000000000,8000000000,0.3782656,1.0,131072,0,4.0,https://huggingface.co/meta-llama/Llama-3.1-8B/blob/main/config.json,2026-07-19
-Qwen3-Next 80B-A3B,3:1 linear/full hybrid MoE,79573623552,3774161664,80000000000,3000000000,-0.53297056,0.047429807711768336,24576,39518208,0.78680419921875,https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/main/config.json,2026-07-19

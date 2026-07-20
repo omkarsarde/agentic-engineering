@@ -1,9 +1,12 @@
-"""Executable contracts for Chapter 4 sparse and efficient architectures."""
+"""Executable contracts for Chapter 4 (MoE and efficient architectures).
+
+Imports the chapter's tangled teaching module under a unique name so it never
+collides with another chapter's ``_generated`` during a full-suite run.
+"""
 
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -11,25 +14,27 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "code" / "ch04"))
 
-from config_reader import estimate_config  # noqa: E402
-from moe_min import GatedLinearAttention, TopKRouter, mqar_capacity_curve, train_router  # noqa: E402
 
-_BUILD_SPEC = importlib.util.spec_from_file_location(
-    "ch04_run_build", ROOT / "code" / "ch04" / "run_build.py"
-)
-assert _BUILD_SPEC is not None and _BUILD_SPEC.loader is not None
-_BUILD_MODULE = importlib.util.module_from_spec(_BUILD_SPEC)
-_BUILD_SPEC.loader.exec_module(_BUILD_MODULE)
-run_build = _BUILD_MODULE.run_build
+def _load_generated():
+    spec = importlib.util.spec_from_file_location(
+        "ch04_generated", ROOT / "code" / "ch04" / "_generated.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["ch04_generated"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ch04 = _load_generated()
 
 
 def test_router_shapes_scores_and_top_k_load() -> None:
     torch.manual_seed(2)
     tokens = torch.randn(3, 5, 8)
     for scoring in ("softmax", "sigmoid"):
-        router = TopKRouter(8, experts=4, top_k=2, scoring=scoring)
+        router = ch04.TopKRouter(8, experts=4, top_k=2, scoring=scoring)
         state = router(tokens)
         assert state.probabilities.shape == (3, 5, 4)
         assert state.indices.shape == state.weights.shape == (3, 5, 2)
@@ -39,7 +44,7 @@ def test_router_shapes_scores_and_top_k_load() -> None:
 
 
 def test_aux_free_controller_pushes_down_an_overloaded_expert() -> None:
-    router = TopKRouter(4, experts=4, top_k=1)
+    router = ch04.TopKRouter(4, experts=4, top_k=1)
     router.update_selection_bias(torch.tensor([0.7, 0.1, 0.1, 0.1]), rate=0.02)
     assert router.selection_bias[0] < 0
     assert torch.all(router.selection_bias[1:] > 0)
@@ -47,66 +52,54 @@ def test_aux_free_controller_pushes_down_an_overloaded_expert() -> None:
 
 
 def test_balancing_prevents_seeded_router_collapse() -> None:
-    unbalanced = train_router(0.0)
-    balanced = train_router(0.5)
-    assert max(unbalanced["load"]) > 0.95
-    assert max(balanced["load"]) < 0.35
+    unbalanced = ch04.train_router(0.0)
+    balanced = ch04.train_router(0.5)
+    assert max(unbalanced["load"]) > 0.95          # collapses onto one expert
+    assert max(balanced["load"]) < 0.35            # spread near the 25% target
     assert min(unbalanced["accuracy"], balanced["accuracy"]) > 0.9
 
 
 def test_gated_linear_attention_is_chunk_equivalent_with_fixed_state() -> None:
     torch.manual_seed(7)
-    layer = GatedLinearAttention(width=12, state_width=5).eval()
+    layer = ch04.GatedLinearAttention(width=12, state_width=5).eval()
     tokens = torch.randn(2, 9, 12)
     full, full_state = layer(tokens)
-    recurrent = None
-    pieces = []
-    for index in range(tokens.size(1)):
-        output, recurrent = layer(tokens[:, index : index + 1], recurrent)
-        pieces.append(output)
+    recurrent, pieces = None, []
+    for i in range(tokens.size(1)):
+        out, recurrent = layer(tokens[:, i : i + 1], recurrent)
+        pieces.append(out)
     torch.testing.assert_close(torch.cat(pieces, dim=1), full, rtol=1e-5, atol=1e-6)
     assert recurrent is not None
-    assert sum(tensor.numel() for tensor in recurrent) == 2 * (5 * 12 + 5)
-    assert [tensor.shape for tensor in recurrent] == [tensor.shape for tensor in full_state]
+    assert sum(t.numel() for t in recurrent) == 2 * (5 * 12 + 5)  # fixed in context length
+    assert [t.shape for t in recurrent] == [t.shape for t in full_state]
 
 
-def test_bounded_state_mqar_exposes_capacity_tradeoff() -> None:
-    rows = mqar_capacity_curve()
-    lookup = {(row["memory"], row["pairs"]): row["accuracy"] for row in rows}
-    assert all(lookup[("full attention", pairs)] == 1 for pairs in (2, 8, 32, 128))
-    assert lookup[("fixed state (8 slots)", 128)] < lookup[("fixed state (8 slots)", 8)]
-    assert lookup[("fixed state (32 slots)", 64)] > lookup[("fixed state (8 slots)", 64)]
-    assert lookup[("fixed state (32 slots)", 128)] < 0.5
+def test_fixed_state_recall_falls_and_wider_state_helps() -> None:
+    counts = [2, 8, 16, 64, 128]
+    narrow = {r["pairs"]: r["accuracy"] for r in ch04.associative_recall_curve(counts, feature_dim=16)}
+    wide = {r["pairs"]: r["accuracy"] for r in ch04.associative_recall_curve(counts, feature_dim=64)}
+    assert narrow[2] > 0.95                         # near-perfect when far below capacity
+    assert narrow[128] < narrow[8]                  # degrades as pairs pile up
+    assert wide[64] > narrow[64]                    # wider state recalls more at the same load
+    assert wide[128] < 0.5                          # but the limit is not repealed
 
 
-def test_config_parser_reconstructs_total_counts_and_context_state() -> None:
-    paths = sorted((ROOT / "code" / "ch04" / "fixtures").glob("*/config.json"))
-    estimates = {estimate.name: estimate for estimate in map(estimate_config, paths)}
-    assert set(estimates) == {"DeepSeek-V3", "Llama 3.1 8B", "Qwen3-Next 80B-A3B"}
-    assert all(abs(estimate.total_error_percent) < 2 for estimate in estimates.values())
-    assert estimates["Llama 3.1 8B"].kv_bytes_per_token == 131_072
-    assert estimates["Llama 3.1 8B"].context_state_gib_32k == 4.0
-    assert estimates["DeepSeek-V3"].kv_bytes_per_token == 61 * 576 * 2
-    assert estimates["Qwen3-Next 80B-A3B"].kv_bytes_per_token == 12 * 2 * 2 * 256 * 2
-    assert estimates["Qwen3-Next 80B-A3B"].fixed_state_bytes > 0
-    assert estimates["Qwen3-Next 80B-A3B"].active_params < estimates["Qwen3-Next 80B-A3B"].total_params
+def test_config_parser_reconstructs_totals_and_known_kv_cases() -> None:
+    estimates = {name: ch04.estimate_config(name, cfg) for name, cfg in ch04.REAL_CONFIGS.items()}
+    assert set(estimates) == {"Llama 3.1 8B", "DeepSeek-V3", "Qwen3-Next 80B-A3B"}
+    assert all(abs(e.total_error_percent) < 2 for e in estimates.values())
+    llama, deepseek, qwen = estimates["Llama 3.1 8B"], estimates["DeepSeek-V3"], estimates["Qwen3-Next 80B-A3B"]
+    assert llama.active == llama.total                       # dense: one ledger
+    assert llama.kv_bytes_per_token == 131_072
+    assert llama.state_gib_32k == 4.0
+    assert deepseek.kv_bytes_per_token == 61 * 576 * 2       # MLA latent + rope key
+    assert deepseek.active < deepseek.total                  # MoE bends the active curve
+    assert qwen.kv_bytes_per_token == 12 * 2 * 2 * 256 * 2   # 12 full-attention layers only
+    assert qwen.fixed_state_bytes > 0                        # linear layers hold flat state
+    assert qwen.active_fraction < 0.1
 
 
-def test_integrated_build_emits_machine_readable_evidence(tmp_path: Path) -> None:
-    metrics = run_build(tmp_path)
-    assert len(metrics["config_estimates"]) == 3
-    assert len(metrics["landscape_models"]) == 8
-    assert metrics["experiment_contracts"]["mqar"]["claim"].startswith("synthetic")
-    for filename in (
-        "metrics.json",
-        "config-estimates.csv",
-        "router-loads.csv",
-        "mqar-capacity.csv",
-        "landscape-models.csv",
-        "router-load.svg",
-        "fixed-state-mqar.svg",
-        "landscape-total-active.svg",
-    ):
-        assert (tmp_path / filename).exists()
-    saved = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
-    assert saved["experiment_contracts"]["router"]["seed"] == 5
+def test_kv_arithmetic_is_reused_from_chapter_three() -> None:
+    # The parser must not reimplement KV bytes; it re-exports Chapter 3's function.
+    cfg = ch04.KVConfig("probe", layers=2, query_heads=4, kv_heads=2, head_dim=8, bytes_per_scalar=2)
+    assert ch04.kv_bytes(cfg, 10) == 10 * 2 * (2 * 2 * 8) * 2

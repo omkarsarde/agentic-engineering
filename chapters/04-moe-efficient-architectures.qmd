@@ -1,468 +1,910 @@
 ---
-description: "Separate model capacity from active computation, understand bounded-state sequence models, and read architecture economics directly from model configurations."
+description: "Separate stored capacity from per-token computation, build a top-k MoE layer and a fixed-state sequence mixer, and read the economics of any real model straight from its config.json."
 ---
 
-# Mixture-of-Experts, Efficient Architectures, and the 2026 Landscape [F+S] {#sec-ch04}
+# Mixture-of-Experts and Efficient Architectures {#sec-ch04}
 
-## What you need going in {#sec-ch04-prerequisites}
+A frontier agent model is often described with two numbers: "one trillion parameters, 32 billion active." Both are true, and they answer different engineering questions. The trillion parameters set how much learned capacity exists and how much weight storage the serving fleet must hold. The 32 billion active approximate how many weights actually touch a single token on its way through the network. A dense feed-forward network — the token-wise MLP we put in every TinyGPT block back in @sec-ch02-block — applies *all* of its parameters to *every* token, so for it the two numbers are equal. This chapter is about the architectures that pull them apart, and about a second split just like it on the sequence axis, where @sec-ch03-kv-equation showed KV state growing with every token.
 
-> **Assumed:** neural-network fundamentals, matrix multiplication, gradient-based optimization, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter 2, The Residual Stream and a Modern Block](02-transformer-first-principles.qmd#sec-ch02-residual) — including the dense token-wise FFN that MoE replaces; [Chapter 3, The Canonical KV-Cache Equation](03-attention-position-long-context.qmd#sec-ch03-kv-equation) — the single byte equation reused by this chapter; [Chapter 3, Share Keys and Values](03-attention-position-long-context.qmd#sec-ch03-gqa) and [Compress the Cache](03-attention-position-long-context.qmd#sec-ch03-mla) — two attention-state designs that appear in real configurations below.
->
-> **Not required:** distributed-training collectives, custom GPU kernels, state-space scan derivations, or prior experience deploying an MoE model.
+We build the mechanisms in small executed pieces and read their economics off real files: (i) a top-$k$ **router** that turns one dense FFN into conditional compute, run on a batch with its shapes printed; (ii) the two **parameter ledgers** — stored and active — computed for a worked layer; (iii) a **routing-collapse** demo that trains a toy MoE with and without a load-balancing term and watches expert utilization live; (iv) a **gated linear-attention** block whose recurrent state stays fixed no matter how long the sequence, plus the S4-to-Mamba lineage it belongs to; (v) a **recall probe** that measures exactly what that fixed state costs; and (vi) a **config parser** that reconstructs total and active parameters, and 32K-token state, for three published models — a dense one, an MoE, and a linear/full hybrid. Two questions organize the work: *which parameters process a token*, and *how sequence history is stored*.
 
-## Contents {#sec-ch04-contents}
+## Routing turns a dense FFN into conditional compute {#sec-ch04-routing}
 
-- [Two curves, one config](#sec-ch04-two-curves)
-- [What you will build](#sec-ch04-will-build)
-- [Routing turns a dense FFN into conditional compute](#sec-ch04-routing)
-- [Balance is the optimization problem](#sec-ch04-balance)
-- [The MoE design space and its systems tax](#sec-ch04-design-space)
-- [Linear attention and state-space models change memory](#sec-ch04-linear-state)
-- [Fixed state forces a recall tradeoff](#sec-ch04-fixed-state)
-- [Hybrids and learned sparsity restore selective recall](#sec-ch04-hybrids)
-- [Diffusion LMs and multi-token prediction change decoding](#sec-ch04-decoding)
-- [Read the economics from `config.json`](#sec-ch04-config)
-- [Landscape 2026: the moving edge](#sec-ch04-landscape)
-- [Build](#sec-ch04-build)
-- [What endures, what changes](#sec-ch04-endures)
-- [Exercises](#sec-ch04-exercises)
-- [Notes and sources](#sec-ch04-notes)
+A dense FFN sends every token through the same large matrices. A **mixture-of-experts** (MoE) layer instead stores many FFNs — the *experts* — and sends each token to only a few of them. The idea predates Transformers, but the sparsely-gated MoE layer made it practical at language scale [@shazeer2017moe], and GShard and Switch Transformers carried it to production models [@lepikhin2020gshard; @fedus2022switch]. Adding experts grows total capacity while the number each token uses stays fixed. The price is a new learned component — the **router** — that must decide, per token, which experts to consult.
 
-## Two Curves, One Config {#sec-ch04-two-curves}
-
-Suppose an agent model is described as “one trillion parameters, 32 billion active.” Both numbers are true, but they answer different engineering questions. The trillion parameters determine how much learned capacity exists, how much weight storage must be downloaded and retained, and how much traffic model loading or expert movement can create. The 32 billion active parameters approximate how many weights participate for one token, which influences arithmetic and weight reads during that token's forward pass. An accelerator does not gain a trillion-parameter model merely by provisioning memory for 32 billion parameters.
-
-This separation is the first economic story in the chapter:
+Let $x\in\mathbb{R}^d$ be one token's representation and $E_i(x)$ expert $i$'s FFN. The router is a single linear map producing one logit per expert, $r=W_r x$. We turn logits into scores $p$ (softmax, so experts compete; or independent sigmoids), keep the indices $I(x)$ of the $k$ largest, and mix only those experts, reweighted by their gates:
 
 $$
-\text{stored capacity} \ne \text{per-token active computation}.
-$$
-
-A dense feed-forward network applies the same large parameter matrices to every token. A mixture-of-experts (MoE) layer stores many feed-forward networks and routes each token to a small subset. Adding experts can grow total capacity while leaving the selected count fixed. The idea predates Transformers, but the sparsely gated MoE, GShard, and Switch Transformer made conditional computation practical at language-model scale. The price is a new learned subsystem—the router—and a new systems constraint: tokens selected for an expert must reach the device that owns it.
-
-Now consider an agent reading a million-token trace. Dense attention preserves token-addressable keys and values, so persistent state grows with retained context. Linear attention and state-space models instead update a fixed-size recurrent state. Their second economic story is different:
-
-$$
-\text{persistent sequence state} \not\propto T,
-$$
-
-for a fixed architecture, even as sequence length $T$ grows. Constant state can make streaming and long decoding attractive, but it cannot preserve an unbounded number of independent facts with perfect fidelity. The model must compress, forget, overwrite, or periodically consult token-addressable memory.
-
-These two stories are orthogonal. MoE sparsifies **which parameters** process a token. Linear or recurrent mixers change **how sequence history** is represented. A model may be dense with full attention, MoE with full attention, dense with recurrent mixers, or a hybrid MoE containing both recurrent and full-attention layers. “Efficient architecture” is therefore not one axis and not one benchmark score. It is a vector of weight capacity, active computation, persistent state, communication, kernel fit, and recall behavior.
-
-The durable skill is to reconstruct that vector rather than memorize model names. The fastest first source is often a public `config.json`: hidden width, layer count, expert count, selected experts, shared-expert width, attention cadence, KV heads, latent ranks, and recurrent-state dimensions. The rest of this chapter develops enough mechanism to read those fields without treating marketing parameter counts as a complete deployment plan.
-
-## What you will build {#sec-ch04-will-build}
-
-::: {.callout-tip}
-**The chapter artifact.** [`moe_min.py`](../code/ch04/moe_min.py) implements a top-$k$ router, a local toy MoE, an auxiliary-loss-free balancing update, a small gated linear-attention recurrence, and a synthetic associative-recall capacity probe. [`config_reader.py`](../code/ch04/config_reader.py) parses dense, MoE-plus-MLA, and hybrid-MoE configuration excerpts. It imports Chapter 3's canonical `kv_bytes()` rather than redefining cache arithmetic. [`run_build.py`](../code/ch04/run_build.py) performs one deterministic build: it trains collapsed and balanced routers, reconstructs parameter counts, computes state at 32,768 tokens, runs the bounded-state probe, and writes every plotted point to CSV and JSON.
-
-Success means that all three total-parameter estimates are within two percent of their published counts; the intentionally biased router visibly collapses without a balancing term and distributes load with one; recurrent chunking matches full-sequence execution; and a fixed-state lookup loses exact recall as independent associations exceed its capacity. This is an architecture laboratory, not a throughput benchmark or distributed MoE runtime.
-:::
-
-## Routing Turns a Dense FFN into Conditional Compute {#sec-ch04-routing}
-
-Let $x\in\mathbb{R}^d$ be one token representation and let $E_i(x)$ be expert $i$'s feed-forward transformation. A router produces logits
-
-$$
-r=W_rx,
-$$
-
-converts them to scores $p$, and selects a set $I(x)$ of the $k$ largest scores. With softmax routing, $p_i=\exp(r_i)/\sum_j\exp(r_j)$. Some architectures use independent sigmoid scores before selection. A typical output is
-
-$$
-y=\sum_{i\in I(x)} g_i E_i(x),
+y=\sum_{i\in I(x)} g_i\,E_i(x),
 \qquad
 g_i=\frac{p_i}{\sum_{j\in I(x)}p_j}.
-$$
+$$ {#eq-ch04-route}
 
-The normalization is over selected experts. Top-1 routing can use its single gate directly or set it to one, depending on the implementation. Top-2 or larger $k$ lets multiple experts contribute but raises active computation and dispatch volume. Selection is discrete; gradients flow through selected gate values and through any differentiable balancing objective, not through an ordinary derivative of the top-$k$ index operation.
+The normalization runs over the *selected* experts, so the gates of the winners sum to one. Selection is discrete: gradients reach $W_r$ through the kept gate values and through the balancing terms we add next, never through the top-$k$ index operation itself. We write the router as a module that also exposes the diagnostics we will need to debug it.
 
-The reference router keeps the observables needed to debug it:
+```{python}
+# @save
+from dataclasses import dataclass
 
-```python
-logits = self.projection(tokens)
-probabilities = logits.softmax(-1)
-indices = (probabilities + self.selection_bias).topk(self.top_k, dim=-1).indices
-weights = probabilities.gather(-1, indices)
-load = one_hot(indices, self.experts).float().sum(1).mean(0) / self.top_k
+import torch
+from torch import Tensor, nn
+from torch.nn import functional as F
+
+
+@dataclass
+class RoutingState:
+    """Everything a caller needs to mix experts and to diagnose balance.
+
+    A single forward pass returns the full score distribution, the selected
+    experts with their normalized gates, the measured per-expert load, and the
+    two balancing losses, so nothing about a routing decision is hidden.
+
+    Args:
+        probabilities: Scores over all experts, shape ``(..., E)``.
+        weights: Normalized gates for the selected experts, ``(..., k)``.
+        indices: Selected expert ids, ``(..., k)``.
+        load: Fraction of routed slots each expert received, ``(E,)``.
+        balance_loss: Switch-style auxiliary load-balance loss (scalar).
+        z_loss: Router z-loss penalizing oversized logits (scalar).
+    """
+
+    probabilities: Tensor
+    weights: Tensor
+    indices: Tensor
+    load: Tensor
+    balance_loss: Tensor
+    z_loss: Tensor
 ```
 
-The `selection_bias` supports a balancing controller discussed next. It changes which experts win but does not change their output gates. Keeping those roles separate prevents a balancing correction from silently rescaling expert contributions.
+The forward pass is @eq-ch04-route plus the observables. `load` is the fraction of routed slots each expert won (it sums to one); `balance_loss` and `z_loss` are defined in the next section — we compute them here so every routing decision carries its own diagnostics.
 
-### The two parameter ledgers
+```{python}
+# @save
+class TopKRouter(nn.Module):
+    """Score each token over ``experts`` experts and keep the top ``top_k``.
 
-For a SwiGLU-like expert with model width $d$ and intermediate width $h_e$, the three dominant matrices contain approximately
+    The router is one linear map from width ``d`` to ``E`` logits. A separate
+    ``selection_bias`` buffer steers *which* experts win (the aux-loss-free
+    controller writes it) without touching the output gates, keeping the "who
+    computes" and "how much they count" decisions cleanly apart.
 
-$$
-P_e \approx 3dh_e
-$$
+    Args:
+        width: Token width ``d``.
+        experts: Number of experts ``E``.
+        top_k: Experts selected per token ``k``.
+        scoring: ``"softmax"`` for competing scores, ``"sigmoid"`` for
+            independent ones.
+    """
 
-parameters: gate and value projections up, then a projection down. If a layer stores $E$ routed experts, selects $k$, and always applies $S$ shared-expert equivalents, its expert ledgers are approximately
+    def __init__(self, width: int, experts: int, top_k: int, scoring: str = "softmax") -> None:
+        super().__init__()
+        if not 1 <= top_k <= experts or scoring not in {"softmax", "sigmoid"}:
+            raise ValueError("invalid top_k or scoring function")
+        self.experts, self.top_k, self.scoring = experts, top_k, scoring
+        self.projection = nn.Linear(width, experts)
+        self.register_buffer("selection_bias", torch.zeros(experts))
 
-$$
-P_{\mathrm{expert,total}}=(E+S)P_e,
-\qquad
-P_{\mathrm{expert,active}}=(k+S)P_e.
-$$
+    def forward(self, tokens: Tensor) -> RoutingState:
+        logits = self.projection(tokens)
+        probabilities = logits.softmax(-1) if self.scoring == "softmax" else logits.sigmoid()
+        indices = (probabilities + self.selection_bias).topk(self.top_k, dim=-1).indices
+        weights = probabilities.gather(-1, indices)
+        if self.top_k > 1:
+            weights = weights / weights.sum(-1, keepdim=True).clamp_min(1e-9)
+        flat = indices.reshape(-1, self.top_k)
+        load = F.one_hot(flat, self.experts).float().sum(1).mean(0) / self.top_k
+        mean_probability = probabilities.reshape(-1, self.experts).mean(0)
+        balance_loss = self.experts * (load.detach() * mean_probability).sum()
+        z_loss = logits.logsumexp(-1).square().mean()
+        return RoutingState(probabilities, weights, indices, load, balance_loss, z_loss)
 
-Router, attention, norms, embeddings, and output-head parameters are common to both ledgers. Dense layers before the first MoE layer are also always active. This is why “active parameters” is not just total parameters multiplied by $k/E$. The common trunk can be a large fraction in a fine-grained MoE.
+    @torch.no_grad()
+    def update_selection_bias(self, load: Tensor, rate: float = 1e-2) -> None:
+        """Nudge each expert's bias toward uniform load (aux-loss-free control).
 
-Parameter count is also not FLOPs. Activations, attention, normalization, routing, and communication remain. Nor is active count resident memory. If every expert is available at low latency, the weights must exist somewhere in the serving topology. Quantization can reduce their bytes; expert offloading can trade memory for transfers; neither changes the logical total count.
+        Overloaded experts get their bias lowered and underloaded ones raised by
+        a fixed step; subtracting the mean keeps the biases from drifting as a
+        group, since only their differences change the selection.
 
-Routing is token-level, not sequence-level. Two adjacent tokens may choose different experts, and the same expert may process tokens from unrelated languages or domains. Visualizations sometimes reveal statistical specialization, but expert IDs are not guaranteed to be human-readable job titles. The useful contract is behavioral: the router chooses parameter subsets that jointly reduce the training objective while satisfying whatever balance pressure the system applies.
-
-## Balance Is the Optimization Problem {#sec-ch04-balance}
-
-A router initialized with a slight preference can create a positive feedback loop. The favored expert receives more tokens, therefore more task gradient, therefore becomes more useful, therefore receives still more tokens. Other experts become undertrained. This **router collapse** wastes stored parameters and creates severe device imbalance even when aggregate accelerator capacity is ample.
-
-Two statistics distinguish probability mass from actual assignments. For expert $i$ in a batch of $N$ tokens, define
-
-$$
-f_i=\frac{1}{Nk}\sum_{n=1}^{N}\mathbf{1}[i\in I(x_n)]
-$$
-
-as its hard routed fraction, and
-
-$$
-P_i=\frac{1}{N}\sum_{n=1}^{N}p_i(x_n)
-$$
-
-as its mean router score. A Switch-style auxiliary loss is
-
-$$
-L_{\mathrm{balance}}=E\sum_{i=1}^{E}f_iP_i.
-$$
-
-Implementations usually stop the gradient through $f_i$ because top-$k$ assignments are discrete; $P_i$ supplies a differentiable pressure. The minimum is near uniform use, but the coefficient matters. Too little pressure permits collapse. Too much asks the router to optimize a uniform histogram instead of the language-model objective, suppressing useful conditional specialization.
-
-Router logits can also grow to unstable magnitudes. ST-MoE introduced the router $z$-loss
-
-$$
-L_z=\frac{1}{N}\sum_{n=1}^{N}
-\left(\log\sum_{i=1}^{E}\exp r_i(x_n)\right)^2,
-$$
-
-which discourages extreme log-partition values. It solves a numerical-stability problem, not load balance itself. Treating the two losses as interchangeable makes diagnosis harder.
-
-An alternative keeps balancing out of the task loss. Maintain a per-expert selection bias $b_i$ and route with $p_i+b_i$. After measuring load, lower the bias of overloaded experts and raise the bias of underloaded experts:
-
-$$
-b_i\leftarrow b_i+\eta\,\operatorname{sign}\left(\frac{1}{E}-f_i\right).
-$$
-
-Subtracting the mean bias removes an irrelevant common offset. DeepSeek-V3 demonstrated this auxiliary-loss-free family at large scale. It is a feedback controller: its update rate, measurement window, and interaction with data parallelism require tuning. A sequence-wise auxiliary term can still be useful to avoid local bursts even when global balancing is bias-controlled.
-
-![A seeded four-expert toy classifier sends every token to expert 0 without balancing. Adding the Switch-style term spreads tokens near the 25 percent target while preserving high task accuracy. The dashed line is uniform load; values come from the saved router CSV.](../code/ch04/generated/router-load.svg){#fig-ch04-router-load fig-alt="Two side-by-side bar charts for four experts. The unbalanced router sends all tokens to expert zero. The balanced router sends roughly one quarter to each expert."}
-
-The build intentionally starts expert 0 with a logit advantage. After 300 seeded steps, the unbalanced run routes 100 percent of held-out tokens to expert 0 and reaches 98.35 percent toy classification accuracy. With balance weight ${0.5}$, the loads are 26.57, 23.05, 24.56, and 25.82 percent, with 97.34 percent accuracy. This does not establish a production coefficient; it isolates the collapse mechanism. The important lesson is that task loss can look healthy while most experts are dead and one device is overloaded.
-
-### Capacity, overflow, and dropless routing
-
-Communication implementations often allocate each expert a token capacity
-
-$$
-C=\left\lceil c\frac{Nk}{E}\right\rceil,
-$$
-
-where $c\ge 1$ is a capacity factor. When more than $C$ assignments reach an expert, a system can drop overflow, route it to a lower-ranked expert, pad larger buffers, or use a dropless variable-size implementation. Dropping keeps static shapes and bounded communication but removes expert computation for some tokens. Rerouting changes the function chosen by the router. Dropless routing preserves assignments but exposes imbalance directly as stragglers and uneven buffers.
-
-Monitor at least per-layer load, probability entropy, overflow or drop rate, tokens per destination rank, and the gap between the busiest and median expert. An average histogram over an entire training run can hide short hot spots that determine step time. Balance is simultaneously an optimization objective and a distributed-systems service-level objective.
-
-## The MoE Design Space and Its Systems Tax {#sec-ch04-design-space}
-
-“An MoE” leaves several independent choices unspecified:
-
-| Choice | Smaller or simpler end | Larger or richer end | Consequence |
-|---|---|---|---|
-| Routed experts $E$ | few, wider experts | many, fine-grained experts | more capacity choices, smaller token groups |
-| Selected experts $k$ | top-1 | top-2 or higher | less compute versus ensemble-like mixing |
-| Shared path | none | one or more shared experts | all-token capacity and extra active cost |
-| Layer placement | periodic MoE | nearly every FFN is MoE | lower versus higher conditional capacity |
-| Early stack | MoE from layer 0 | dense-first | immediate sparsity versus stable shared feature formation |
-| Scoring | softmax | sigmoid plus normalization | coupled versus independent preselection scores |
-| Balance | auxiliary loss | bias controller or hybrid | direct gradient pressure versus external feedback |
-| Overflow | capacity and drops | dropless dispatch | static buffers versus dynamic imbalance |
-
-A coarse MoE stores relatively few large experts. A fine-grained MoE divides the same or greater total capacity among many small experts and selects several. Fine granularity offers more combinations—choosing 8 of 256 is a richer code than choosing 1 of 8—but each expert receives fewer tokens per step, which can make matrix operations smaller and expert training noisier. Shared experts provide a dense path for common transformations, yet they appear in every active-parameter calculation.
-
-Layer placement matters as much as expert count. If only every fourth FFN is sparse, three quarters of FFN layers remain dense. If initial layers are dense, their parameters are always active. A model name such as `A3B` may summarize one publisher's counting convention rather than the exact number obtained by summing every common projection. Always state whether embeddings, output heads, attention, routers, shared experts, norms, and multimodal encoders are included.
-
-The systems tax begins after top-$k$. Under expert parallelism, each rank owns a subset of experts. Tokens start where preceding tensor or data-parallel work produced them; routing creates a permutation by destination expert. A conceptual layer therefore performs:
-
-1. compute router scores and assignments;
-2. pack token states by destination rank and expert;
-3. exchange variable token groups, commonly with an all-to-all collective;
-4. run local expert matrix multiplications;
-5. exchange outputs back and restore token order;
-6. combine selected expert outputs using their gates.
-
-Small experts can turn compute into communication. Skew creates stragglers. Padding wastes bandwidth; variable sizes complicate scheduling. Topology matters because crossing a node boundary is not equivalent to moving within one accelerator fabric. These facts explain why equal active-parameter counts can have different latency, but the engineering of expert placement, overlap, dispatch kernels, and fault handling belongs to Chapters 6 and 10. At this point retain one rule: conditional FLOPs are not free if the chosen weights or token activations are far away.
-
-MoE also changes failure analysis. A corrupt or unavailable expert affects only routed tokens, creating input-dependent degradation. Quantizing experts can have heterogeneous error. Fine-tuning a sparse model may starve rarely selected experts. Capacity planning must cover total resident weights and peak routed traffic, not merely average active parameters.
-
-## Linear Attention and State-Space Models Change Memory {#sec-ch04-linear-state}
-
-Softmax attention retains token-addressable keys and values. Linear attention begins by replacing the softmax similarity with a feature map whose kernel factorizes:
-
-$$
-\operatorname{sim}(q,k)\approx \phi(q)^\top\phi(k).
-$$
-
-For causal attention, associate first and sum second. With key feature width $m$ and value width $d_v$, maintain
-
-$$
-S_t=\lambda_t S_{t-1}+\phi(k_t)v_t^\top,
-\qquad
-z_t=\lambda_t z_{t-1}+\phi(k_t),
-$$
-
-then compute
-
-$$
-y_t=\frac{\phi(q_t)^\top S_t}
-{\phi(q_t)^\top z_t+\epsilon}.
-$$
-
-$S_t$ has shape $m\times d_v$ and $z_t$ has width $m$, independent of $t$. The learned decay $\lambda_t$ can forget old content. More expressive delta-rule variants update memory using the difference between a new value and the value currently retrieved by its key, reducing destructive accumulation. Gates can make writing, retaining, and erasing input-dependent.
-
-The reference block is deliberately small:
-
-```python
-state = decay[:, :, None] * state + einsum("bf,bd->bfd", key, value)
-normalizer = decay * normalizer + key
-numerator = einsum("bf,bfd->bd", query, state)
-output = numerator / (query * normalizer).sum(-1, keepdim=True)
+        Args:
+            load: Measured per-expert routed fraction, ``(E,)``.
+            rate: Step size for the sign update.
+        """
+        target = torch.full_like(load, 1 / self.experts)
+        self.selection_bias.add_(rate * torch.sign(target - load))
+        self.selection_bias.sub_(self.selection_bias.mean())
 ```
 
-The same recurrence processes an entire sequence or accepts the returned state one token at a time; the tests require both paths to match. For batch $B$, feature width $m$, and value width $d_v$, this didactic state contains $B(md_v+m)$ scalars no matter how many tokens have passed. A production gated delta or SSM block has different states and kernels, but the fixed-state contract remains.
+Run it on a tiny batch. With four experts, top-2 routing, and six tokens, the router should return a score per expert, two indices and two gates per token, and a load vector that sums to one.
 
-### From S4 to selective state spaces
-
-A linear state-space model writes
-
-$$
-h_t=A h_{t-1}+B x_t,
-\qquad
-y_t=C h_t+D x_t.
-$$
-
-The challenge is to make the recurrence expressive, stable over long horizons, and efficient during parallel training. S4 structured $A$ so the corresponding long convolution could be computed efficiently. Mamba made state-space parameters input-dependent, letting the model select what to propagate or forget, and supplied a hardware-aware scan. Mamba-2's structured state-space duality showed that useful SSMs and attention-like matrix transformations are closely related rather than opposing species.
-
-That lineage now includes gated delta networks, Kimi Delta Attention, and recurrent families such as RWKV. Names differ in update rule, normalization, gating, convolutional local path, and training algorithm. The engineering questions are more stable:
-
-| Question | Full softmax attention | Fixed-state linear or recurrent mixer |
-|---|---|---|
-| Persistent history | token-addressable KV entries | compressed recurrent matrices or vectors |
-| State growth with $T$ | linear for a fixed architecture | constant for a fixed architecture |
-| Decode history work | reads retained history | recurrent update independent of $T$ |
-| Parallel training | attention matrix with optimized kernels | chunkwise, scan, or dual matrix form |
-| Exact arbitrary lookup | direct content-addressable path | limited by compressed state |
-| Implementation sensitivity | attention kernel and cache layout | update-rule fusion and scan/chunk kernels |
-
-“Linear” can describe asymptotic training work, a kernelized attention identity, or a recurrent decode path. It does not guarantee lower wall-clock latency at every sequence length. Dense attention benefits from exceptionally mature matrix kernels; recurrent operators may need specialized fusion and can be less parallel in naive code. Compare end-to-end throughput, memory, quality, and batch behavior on the target runtime.
-
-## Fixed State Forces a Recall Tradeoff {#sec-ch04-fixed-state}
-
-A fixed-size state is a lossy compression channel. Imagine writing $n$ arbitrary key-value pairs and later querying any key. Full attention can retain one addressable representation per pair. A state with a fixed number of independent slots must eventually map distinct histories to the same or nearby representation. Without assumptions about the data, exact retrieval of unbounded independent associations is impossible at fixed precision.
-
-Multi-query associative recall (MQAR) exposes this pressure. A sequence supplies key-value pairs, then repeats keys whose values must be emitted. It removes much of natural language's redundancy: the model cannot rely on topic or grammar to reconstruct a forgotten random value. State expansion, better update rules, and learned feature maps postpone interference; they do not repeal the information bottleneck.
-
-![Exact token-addressable lookup stays at one in this synthetic probe. A bounded last-write-wins feature state degrades as independent pairs exceed 8 or 32 hashed slots; increasing state moves the curve but does not remove the capacity limit. Each point contains 4,096 seeded trials.](../code/ch04/generated/fixed-state-mqar.svg){#fig-ch04-fixed-state-mqar fig-alt="Recall accuracy versus number of key-value pairs. Full attention remains perfect. Fixed states with eight and thirty-two slots decline as pair count increases, with thirty-two slots consistently better."}
-
-The probe behind @fig-ch04-fixed-state-mqar is intentionally not a trained language model. It hashes each key to a bounded slot and stores the most recent value in that slot. At 128 pairs, the 8-slot state recalls 6.18 percent exactly and the 32-slot state recalls 24.32 percent, while the token-addressable reference remains at 100 percent. This makes one collision mechanism visible without attributing a benchmark score to an architecture family.
-
-Real recurrent models distribute information across continuous dimensions rather than literal hash buckets. They can exploit structure, compress correlated facts, learn selective forgetting, and answer many tasks without exact token recall. The plot therefore supports a bounded claim: fixed state creates a capacity tradeoff, and increasing state improves the tradeoff. It does not say that a 32-dimensional SSM attains the plotted rate or that full attention is universally better.
-
-For agents, the distinction matters. Summarizing a conversation's intent is compression-friendly. Reproducing an exact identifier, line of code, or tool result from an arbitrary earlier position is associative recall. A workload with long streams and modest exact lookup may favor recurrence. A repository agent that must retrieve any of thousands of unique symbols benefits from periodic token-addressable attention, external retrieval, or both. Architecture evaluation should include the memory behavior of the intended task, not perplexity alone.
-
-## Hybrids and Learned Sparsity Restore Selective Recall {#sec-ch04-hybrids}
-
-Hybrids combine cheap streaming layers with occasional token-addressable layers. If $L_f$ layers use full attention and $L_r$ use fixed-state mixers, persistent sequence state is approximately
-
-$$
-\operatorname{StateBytes}(T)
-=\operatorname{KVBytes}(L_f,T)+L_rP_{\mathrm{state}}s,
-$$
-
-where the first term uses the canonical equation from [Chapter 3](03-attention-position-long-context.qmd#sec-ch03-kv-equation), $P_{\mathrm{state}}$ is recurrent scalars per layer, and $s$ is bytes per scalar. Only the full-attention layers contribute a context-proportional KV term. A cadence with three recurrent layers followed by one full-attention layer preserves a periodic exact-retrieval path while cutting the KV slope to roughly one quarter of an otherwise comparable all-attention stack.
-
-Cadence is not enough to predict quality. Layer order, state width, local convolutions, attention head design, training length distribution, and residual pathways all matter. The useful systems observation is additive: sum state by layer type. Do not apply an all-attention cache formula to every layer in a hybrid, and do not call the whole stack constant-memory merely because most layers recur.
-
-Sparse attention takes a different route: retain a token-addressable history but compute only selected interactions. Fixed windows and block patterns are easy to express but encode a predetermined visibility bias. Learned selectors can adapt retrieval to the query:
-
-- **Native Sparse Attention (NSA)** trains compression, fine-grained selection, and local sliding branches end to end, while co-designing block structure for hardware efficiency.
-- **Mixture of Block Attention (MoBA)** routes a query to selected key-value blocks, applying the MoE idea to attention regions and allowing a path between sparse and full modes.
-- **DeepSeek Sparse Attention (DSA)** uses a lightweight learned indexer to score historical tokens and selects a fine-grained top-$k$ set for the main attention computation.
-
-Learned sparsity must be trained or adapted with the backbone. Taking a dense-attention checkpoint and applying a post hoc mask changes the function under a distribution the model did not learn, and the selector itself can miss evidence. Selection cost also matters: an indexer that scores every past token may reduce expensive value mixing while retaining a linear search term. Block granularity, index caches, selector precision, and sparse kernels determine whether asymptotic savings become wall-clock savings.
-
-The design triangle is now visible. Full attention preserves direct access but grows state and work. Fixed-state recurrence bounds state but compresses history. Learned sparse attention keeps addressable history and chooses a subset, paying index and miss-risk costs. Hybrids place these mechanisms where each is useful. There is no architecture label that removes the need to measure recall, state, and runtime together.
-
-## Diffusion LMs and Multi-Token Prediction Change Decoding {#sec-ch04-decoding}
-
-Autoregressive language models factor a sequence left to right:
-
-$$
-p(x_{1:T})=\prod_{t=1}^{T}p(x_t\mid x_{<t}).
-$$
-
-This supplies a simple cacheable interface but imposes a sequential dependency between committed output tokens. Two research lines relax different parts of that contract.
-
-A diffusion language model corrupts tokens or representations and learns to reverse the corruption over a sequence or block. At inference it initializes masked or noisy positions and refines many positions over several denoising steps. Because positions can change before commitment, the model can revise a block and perform infilling naturally. Latency depends on block size, number and schedule of denoising steps, confidence-based remasking, kernel efficiency, and how much prefix state can be reused. “Multiple tokens in parallel” is not itself a speed guarantee: one refinement step may process the whole block, and several steps may be required.
-
-Multi-token prediction (MTP) usually preserves an autoregressive trunk. At each training position, several heads predict successive future tokens:
-
-$$
-L_{\mathrm{MTP}}=\sum_{j=1}^{n}\lambda_j
-\operatorname{CE}\!\left(p_j(x_{t+j}\mid h_t),x_{t+j}\right).
-$$
-
-This gives the shared representation denser future supervision. After training, auxiliary heads may be discarded, or they can propose multiple future tokens for speculative verification. Verification against the target model preserves its exact distribution when implemented correctly; accepting unverified drafts does not. MTP therefore spans a training objective and a serving opportunity, while diffusion changes the generative factorization itself.
-
-::: {.callout-note .landscape-2026}
-### Landscape 2026 — Parallel text generation is now a product question
-
-Diffusion text models have moved beyond small research demonstrations, but reported speed numbers remain workload- and hardware-specific. Google DeepMind's experimental Gemini Diffusion page reports an average sampling speed of 1,479 tokens per second excluding 0.84 seconds of overhead. Inception's Mercury technical report reports 1,109 tokens per second for Mercury Coder Mini and 737 for Small on NVIDIA H100 GPUs, based on independent evaluations cited by the report. Inception announced Mercury 2 in July 2026 with a reported 1,009 tokens per second on NVIDIA Blackwell GPUs. These figures use different models, hardware, quality points, and accounting conventions; they are evidence of a viable design space, not a universal comparison against autoregressive serving.
-
-Current autoregressive releases also expose MTP-derived draft models or multi-step training. The operational question is no longer “does the paper predict several tokens?” but “does the deployed engine exploit the extra heads, what acceptance rate does it obtain, and what latency metric includes verification and overhead?” Chapter 10 owns those serving measurements.
-
-**Verify live:** check the current [Gemini Diffusion model page](https://deepmind.google/models/gemini-diffusion/), [Mercury technical report](https://arxiv.org/abs/2506.17298), [Mercury 2 announcement](https://www.inceptionlabs.ai/blog/introducing-mercury-2), and the target engine's documentation before using any throughput claim in a design review. **Verified:** 2026-07-19.
-:::
-
-The durable comparison is dependency structure. Autoregression commits one next token. Speculative MTP proposes several but verifies them. Diffusion refines a block through repeated passes. Their output-token counters are not automatically comparable, and agent latency includes time to first useful action, tool waits, and repeated model calls—not just steady-state generated tokens per second.
-
-## Read the Economics from `config.json` {#sec-ch04-config}
-
-A configuration is not a complete implementation specification, but it is often enough to reject a bad capacity assumption. Read it in four passes.
-
-**Pass 1: the common trunk.** Record `hidden_size`, `num_hidden_layers`, `vocab_size`, embedding tying, normalization style, and dense `intermediate_size`. Embedding and output matrices can materially affect smaller active counts. Count them once if tied and twice otherwise.
-
-**Pass 2: attention state.** Record query heads, KV heads, head dimension, latent rank, decoupled rotary-key width, and which layers actually use full attention. Standard GQA caches keys and values; MLA-style configurations cache a latent plus a rotary component; hybrid configurations cache KV only in their attention layers. Feed those fields into the Chapter 3 equation rather than inventing a model-specific shortcut.
-
-**Pass 3: experts.** Look for routed-expert count, selected experts per token, per-expert intermediate width, shared-expert width or count, dense-first layers, and MoE frequency. Field names vary: `n_routed_experts` and `num_experts` may mean the same thing; `num_experts_per_tok` usually means selected routed experts and may exclude a shared expert. Inspect model code or report when the semantics are ambiguous.
-
-**Pass 4: non-attention state.** A linear mixer may expose key/value head counts, state dimensions, convolution width, and a full-attention interval. Recurrent state can include matrix memories and short convolution buffers. It is fixed with respect to context length but scales with batch, layers, heads, precision, and any tensor-parallel replication.
-
-The parser uses leading-order matrix counts. For a dense layer it adds GQA projections, approximately ${3}dh$ for SwiGLU, and two norm vectors. For MoE layers it counts every stored expert in `total_params` and selected plus shared experts in `active_params`. For hybrid layers it separately counts full-attention and linear mixers. Biases and some specialized parameters are included where the public structure makes them material; exact framework totals may include or omit buffers and modality components.
-
-::: {.callout-note .landscape-2026}
-### Landscape 2026 — Three configuration reconstructions
-
-The integrated build parses dated excerpts from three public configurations:
-
-| Configuration | Architecture signal | Estimated total | Published total | Estimated active | State at 32,768 tokens, batch 1, BF16 |
-|---|---|---:|---:|---:|---:|
-| Llama 3.1 8B | dense, 32 layers, 8 KV heads | 8.030B | 8B | 8.030B | 4.000 GiB KV |
-| DeepSeek-V3 | 256 routed, top-8 plus shared, MLA | 671.026B | 671B | 37.552B | 2.145 GiB KV |
-| Qwen3-Next 80B-A3B | 512 routed, top-10 plus shared, 3:1 linear/full | 79.574B | 80B | 3.774B | 0.750 GiB KV + 0.0368 GiB fixed state |
-
-Total-count errors are 0.38, 0.004, and -0.53 percent, respectively. The Qwen active reconstruction exceeds the marketed 3B label because this parser includes embeddings, output head, token mixers, routers, norms, and the shared expert; the label uses its publisher's convention. That disagreement is useful: “active parameters” needs a written counting boundary.
-
-The rows are architectural accounting, not quality or speed comparisons. Their widths, layers, precision assumptions, and attention mechanisms differ. Real serving memory adds model weights, allocator effects, temporary workspaces, parallel duplication, and batch-specific state.
-
-**Verify live:** compare the local excerpts with the official [Llama 3.1 8B config](https://huggingface.co/meta-llama/Llama-3.1-8B/blob/main/config.json), [DeepSeek-V3 Base config](https://huggingface.co/deepseek-ai/DeepSeek-V3-Base/blob/main/config.json), and [Qwen3-Next 80B-A3B config](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/main/config.json), then rerun the parser before making a deployment decision. **Verified:** 2026-07-19.
-:::
-
-The contrasting rows expose both economic stories. The MoE-plus-MLA example bends the active-weight curve. The recurrent/full-attention MoE bends the context-state curve, but its periodic attention layers still contribute context-proportional KV state. Neither ledger alone says whether a model fits or runs efficiently on a specific topology.
-
-## Landscape 2026: The Moving Edge {#sec-ch04-landscape}
-
-::: {.callout-note .landscape-2026}
-This section is intentionally removable. The equations, mechanisms, build, and config-reading method above do not depend on these model snapshots.
-
-![Eight published MoE configurations occupy a narrow band in which roughly three to five percent of total parameters are active for each token. Both axes are logarithmic; labels and values are generated from dated official model cards.](../code/ch04/generated/landscape-total-active.svg){#fig-ch04-landscape-scatter fig-alt="Log-log scatter plot of total versus active parameters for eight mixture-of-experts models. Dashed guide lines show three and five percent active fractions, and most points fall near that band."}
-
-As of the verification date, a visible open-weight trend is very large stored capacity with a low single-digit active fraction. The generated fixture records DeepSeek-V4-Pro at 1.6T total and 49B active, DeepSeek-V4-Flash at 284B and 13B, Kimi K2.5 at 1T and 32B, Qwen3.5 397B-A17B, GLM-5 at 744B and 40B, MiniMax-M2 at 230B and 10B, gpt-oss-120b at 117B and 5.1B, and Llama 4 Maverick at 400B and 17B. @fig-ch04-landscape-scatter shows published counting conventions, not parser-normalized counts.
-
-Architecture combinations are diversifying at the same time:
-
-- DeepSeek-V4's model card describes MoE with a hybrid of compressed sparse and heavily compressed attention; Pro and Flash trade total and active scale.
-- Kimi K2.5 reports 384 routed experts, top-8 selection plus one shared expert, and MLA.
-- Qwen3.5 397B-A17B reports 60 layers organized as repeated groups of three Gated DeltaNet layers followed by one gated full-attention layer, with 512 experts, top-10 routing, and a shared expert.
-- GLM-5 reports 744B total, 40B active, and DeepSeek Sparse Attention. MiniMax-M2 retained the small active fraction, while later [deployment guidance for the M2 family](https://platform.minimax.io/docs/guides/text-m2-full-attention) documents full-attention variants—evidence that sparse attention is not a one-way migration.
-- Llama 4 introduced MoE to that family; Maverick reports 128 experts and 17B active. OpenAI's gpt-oss-120b reports 117B total and 5.1B active.
-- Google's Gemma 4 family spans edge, dense, unified, and a 26B A4B MoE design; its model card describes hybrid local/global attention and MTP draft models. This is a reminder that the frontier includes deployment-targeted families, not only trillion-parameter checkpoints.
-
-Several choices now look established enough to design around: conditional FFN computation is a mainstream capacity lever; shared-KV or compressed-KV attention is common in long-context systems; and hybrid layer stacks are credible production architectures. Still contested are the best expert granularity, shared-expert design, auxiliary loss versus bias control, the ratio and placement of full attention, token- versus block-level learned sparsity, whether fixed-state mixers should dominate the stack, and whether diffusion decoding becomes a default rather than a specialized serving point.
-
-**Verify live:** recheck every record in [`landscape_models.json`](../code/ch04/fixtures/landscape_models.json) against its linked official model card; then review the current official cards for [Qwen3.5 397B-A17B](https://huggingface.co/Qwen/Qwen3.5-397B-A17B), [Kimi K2.5](https://huggingface.co/moonshotai/Kimi-K2.5), [GLM-5](https://huggingface.co/zai-org/GLM-5), [Gemma 4](https://ai.google.dev/gemma/docs/core), and any successor models. Update the dated fixture rather than rewriting the durable sections. **Verified:** 2026-07-19.
-:::
-
-## Build {#sec-ch04-build}
-
-Run the entire offline artifact from the book root (`newbook/` in this workspace):
-
-```bash
-python code/ch04/run_build.py
-pytest -q tests/test_ch04_efficient_architectures.py
+```{python}
+torch.manual_seed(0)
+router = TopKRouter(width=8, experts=4, top_k=2)
+tokens = torch.randn(2, 3, 8)  # batch 2, length 3, width 8
+state = router(tokens)
+print("probabilities:", tuple(state.probabilities.shape))
+print("indices:      ", tuple(state.indices.shape), "  weights:", tuple(state.weights.shape))
+print("token[0,0] -> experts", state.indices[0, 0].tolist(),
+      "gates", [round(w, 3) for w in state.weights[0, 0].tolist()],
+      "(sum", round(state.weights[0, 0].sum().item(), 3), ")")
+print("per-expert load:", [round(x, 3) for x in state.load.tolist()],
+      "sum", round(state.load.sum().item(), 3))
 ```
 
-The build has no network dependency. Its public configuration excerpts and landscape records carry source URLs and a verification date. It writes:
+The shapes confirm the contract: a `(2, 3, 4)` score tensor, `(2, 3, 2)` indices and gates, the two gates summing to one, and a four-element load that sums to one. @fig-ch04-dispatch traces that path for a single token — the mechanism at the heart of every MoE layer.
 
-| Output | What it makes auditable |
-|---|---|
-| `config-estimates.csv` | every parameter, active-fraction, and 32K state estimate |
-| `router-loads.csv` | per-expert held-out load and task metrics for both router conditions |
-| `mqar-capacity.csv` | trials underlying the fixed-state recall curves |
-| `landscape-models.csv` | the dated total-versus-active scatter inputs |
-| `metrics.json` | all rows plus experiment contracts and claim boundaries |
-| three SVG files | figures generated directly from the saved measurements |
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch04-dispatch
+%%| fig-cap: "How does one token become a weighted sum of k experts? The router scores all E experts, top-k keeps the two highest, only those experts run, and their outputs are combined by the normalized gates. The other experts are never evaluated for this token — that is the conditional-compute saving."
+flowchart LR
+    X["token x"] --> R["router W_r x"]
+    R --> S["scores over E=4 experts"]
+    S --> T["top-k select (k=2)"]
+    T --> E1["expert 1"]
+    T --> E3["expert 3"]
+    E1 --> C["combine: g1*E1 + g3*E3"]
+    E3 --> C
+    C --> Y["output y"]
+    S -.->|not selected| E0["experts 0,2 idle"]
+```
 
-The reference parser explicitly imports `KVConfig` and `kv_bytes` from Chapter 3. This dependency is deliberate: one repository should not accumulate slightly different cache formulas. The parser's hybrid estimate constructs a cache configuration with only 12 full-attention layers, then adds fixed recurrent state for the other 36 layers.
+Routing is per token, not per sequence: two adjacent tokens can pick different experts, and one expert may see tokens from unrelated topics. Visualizations sometimes reveal statistical specialization, but expert ids are not guaranteed to be human-readable job titles. The dependable contract is behavioral — the router picks the parameter subset that best reduces the loss under whatever balance pressure we apply.
 
-The tests enforce seven contracts: router tensor shapes and normalized selected gates; balancing-bias direction; collapse prevention; recurrence chunk equivalence and fixed state size; bounded-state recall degradation; total-count reconstruction within two percent and known KV cases; and emission of all evidence files. The seeded router is the slowest part because it performs two short optimization runs. It uses one CPU thread and fixed generators so reruns are stable.
+## The two parameter ledgers {#sec-ch04-ledgers}
 
-To inspect a new architecture, copy only the fields required for accounting into a dated fixture, add a parser branch, and state the counting convention. Do not silently force an unfamiliar config into the nearest known schema. If a field such as `num_experts_per_tok` includes shared experts in one implementation and excludes them in another, resolve it from the model code or report and capture that decision in the fixture.
+Now we can make "total versus active" precise. A SwiGLU-style expert of width $d$ and intermediate width $h_e$ holds three dominant matrices — gate-up, value-up, and down — for roughly
 
-The build excludes distributed all-to-all timing, production kernels, quantized weight packing, and language-model quality. Those require hardware and checkpoints and would turn a deterministic architecture lesson into an environment-specific benchmark. The generated evidence answers narrower questions: what is stored, what is active by a stated convention, how much sequence state grows, and what failure mechanism appears in a controlled toy system.
+$$
+P_e \approx 3\,d\,h_e
+$$ {#eq-ch04-pe}
 
-## What Endures, What Changes {#sec-ch04-endures}
+parameters. A layer that stores $E$ routed experts, selects $k$, and always runs $S$ shared experts has two ledgers: everything stored, and the subset a token touches.
 
-**Endures:**
+$$
+P_{\text{stored}}=(E+S)\,P_e,
+\qquad
+P_{\text{active}}=(k+S)\,P_e.
+$$ {#eq-ch04-ledgers}
 
-- Total parameters, active parameters, FLOPs, resident bytes, communication bytes, and sequence-state bytes are different ledgers.
-- Sparse top-$k$ routing needs a balance mechanism and operational load measurements; a low task loss does not prove healthy expert use.
-- Shared experts and common trunk parameters are active for every token and must be counted explicitly.
-- Expert parallelism turns routing decisions into data movement; topology and skew can dominate nominal compute savings.
-- A fixed-size recurrent state cannot preserve an unbounded number of independent exact associations at fixed precision.
-- Hybrid architectures are sums of layer-specific costs. Cache arithmetic must include only layers that actually maintain KV state.
-- A configuration field is evidence only after its semantics and counting boundary are understood.
+Take a concrete layer — width ${4096}$, ${64}$ experts of intermediate width ${1024}$, top-2, one shared expert — and compute both ledgers instead of trusting a ratio.
 
-**Changes:**
+```{python}
+d, E, k, S, h_e = 4096, 64, 2, 1, 1024  # width, routed experts, selected, shared, expert width
+P_e = 3 * d * h_e
+stored = (E + S) * P_e
+active = (k + S) * P_e
+print(f"per-expert P_e = 3*d*h_e = {P_e:,}")
+print(f"stored  (E+S)*P_e = {stored:,}")
+print(f"active  (k+S)*P_e = {active:,}")
+print(f"active fraction of the expert bank = {active / stored:.2%}")
+print(f"the naive k/E guess would say       = {k / E:.2%}")
+```
 
-- Expert counts, granularity, top-$k$, shared paths, dense-first depth, and balancing controllers.
-- The preferred recurrence—SSM, gated delta, linear attention, or a successor—and the kernels that make it practical.
-- The cadence among recurrent, local, sparse, and full-attention layers.
-- Learned sparse-attention selectors, index granularity, and cache strategy.
-- Whether MTP heads are discarded, used for drafting, or integrated into an engine-specific decoding path.
-- The quality-speed frontier for diffusion language models and the metrics vendors use to report it.
-- Model names and published total/active counts in the dated landscape.
+The active fraction is 4.6%, not the 3.1% that $k/E$ suggests. The shared expert runs for every token, so it is counted in *both* ledgers — it lifts the active fraction above the naive ratio. And this is only the expert bank. Attention, embeddings, the output head, layer norms, the router itself, and any dense-first layers are active for every token too; in a fine-grained MoE that common trunk can be a large slice of the active count. @fig-ch04-ledgers shows the split for this layer.
 
-The senior-engineering habit is stable: translate architecture labels into ledgers and invariants, then measure the target runtime and recall workload. “MoE,” “linear,” “hybrid,” and “diffusion” begin an investigation; none completes one.
+```{python}
+#| label: fig-ch04-ledgers
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Which expert parameters does a token actually use? Of 65 stored experts (64 routed + 1 shared), one token runs only 3 (top-2 routed + the shared one). Height is parameters; the lit slice is active, the rest is stored-but-idle for this token. Total capacity and per-token compute are different columns."
+import matplotlib.pyplot as plt
 
-## Exercises {#sec-ch04-exercises}
+fig, ax = plt.subplots(figsize=(5.6, 3.6))
+ax.bar(["stored\n(E+S)", "active\n(k+S)"], [stored / 1e6, active / 1e6],
+       color=["#c9ced6", "#2a7f9e"])
+ax.set_ylabel("expert parameters (millions)")
+for i, val in enumerate([stored, active]):
+    ax.text(i, val / 1e6, f"{val/1e6:.0f}M", ha="center", va="bottom")
+fig.tight_layout()
+```
 
-1. **Reconstruct an MoE layer.** A model has width $d=4{,}096$, $E=64$ routed SwiGLU experts of width $h_e=1{,}024$, top-$k=2$, and one shared expert of the same width. Ignoring biases and the router, compute total expert parameters, active expert parameters, and the active fraction. Then explain why the model-wide active fraction will differ.
+Two more distinctions keep the ledgers honest. Parameter count is not FLOPs — activations, attention, and normalization all add compute the ledger ignores. And active count is not resident memory: if every expert must be reachable at low latency, its weights exist *somewhere* in the serving topology whether or not a given token uses them. Quantization shrinks their bytes and offloading trades memory for transfers, but neither changes the logical total.
 
-2. **Diagnose a router.** Extend `train_router()` to log load every ten steps. Run balance weights of ${0}$, ${0.01}$, ${0.1}$, ${0.5}$, and ${2}$. Plot maximum load and task accuracy. Identify a range that prevents collapse without making the balance term the apparent task, and state why the result cannot be transferred directly to a large-language-model run.
+## Balance is the optimization problem {#sec-ch04-balance}
 
-3. **Compare overflow policies.** For $N=8{,}192$, $E=32$, top-$k=2$, and capacity factors ${1.0}$, ${1.1}$, and ${1.25}$, compute per-expert capacity. Construct a skewed load vector and quantify assignments dropped under static capacity. Discuss how rerouting and dropless dispatch change correctness and step-time risks.
+A router that starts with a slight preference can dig itself into a hole. The favored expert sees more tokens, so it gets more gradient, so it becomes more useful, so it wins even more tokens. The others starve. This **routing collapse** wastes most of the stored parameters and, on a real cluster, overloads one device while the rest idle. The fix is to add pressure toward uniform use. Two statistics separate *probability mass* from *actual assignments*. For expert $i$ over $N$ tokens,
 
-4. **Break the fixed state.** Modify `mqar_capacity_curve()` to use two independent hash tables and return a value only when they agree. Compare recall and state size with the one-table probe. Explain whether the modification removes the asymptotic bottleneck or only changes its constant.
+$$
+f_i=\frac{1}{Nk}\sum_{n}\mathbf{1}[i\in I(x_n)],
+\qquad
+P_i=\frac{1}{N}\sum_{n}p_i(x_n),
+$$ {#eq-ch04-fp}
 
-5. **Audit a new config.** Choose a public dense, MoE, or hybrid model configuration not present in `fixtures/`. Write a field-semantics table, estimate total and active parameters under an explicit convention, and compute batch-one state at 32,768 tokens using Chapter 3's `kv_bytes()`. Record source URL and verification date. List every omitted parameter family.
+the hard routed fraction and the mean soft score. The Switch-style auxiliary loss multiplies them, $L_{\text{balance}}=E\sum_i f_i P_i$ [@fedus2022switch]; because $f_i$ is discrete it is detached, and the differentiable $P_i$ supplies the gradient that spreads tokens out. To see collapse and its cure, we wrap the router in a small MoE classifier and *deliberately* bias expert 0 at initialization.
 
-6. **Design an agent backbone.** Compare an all-attention MoE, a 3:1 recurrent/full hybrid MoE, and a learned sparse-attention MoE for an agent that reads large repositories and must reproduce exact identifiers. Give a weighted decision matrix for resident weights, per-token computation, persistent state, exact recall, implementation maturity, and distributed communication. Specify the experiments that could reverse your choice.
+```{python}
+# @save
+class ToyMoE(nn.Module):
+    """A local top-1 MoE classifier used to demonstrate routing collapse.
 
-## Notes and Sources {#sec-ch04-notes}
+    Experts are tiny MLPs and dispatch is a plain Python loop over experts —
+    no expert-parallel communication — so the training dynamics of the router,
+    not systems throughput, are what this model exposes.
 
-The conditional-computation lineage starts with Shazeer et al., [*Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*](https://arxiv.org/abs/1701.06538), followed here by [GShard](https://arxiv.org/abs/2006.16668), [Switch Transformers](https://arxiv.org/abs/2101.03961), and [ST-MoE](https://arxiv.org/abs/2202.08906). Switch motivates top-1 routing and its auxiliary balance objective; ST-MoE develops stability guidance including router $z$-loss. The [DeepSeek-V3 technical report](https://arxiv.org/abs/2412.19437) is the primary source for its total/active counts, auxiliary-loss-free balancing, MLA-plus-MoE architecture, and multi-token prediction objective. Exact fixture fields come from the linked official configs.
+    Args:
+        width: Input width.
+        experts: Number of routed experts.
+        hidden: Per-expert hidden width.
+        classes: Output classes.
+    """
 
-For the fixed-state lineage, see [S4](https://arxiv.org/abs/2111.00396), [Mamba](https://arxiv.org/abs/2312.00752), [Mamba-2 and structured state-space duality](https://arxiv.org/abs/2405.21060), [Gated Delta Networks](https://arxiv.org/abs/2412.06464), and [Kimi Linear](https://arxiv.org/abs/2510.26692). The chapter uses their architectural contracts and lineage, not their paper-specific benchmark claims.
+    def __init__(self, width: int = 8, experts: int = 4, hidden: int = 16, classes: int = 4) -> None:
+        super().__init__()
+        self.router = TopKRouter(width, experts, top_k=1)
+        self.classes = classes
+        self.experts = nn.ModuleList(
+            nn.Sequential(nn.Linear(width, hidden), nn.SiLU(), nn.Linear(hidden, classes))
+            for _ in range(experts)
+        )
 
-For learned sparse attention, see [Native Sparse Attention](https://arxiv.org/abs/2502.11089), [Mixture of Block Attention](https://arxiv.org/abs/2502.13189), and the [DeepSeek-V3.2 report](https://arxiv.org/abs/2512.02556) for DSA. These methods differ in granularity and selector design; grouping them does not imply identical complexity or quality.
+    def forward(self, tokens: Tensor) -> tuple[Tensor, RoutingState]:
+        routing = self.router(tokens)
+        flat = tokens.reshape(-1, tokens.size(-1))
+        indices = routing.indices.reshape(-1, 1)
+        weights = routing.weights.reshape(-1, 1)
+        out = flat.new_zeros(flat.size(0), self.classes)
+        for slot in range(routing.indices.size(-1)):
+            for expert_id, expert in enumerate(self.experts):
+                rows = torch.where(indices[:, slot] == expert_id)[0]
+                if rows.numel():
+                    out[rows] += weights[rows, slot, None] * expert(flat[rows])
+        return out.view(*tokens.shape[:-1], self.classes), routing
+```
 
-For alternative decoding and supervision, see Gloeckle et al., [*Better & Faster Large Language Models via Multi-token Prediction*](https://arxiv.org/abs/2404.19737), and the [Mercury technical report](https://arxiv.org/abs/2506.17298). Current product claims are confined to dated Landscape 2026 boxes so the mechanism chapter remains valid when the frontier changes.
+The training loop is ordinary supervised learning with one extra term: `balance_weight * balance_loss`. Setting that weight to zero lets collapse run its course; setting it to `0.5` fights back.
+
+```{python}
+# @save
+def train_router(balance_weight: float, steps: int = 300) -> dict[str, object]:
+    """Train the toy MoE with a chosen load-balance weight and report the result.
+
+    Expert 0 is biased at initialization so that, with no balancing pressure,
+    the router collapses onto it; the balance term is the only thing that can
+    reopen the other experts, which is exactly the effect we want to isolate.
+
+    Args:
+        balance_weight: Coefficient on the auxiliary load-balance loss.
+        steps: Optimizer steps.
+
+    Returns:
+        A dict with the held-out per-expert ``load``, task ``accuracy``, and the
+        two router losses.
+    """
+    torch.manual_seed(5)
+    torch.set_num_threads(1)
+    model = ToyMoE()
+    nn.init.zeros_(model.router.projection.weight)
+    nn.init.constant_(model.router.projection.bias, -1.0)
+    model.router.projection.bias.data[0] = 2.0  # expert 0 starts favored
+    optimizer = torch.optim.Adam(model.parameters(), lr=2e-2)
+    generator = torch.Generator().manual_seed(8)
+    for _ in range(steps):
+        batch = torch.randn(256, 8, generator=generator)
+        labels = batch[:, :4].argmax(-1)
+        logits, routing = model(batch)
+        loss = (F.cross_entropy(logits, labels)
+                + balance_weight * routing.balance_loss
+                + 1e-4 * routing.z_loss)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        batch = torch.randn(8_192, 8, generator=generator)
+        labels = batch[:, :4].argmax(-1)
+        logits, routing = model(batch)
+    return {"balance_weight": balance_weight, "load": routing.load.tolist(),
+            "accuracy": (logits.argmax(-1) == labels).float().mean().item(),
+            "balance_loss": routing.balance_loss.item(), "z_loss": routing.z_loss.item()}
+```
+
+We run both conditions and print the held-out load and accuracy.
+
+```{python}
+unbalanced = train_router(balance_weight=0.0)
+balanced = train_router(balance_weight=0.5)
+print("unbalanced load:", [round(x, 4) for x in unbalanced["load"]],
+      " accuracy", round(unbalanced["accuracy"], 4))
+print("balanced   load:", [round(x, 4) for x in balanced["load"]],
+      " accuracy", round(balanced["accuracy"], 4))
+```
+
+Without the balance term the router sends **100%** of held-out tokens to expert 0 and the other three are dead — yet task accuracy is 98.3%, because a single expert is enough for this easy toy task. That is the trap: the loss looks healthy while most of the model is wasted. With `balance_weight=0.5` the loads land near 26/23/25/26% and accuracy is 97.3% — a hair lower, because balancing pressure competes with the task. @fig-ch04-router-load draws both.
+
+```{python}
+#| label: fig-ch04-router-load
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does routing collapse look like, and does balancing fix it? Left: with no balance term the biased router sends every held-out token to expert 0 while three experts stay dead. Right: a Switch-style term spreads load near the 25% target (dashed) at almost the same task accuracy. Bars are this run's own held-out loads."
+fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.3), sharey=True)
+for ax, run, title in [(axes[0], unbalanced, "no balancing"), (axes[1], balanced, "balance weight 0.5")]:
+    ax.bar(range(4), run["load"], color="#a14f3b" if run is unbalanced else "#2a7f9e")
+    ax.axhline(0.25, color="#555", ls="--", lw=1)
+    ax.set(title=title, xlabel="expert", xticks=range(4), ylim=(0, 1.05))
+axes[0].set_ylabel("fraction of routed tokens")
+fig.tight_layout()
+```
+
+A production run stacks two more controls on top of the auxiliary loss. Router logits can drift to unstable magnitudes, so ST-MoE added a **z-loss**, $L_z=\frac1N\sum_n(\log\sum_i e^{r_i(x_n)})^2$, that keeps the log-partition small; it is a numerical-stability tool, not a balancer [@zoph2022stmoe]. And balancing need not live in the task loss at all. DeepSeek-V3 keeps a per-expert **selection bias** $b_i$, routes on $p_i+b_i$, and after each step lowers the bias of overloaded experts and raises it for underloaded ones — the `update_selection_bias` method above [@deepseekv3]. One control step makes the direction visible.
+
+```{python}
+controller = TopKRouter(4, experts=4, top_k=1)
+controller.update_selection_bias(torch.tensor([0.70, 0.10, 0.10, 0.10]), rate=0.02)
+print("bias after one step:", [round(x, 4) for x in controller.selection_bias.tolist()])
+```
+
+The overloaded expert 0 gets a negative bias and the three starved experts a positive one, with the mean held at zero — pure feedback control, no gradient through the task. Whichever mechanism a model uses, the operational lesson is the same: a low training loss does not prove healthy expert use, so balance must be *measured*, per layer, as load, entropy, and the busiest-versus-median gap.
+
+## The MoE design space and its systems tax {#sec-ch04-design-space}
+
+"An MoE" leaves several knobs unset, and each has a concrete consequence. **Granularity**: a coarse MoE stores a few wide experts; a fine-grained one splits the same capacity into many small experts and selects several — choosing 8 of 256 is a far richer code than 1 of 8, but each expert then sees fewer tokens per step, so its matmuls shrink and its training gets noisier. **Selected count $k$**: top-1 is cheapest; top-2 or more mixes experts like a small ensemble at higher active cost. **Shared path**: a shared expert gives every token a dense route for common transformations, at the cost of appearing in every active-parameter count (@sec-ch04-ledgers). **Placement**: if only every fourth FFN is sparse, three-quarters of the FFN layers are dense; if the first layers are dense-first, their parameters are always active. A model name like `A3B` encodes one publisher's counting convention, not a number you can rederive without knowing which of these are included.
+
+The tax that has no analog in a dense model begins right after top-$k$. Under **expert parallelism** each device owns a subset of experts, but a token's chosen experts may live on other devices. A conceptual MoE layer therefore becomes a communication pipeline, drawn in @fig-ch04-systems-tax: score and assign, permute tokens by destination, exchange them (an all-to-all collective), run the local expert matmuls, exchange the outputs back, and recombine by gate. Small experts turn compute into communication; skew makes some devices stragglers; padding wastes bandwidth while variable sizes complicate scheduling; and crossing a node boundary costs more than moving within one accelerator. This is why two models with equal active-parameter counts can have very different latency. The kernels and placement that tame it belong to Chapters 6 and 10; the durable rule here is that conditional FLOPs are not free when the chosen weights or tokens are far away.
+
+```{dot}
+//| echo: false
+//| label: fig-ch04-systems-tax
+//| fig-cap: "Where does expert parallelism turn compute into communication? After routing, tokens are permuted to the devices that own their experts (all-to-all), the local experts run, and the outputs are sent back and recombined. The two all-to-all steps are the systems tax a dense layer never pays."
+digraph {
+    rankdir=LR; node [shape=box, fontsize=10, style=rounded];
+    route [label="route\n(top-k)"];
+    perm [label="permute by\ndestination"];
+    a2a1 [label="all-to-all", shape=box, style="rounded,filled", fillcolor="#f0d9d3"];
+    exp [label="local expert\nmatmul"];
+    a2a2 [label="all-to-all\n(back)", shape=box, style="rounded,filled", fillcolor="#f0d9d3"];
+    comb [label="combine\nby gate"];
+    route -> perm -> a2a1 -> exp -> a2a2 -> comb;
+}
+```
+
+Capacity planning inherits the same split. Communication kernels often cap each expert at $C=\lceil c\,Nk/E\rceil$ tokens for a capacity factor $c\ge 1$; beyond $C$ the system drops tokens, reroutes them, or uses a dropless variable-size dispatch. A quick calculation shows why skew hurts even with generous capacity.
+
+```{python}
+N, experts, k, c = 8_192, 32, 2, 1.25
+capacity = -(-int(c * N * k) // experts)  # ceil(c * N * k / E)
+hot_share = 0.30  # one expert grabs 30% of assignments
+hot_tokens = int(hot_share * N * k)
+dropped = max(0, hot_tokens - capacity)
+print(f"per-expert capacity C = {capacity}")
+print(f"a hot expert wants {hot_tokens} tokens -> {dropped} dropped under static capacity")
+```
+
+Even at a 1.25 capacity factor, a single expert that attracts 30% of assignments overflows its buffer by thousands of tokens, all of which are dropped — computed for nothing, and worse for quality if they were important. Balance is thus simultaneously an optimization target and a systems constraint.
+
+## Linear attention and state-space models change memory {#sec-ch04-linear-state}
+
+MoE sparsifies *which parameters* touch a token. The second efficiency axis changes *how sequence history is stored*. Recall from @sec-ch03-kv-equation that softmax attention keeps a key and value for every past token, so the KV cache grows linearly with context. **Linear attention** removes the softmax so the sums can be reassociated: replace the similarity $\text{sim}(q,k)$ with a factored feature map $\phi(q)^\top\phi(k)$, and the causal computation collapses into a running state that is *updated*, not appended:
+
+$$
+S_t=\lambda_t\,S_{t-1}+\phi(k_t)\,v_t^{\top},
+\qquad
+z_t=\lambda_t\,z_{t-1}+\phi(k_t),
+\qquad
+y_t=\frac{\phi(q_t)^\top S_t}{\phi(q_t)^\top z_t+\epsilon}.
+$$ {#eq-ch04-gla}
+
+Here $S_t$ has shape $m\times d_v$ (feature width by value width) and $z_t$ has width $m$ — both **independent of $t$**. The learned decay $\lambda_t$ lets the state forget. We build exactly this recurrence and, crucially, make one block serve two callers: a full parallel sweep over a sequence, and a token-at-a-time streaming mode that carries the state forward. The two must agree.
+
+```{python}
+# @save
+class GatedLinearAttention(nn.Module):
+    """A linear-attention block whose recurrent state is fixed-size in context.
+
+    Each step folds one token into a running matrix state ``S`` and normalizer
+    ``z`` (@eq-ch04-gla), so decoding cost and stored state do not grow with
+    sequence length. Passing the returned ``recurrent`` tuple back in resumes
+    the scan, so the same weights serve a full-sequence pass and a streaming
+    decode.
+
+    Args:
+        width: Model width ``d`` (also the value width ``d_v``).
+        state_width: Feature width ``m`` of the key/query maps.
+    """
+
+    def __init__(self, width: int, state_width: int) -> None:
+        super().__init__()
+        self.query = nn.Linear(width, state_width, bias=False)
+        self.key = nn.Linear(width, state_width, bias=False)
+        self.value = nn.Linear(width, width, bias=False)
+        self.decay = nn.Linear(width, 1)
+        self.output = nn.Linear(width, width, bias=False)
+
+    def forward(self, tokens: Tensor, recurrent: tuple[Tensor, Tensor] | None = None
+                ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
+        batch, steps, width = tokens.shape
+        state_width = self.query.out_features
+        if recurrent is None:
+            state = tokens.new_zeros(batch, state_width, width)
+            normalizer = tokens.new_zeros(batch, state_width)
+        else:
+            state, normalizer = recurrent
+        outputs = []
+        for step in range(steps):
+            token = tokens[:, step]
+            query = F.elu(self.query(token)) + 1  # positive feature map
+            key = F.elu(self.key(token)) + 1
+            value = self.value(token)
+            decay = self.decay(token).sigmoid()
+            state = decay[:, :, None] * state + torch.einsum("bf,bd->bfd", key, value)
+            normalizer = decay * normalizer + key
+            numerator = torch.einsum("bf,bfd->bd", query, state)
+            denominator = (query * normalizer).sum(-1, keepdim=True).clamp_min(1e-6)
+            outputs.append(self.output(numerator / denominator))
+        return torch.stack(outputs, dim=1), (state, normalizer)
+```
+
+We feed a nine-token sequence through the block in one sweep, then again one token at a time, and check the outputs match and the state size is fixed.
+
+```{python}
+torch.manual_seed(7)
+gla = GatedLinearAttention(width=12, state_width=5).eval()
+sequence = torch.randn(2, 9, 12)
+full, _ = gla(sequence)
+recurrent, pieces = None, []
+for i in range(sequence.size(1)):
+    step_out, recurrent = gla(sequence[:, i:i + 1], recurrent)
+    pieces.append(step_out)
+streamed = torch.cat(pieces, dim=1)
+print("full vs streamed max abs diff:", f"{(full - streamed).abs().max().item():.1e}")
+print("state scalars 2*(m*d_v + m):", sum(t.numel() for t in recurrent),
+      "-> the same at T=9 or T=9,000,000")
+```
+
+The streaming path reproduces the full sweep to floating-point roundoff, and the state is 130 scalars whether the sequence is nine tokens or nine million. That constant-state property is the whole point, and @fig-ch04-state-growth prices it against the KV cache from @sec-ch03-kv-equation.
+
+```{python}
+#| label: fig-ch04-state-growth
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why does a fixed-state mixer bound long-context memory? Full-attention KV state (a 32-layer, 8-KV-head model from Chapter 3) rises linearly with context; the recurrent state of a linear-attention layer is flat. The crossover is not the point — the slopes are. Both axes computed, not sketched."
+import importlib.util, sys
+from pathlib import Path
+
+
+def _load_chapter(name, relative):
+    root = Path.cwd()
+    for _ in range(5):
+        candidate = root / relative
+        if candidate.exists():
+            spec = importlib.util.spec_from_file_location(name, candidate)
+            module = importlib.util.module_from_spec(spec); sys.modules[name] = module
+            spec.loader.exec_module(module); return module
+        root = root.parent
+    raise FileNotFoundError(relative)
+
+
+_kv = _load_chapter("ch03_kv_fig", "code/ch03/_generated.py")
+cfg = _kv.KVConfig("32L GQA", layers=32, query_heads=32, kv_heads=8, head_dim=128, bytes_per_scalar=2)
+lengths = [1_024 * 2 ** i for i in range(8)]
+kv_gib = [_kv.kv_bytes(cfg, t) / 2**30 for t in lengths]
+recurrent_gib = [32 * (128 * 128) * 2 / 2**30] * len(lengths)  # flat: layers * (m*d_v) * bytes
+fig, ax = plt.subplots(figsize=(6.0, 3.6))
+ax.plot(lengths, kv_gib, "o-", color="#a14f3b", label="full-attention KV")
+ax.plot(lengths, recurrent_gib, "s--", color="#2a7f9e", label="fixed recurrent state")
+ax.set(xscale="log", xlabel="context tokens", ylabel="persistent state (GiB)")
+ax.legend(frameon=False)
+fig.tight_layout()
+```
+
+Where does the decay $\lambda_t$ come from, and how expressive can a fixed state be? That is the **state-space model** (SSM) lineage. A linear SSM writes $h_t=A h_{t-1}+B x_t$, $y_t=C h_t+D x_t$; the art is making the recurrence expressive, stable over long horizons, and parallelizable for training. S4 structured $A$ so the equivalent long convolution was cheap [@gu2022s4]; Mamba made $A,B,C$ *input-dependent* — the model *selects* what to keep or forget per token — and supplied a hardware-aware scan [@gu2023mamba]; Mamba-2 then showed SSMs and attention-like matrix transforms are two views of one object [@dao2024mamba2]. The selective idea is easy to see in one dimension: give the recurrence an input-dependent decay and watch a single impulse either persist or vanish.
+
+```{python}
+def selective_scan(inputs, decays):
+    """One-dimensional selective SSM: h_t = a_t * h_{t-1} + x_t."""
+    h, history = 0.0, []
+    for x, a in zip(inputs, decays):
+        h = a * h + x
+        history.append(round(h, 3))
+    return history
+
+
+impulse = [1.0, 0.0, 0.0, 0.0, 0.0]
+print("slow decay a=0.9 (remembers):", selective_scan(impulse, [0.9] * 5))
+print("fast decay a=0.2 (forgets):  ", selective_scan(impulse, [0.2] * 5))
+```
+
+With $a=0.9$ the impulse is still 0.66 four steps later; with $a=0.2$ it is gone by the second step. A *selective* model chooses that decay per token from its content, which is how a fixed-state model keeps a salient fact while discarding filler. The same lineage now includes gated delta networks, which update memory by the difference between a new value and the one currently retrieved [@yang2024gateddelta], and recurrent families such as RWKV. The names differ; the fixed-state contract does not.
+
+## Fixed state forces a recall tradeoff {#sec-ch04-fixed-state}
+
+Constant state is a lossy channel. Write $n$ arbitrary key-value pairs, then ask for any one of them. Full attention keeps a separate addressable slot per pair, so it answers exactly. A fixed state must eventually map distinct histories to overlapping representations — without assumptions about the data, exact recall of unbounded independent associations is impossible at fixed precision. The clean way to see this is to isolate the linear-attention memory itself: the same outer-product update $S=\sum_i \phi(k_i)v_i^\top$ from @eq-ch04-gla, then read $v_j$ back with its key. We measure exact recall (did the readout land nearest to the right stored value?) as the number of pairs grows, at two feature widths.
+
+```{python}
+# @save
+def associative_recall_curve(pair_counts, feature_dim, value_dim=8, trials=400, seed=3):
+    """Measure exact recall of a linear-attention state as associations pile up.
+
+    Writes ``n`` random unit-norm key / value pairs into one outer-product state
+    ``S = sum phi(k) v^T`` — the identical update the ``GatedLinearAttention``
+    block runs each step, with an identity feature map for clarity — then reads
+    one value back by its key and counts a hit when the readout is nearest to the
+    correct stored value. Recall stays high while ``n`` is below the feature
+    width and decays past it, so widening the state moves the cliff without
+    removing it.
+
+    Args:
+        pair_counts: Numbers of stored pairs to sweep.
+        feature_dim: Feature width ``m`` (the state has ``m * value_dim`` scalars).
+        value_dim: Width of each stored value.
+        trials: Independent trials averaged per point.
+        seed: Base RNG seed.
+
+    Returns:
+        One ``{"pairs", "accuracy"}`` dict per entry in ``pair_counts``.
+    """
+    rows = []
+    for pairs in pair_counts:
+        generator = torch.Generator().manual_seed(seed + pairs)
+        hits = 0
+        for _ in range(trials):
+            keys = F.normalize(torch.randn(pairs, feature_dim, generator=generator), dim=-1)
+            values = torch.randn(pairs, value_dim, generator=generator)
+            state = keys.t() @ values                       # (feature_dim, value_dim)
+            probe = int(torch.randint(pairs, (1,), generator=generator))
+            readout = keys[probe] @ state                   # phi(k_j)^T S
+            predicted = (readout - values).pow(2).sum(-1).argmin().item()
+            hits += predicted == probe
+        rows.append({"pairs": pairs, "accuracy": hits / trials})
+    return rows
+```
+
+```{python}
+pair_counts = [2, 4, 8, 16, 32, 64, 128, 256]
+narrow = associative_recall_curve(pair_counts, feature_dim=16)
+wide = associative_recall_curve(pair_counts, feature_dim=64)
+for n, a, b in zip(pair_counts, narrow, wide):
+    print(f"pairs={n:3d}   m=16 recall={a['accuracy']:.2f}   m=64 recall={b['accuracy']:.2f}")
+```
+
+The narrow state (feature width 16) recalls perfectly at 2 pairs, is still strong at 8, but has fallen to 0.68 by 16 pairs and keeps sliding. The wide state (width 64) holds much longer — the cliff has simply moved right, roughly in proportion to the state width. That is the entire claim, and @fig-ch04-recall draws it against the flat line full attention would produce.
+
+```{python}
+#| label: fig-ch04-recall
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does a fixed state cost in exact recall? Full attention keeps one addressable slot per pair and never forgets (top line). A linear-attention state degrades as independent associations exceed its width; quadrupling the state width (16 to 64) pushes the cliff out but does not remove it. Each point is 400 seeded trials."
+fig, ax = plt.subplots(figsize=(6.2, 3.8))
+ax.plot(pair_counts, [1.0] * len(pair_counts), "o-", color="#2a7f9e", label="full attention")
+ax.plot(pair_counts, [r["accuracy"] for r in wide], "^-", color="#7356a8", label="fixed state, m=64")
+ax.plot(pair_counts, [r["accuracy"] for r in narrow], "s-", color="#a14f3b", label="fixed state, m=16")
+ax.set_xscale("log", base=2)
+ax.set(xlabel="key-value pairs written before the query", ylabel="exact recall rate", ylim=(0, 1.04))
+ax.legend(frameon=False)
+fig.tight_layout()
+```
+
+Real recurrent models are better than this raw memory: they distribute information across continuous dimensions, exploit structure, and learn selective forgetting, so they answer many tasks without exact token recall. The plot makes a bounded point — fixed state creates a capacity tradeoff, and more state improves it — not a benchmark ranking. For agents the distinction is operational. Summarizing a conversation's intent is compression-friendly. Reproducing an exact identifier, a line of code, or a tool result from an arbitrary earlier position is associative recall. A workload of long streams with modest exact lookup can favor recurrence; a repository agent that must retrieve any of thousands of unique symbols wants periodic token-addressable attention, external retrieval, or both.
+
+## Hybrids and learned sparse attention {#sec-ch04-hybrids}
+
+Because the two mechanisms fail differently, real long-context models interleave them. If $L_f$ layers use full attention and $L_r$ use fixed-state mixers, persistent state is a *sum by layer type*:
+
+$$
+\operatorname{StateBytes}(T)=\operatorname{KVBytes}(L_f,T)+L_r\,P_{\text{state}}\,s,
+$$ {#eq-ch04-hybrid}
+
+where the first term is the @sec-ch03-kv-equation cache counting *only* the full-attention layers, and the second is the flat recurrent state. Only the full-attention layers carry a context-proportional slope. A cadence of three recurrent layers to one full-attention layer — the roughly 3:1 ratio now common in production — keeps a periodic exact-retrieval path while cutting the KV slope to about a quarter of an all-attention stack. The trap the equation guards against is real: do not apply an all-attention cache formula to every layer of a hybrid, and do not call a stack constant-memory just because most of its layers recur.
+
+A third route keeps a full addressable history but *computes* only part of it. **Sparse attention** with fixed windows or blocks is cheap but encodes a predetermined visibility bias; *learned* selectors adapt to the query instead. Native Sparse Attention trains compression, selection, and a local branch end to end and co-designs the block structure for hardware [@yuan2025nsa]. Mixture of Block Attention applies the MoE idea to attention itself — a query routes to a selected set of key-value blocks — and can fall back to full attention [@lu2025moba]. DeepSeek Sparse Attention uses a lightweight learned indexer to score past tokens and keep a fine-grained top-$k$ for the main computation [@deepseekv32]. A one-line sketch of the MoBA idea — score blocks, keep the top few, attend only within them — shows the shape of the saving.
+
+```{python}
+torch.manual_seed(1)
+past = torch.randn(12, 8)              # 12 past tokens, width 8
+query = torch.randn(8)
+blocks = past.reshape(3, 4, 8)         # three blocks of four tokens
+block_scores = (blocks.mean(1) @ query)         # score each block by its summary
+keep = block_scores.topk(2).indices.tolist()    # attend to the best two blocks only
+print("block scores:", [round(s, 2) for s in block_scores.tolist()], "-> keep blocks", sorted(keep))
+```
+
+The query keeps the two highest-scoring blocks and skips the third, so value mixing runs over 8 tokens instead of 12 — the same top-$k$ gate as the router, now applied to regions of the sequence. Learned sparsity is not free: the selector must be trained with the backbone (a post-hoc mask changes the function the model learned), and an indexer that scores every past token still pays a linear search even as it saves the expensive value mixing. The three mechanisms form a design triangle — full attention (exact, growing state), fixed-state recurrence (bounded, lossy), learned sparse attention (addressable but selective, with index and miss-risk costs) — and hybrids place each where it earns its keep. No architecture label removes the need to measure recall, state, and runtime together.
+
+## Diffusion LMs and multi-token prediction {#sec-ch04-decoding}
+
+Everything so far kept the autoregressive contract: factor the sequence left to right, $p(x_{1:T})=\prod_t p(x_t\mid x_{<t})$, and commit one token at a time. Two research lines relax different parts of it, and both change decoding rather than the parameter or state ledgers. A **diffusion language model** corrupts tokens and learns to reverse the corruption over a block, refining many positions across several denoising steps; because positions can change before they are committed, it can revise and infill. A toy denoiser that reveals the highest-confidence positions of a target first makes the block-refinement shape concrete.
+
+```{python}
+def block_denoise(target, steps=3, seed=1):
+    """Toy diffusion decode: reveal highest-confidence positions over K steps."""
+    torch.manual_seed(seed)
+    slots = ["_"] * len(target)
+    confidence = torch.rand(len(target))
+    order = confidence.argsort(descending=True).tolist()
+    per_step = -(-len(target) // steps)
+    trace = []
+    for s in range(steps):
+        for position in order[s * per_step:(s + 1) * per_step]:
+            slots[position] = target[position]
+        trace.append("".join(slots))
+    return trace
+
+
+for i, snapshot in enumerate(block_denoise(list("MODEL"))):
+    print(f"denoise step {i}: {snapshot}")
+```
+
+The block fills in over three passes, several positions per step, rather than strictly left to right. "Multiple tokens in parallel" is not automatically faster: one step processes the whole block, and several steps may be needed, so latency depends on block size, step count, and kernel efficiency. **Multi-token prediction** (MTP) keeps the autoregressive trunk but adds heads that predict several future tokens during training, giving the shared representation denser supervision [@gloeckle2024mtp]. After training those heads can be discarded, or reused to *propose* tokens that the main model verifies — accepting only what it would have generated anyway.
+
+```{python}
+def speculative_verify(draft, target_sequence):
+    """Accept draft tokens until the first that the target would not have chosen."""
+    accepted = []
+    for token in draft:
+        want = target_sequence[len(accepted)]
+        accepted.append(want)
+        if token != want:
+            break            # mismatch: keep the correction, stop accepting
+    return accepted
+
+
+truth = "abcd"
+print("draft 'abc':", "".join(speculative_verify("abc", truth)), "(3 accepted, all matched)")
+print("draft 'axc':", "".join(speculative_verify("axc", truth)), "(1 accepted, then corrected)")
+```
+
+A draft that agrees advances several tokens for one verification pass; a draft that diverges is corrected at the first mismatch, so the output distribution is exactly the target's. That is the durable comparison across all three schemes — *dependency structure*, not raw token counters. Autoregression commits one token; speculative MTP proposes several and verifies; diffusion refines a block over repeated passes. Their tokens-per-second numbers are not automatically comparable, and Chapter 10 owns the serving measurements that make them so.
+
+## Read the economics from `config.json` {#sec-ch04-config}
+
+Now the payoff: everything above lets us read a real model's economics straight from its published `config.json`, without downloading weights. A config is not a full implementation, but it is usually enough to reject a bad capacity assumption. We embed three real configs — a dense model, an MoE, and a linear/full hybrid — as the exact field dicts a publisher ships.
+
+```{python}
+# @save
+REAL_CONFIGS = {
+    "Llama 3.1 8B": {  # dense GQA -- https://huggingface.co/meta-llama/Llama-3.1-8B
+        "model_type": "llama", "hidden_size": 4096, "intermediate_size": 14336,
+        "num_hidden_layers": 32, "num_attention_heads": 32, "num_key_value_heads": 8,
+        "head_dim": 128, "vocab_size": 128256, "tie_word_embeddings": False,
+        "torch_dtype": "bfloat16", "_reported_total": 8_000_000_000, "_verified_on": "2026-07-19"},
+    "DeepSeek-V3": {  # MoE + MLA -- https://huggingface.co/deepseek-ai/DeepSeek-V3-Base
+        "model_type": "deepseek_v3", "hidden_size": 7168, "intermediate_size": 18432,
+        "moe_intermediate_size": 2048, "num_hidden_layers": 61, "num_attention_heads": 128,
+        "first_k_dense_replace": 3, "n_routed_experts": 256, "n_shared_experts": 1,
+        "num_experts_per_tok": 8, "q_lora_rank": 1536, "kv_lora_rank": 512,
+        "qk_nope_head_dim": 128, "qk_rope_head_dim": 64, "v_head_dim": 128,
+        "vocab_size": 129280, "tie_word_embeddings": False, "torch_dtype": "bfloat16",
+        "_reported_total": 671_000_000_000, "_verified_on": "2026-07-19"},
+    "Qwen3-Next 80B-A3B": {  # 3:1 linear/full hybrid MoE -- https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct
+        "model_type": "qwen3_next", "hidden_size": 2048, "intermediate_size": 5120,
+        "moe_intermediate_size": 512, "shared_expert_intermediate_size": 512,
+        "num_hidden_layers": 48, "full_attention_interval": 4, "num_attention_heads": 16,
+        "num_key_value_heads": 2, "head_dim": 256, "linear_num_key_heads": 16,
+        "linear_num_value_heads": 32, "linear_key_head_dim": 128, "linear_value_head_dim": 128,
+        "linear_conv_kernel_dim": 4, "num_experts": 512, "num_experts_per_tok": 10,
+        "vocab_size": 151936, "tie_word_embeddings": False, "torch_dtype": "bfloat16",
+        "_reported_total": 80_000_000_000, "_verified_on": "2026-07-19"},
+}
+```
+
+The parser reads a config in leading-order matrix counts. It reuses one thing we refuse to reimplement: the canonical KV arithmetic from @sec-ch03-kv-equation, loaded from Chapter 3's tangled module so the whole book keeps a single cache formula. The per-architecture helpers below stay private; the public entry point is `estimate_config`.
+
+```{python}
+# @save
+import importlib.util
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+def _load_ch03(name="ch03_kv_generated", relative="code/ch03/_generated.py"):
+    bases = []
+    try:  # inside the tangled module __file__ exists; during render it may not
+        bases.append(Path(__file__).resolve().parents[2])
+    except NameError:
+        pass
+    bases.append(Path.cwd())
+    for base in bases:
+        root = base
+        for _ in range(6):
+            candidate = root / relative
+            if candidate.exists():
+                spec = importlib.util.spec_from_file_location(name, candidate)
+                module = importlib.util.module_from_spec(spec); sys.modules[name] = module
+                spec.loader.exec_module(module); return module
+            root = root.parent
+    raise FileNotFoundError(relative)
+
+
+_CH03 = _load_ch03()
+KVConfig, kv_bytes = _CH03.KVConfig, _CH03.kv_bytes
+
+
+def _dtype_bytes(cfg):
+    return {"float32": 4, "float16": 2, "bfloat16": 2}[str(cfg.get("torch_dtype", "bfloat16"))]
+
+
+def _embeddings(cfg):
+    copies = 1 if cfg.get("tie_word_embeddings", False) else 2
+    return copies * int(cfg["vocab_size"]) * int(cfg["hidden_size"])
+
+
+def _gqa_params(cfg):
+    w = int(cfg["hidden_size"]); qh = int(cfg["num_attention_heads"])
+    kvh = int(cfg.get("num_key_value_heads", qh)); hd = int(cfg.get("head_dim", w // qh))
+    return w * qh * hd + 2 * w * kvh * hd + qh * hd * w
+
+
+def _mla_params(cfg):
+    w = int(cfg["hidden_size"]); h = int(cfg["num_attention_heads"])
+    nope, rope, val = (int(cfg[key]) for key in ("qk_nope_head_dim", "qk_rope_head_dim", "v_head_dim"))
+    qr, kvr = int(cfg["q_lora_rank"]), int(cfg["kv_lora_rank"])
+    return (w * qr + qr + qr * h * (nope + rope) + w * (kvr + rope)
+            + kvr + kvr * h * (nope + val) + h * val * w)
+
+
+def _linear_mixer(cfg):
+    w = int(cfg["hidden_size"])
+    key_dim = int(cfg["linear_num_key_heads"]) * int(cfg["linear_key_head_dim"])
+    value_heads = int(cfg["linear_num_value_heads"]); value_dim = value_heads * int(cfg["linear_value_head_dim"])
+    conv, kernel = 2 * key_dim + value_dim, int(cfg["linear_conv_kernel_dim"])
+    params = (w * (2 * key_dim + 2 * value_dim) + w * (2 * value_heads) + conv * kernel
+              + 2 * value_heads + int(cfg["linear_value_head_dim"]) + value_dim * w)
+    fixed = value_heads * int(cfg["linear_value_head_dim"]) * int(cfg["linear_key_head_dim"]) + conv * (kernel - 1)
+    return params, fixed
+```
+
+The three per-architecture estimators differ only in how they split the layers. The dense case counts GQA attention plus a SwiGLU MLP in every layer. The DeepSeek case counts MLA attention everywhere, a dense MLP in the first `first_k_dense_replace` layers, and $E+S$ experts stored versus $k+S$ active in the rest. The hybrid case counts full attention only every `full_attention_interval` layers and a linear mixer (with a flat recurrent state) in the others.
+
+```{python}
+# @save
+@dataclass(frozen=True)
+class ArchitectureEstimate:
+    """A model's reconstructed economics from its config fields alone.
+
+    Bundles the two parameter ledgers of @sec-ch04-ledgers with the per-token
+    and 32K-context sequence state, plus the error against the published total,
+    so a spec can be sanity-checked before any weights are downloaded.
+
+    Args:
+        name: Model label.
+        total: Reconstructed total parameters.
+        active: Reconstructed active parameters per token.
+        reported_total: The publisher's stated total.
+        total_error_percent: Percent error of ``total`` against ``reported_total``.
+        active_fraction: ``active / total``.
+        kv_bytes_per_token: Cache bytes added per token by the attention layers.
+        state_gib_32k: Persistent state at 32,768 tokens, batch 1, in GiB.
+        fixed_state_bytes: Context-independent recurrent state (hybrids only).
+    """
+
+    name: str
+    total: int
+    active: int
+    reported_total: int
+    total_error_percent: float
+    active_fraction: float
+    kv_bytes_per_token: int
+    state_gib_32k: float
+    fixed_state_bytes: int
+
+
+def estimate_config(name, cfg, context_tokens=32_768):
+    """Reconstruct total and active parameters and sequence state from a config.
+
+    Dispatches on ``model_type`` to the dense, MoE-plus-MLA, or linear/full
+    hybrid estimator, counting the common trunk once and the experts by ledger,
+    then sizes the KV cache with Chapter 3's ``kv_bytes`` over only the layers
+    that actually keep a cache.
+
+    Args:
+        name: Model label carried into the result.
+        cfg: The config field dict.
+        context_tokens: Context length at which to price sequence state.
+
+    Returns:
+        An :class:`ArchitectureEstimate`.
+
+    Raises:
+        ValueError: If ``model_type`` is unsupported.
+    """
+    w, layers, mt = int(cfg["hidden_size"]), int(cfg["num_hidden_layers"]), cfg["model_type"]
+    fixed = 0
+    if mt == "llama":
+        mlp = 3 * w * int(cfg["intermediate_size"])
+        total = _embeddings(cfg) + layers * (_gqa_params(cfg) + mlp + 2 * w) + w
+        active = total
+        cache = KVConfig(name, layers, int(cfg["num_attention_heads"]),
+                         int(cfg.get("head_dim", w // int(cfg["num_attention_heads"]))),
+                         _dtype_bytes(cfg), kv_heads=int(cfg.get("num_key_value_heads", cfg["num_attention_heads"])))
+    elif mt == "deepseek_v3":
+        dense, moe = int(cfg["first_k_dense_replace"]), layers - int(cfg["first_k_dense_replace"])
+        dense_mlp, expert_mlp = 3 * w * int(cfg["intermediate_size"]), 3 * w * int(cfg["moe_intermediate_size"])
+        experts, selected, shared = int(cfg["n_routed_experts"]), int(cfg["num_experts_per_tok"]), int(cfg["n_shared_experts"])
+        router = w * experts
+        common = _embeddings(cfg) + layers * (_mla_params(cfg) + 2 * w) + dense * dense_mlp + w
+        total = common + moe * ((experts + shared) * expert_mlp + router)
+        active = common + moe * ((selected + shared) * expert_mlp + router)
+        cache = KVConfig(name, layers, int(cfg["num_attention_heads"]), int(cfg["v_head_dim"]),
+                         _dtype_bytes(cfg), latent_rank=int(cfg["kv_lora_rank"]), rope_key_dim=int(cfg["qk_rope_head_dim"]))
+    elif mt == "qwen3_next":
+        full = layers // int(cfg["full_attention_interval"]); linear = layers - full
+        linear_params, fixed_scalars = _linear_mixer(cfg)
+        experts, selected = int(cfg["num_experts"]), int(cfg["num_experts_per_tok"])
+        expert_mlp, shared_mlp = 3 * w * int(cfg["moe_intermediate_size"]), 3 * w * int(cfg["shared_expert_intermediate_size"])
+        router = w * experts
+        common = (_embeddings(cfg) + full * _gqa_params(cfg) + linear * linear_params
+                  + layers * (shared_mlp + router + 2 * w) + w)
+        total, active = common + layers * experts * expert_mlp, common + layers * selected * expert_mlp
+        cache = KVConfig(name, full, int(cfg["num_attention_heads"]), int(cfg["head_dim"]),
+                         _dtype_bytes(cfg), kv_heads=int(cfg["num_key_value_heads"]))
+        fixed = linear * fixed_scalars * _dtype_bytes(cfg)
+    else:
+        raise ValueError(f"unsupported model_type: {mt}")
+    reported = int(cfg["_reported_total"])
+    return ArchitectureEstimate(
+        name, total, active, reported, 100 * (total - reported) / reported, active / total,
+        kv_bytes(cache, 1), (kv_bytes(cache, context_tokens) + fixed) / 2**30, fixed)
+```
+
+We run the parser over all three configs and print the reconstruction.
+
+```{python}
+for name, cfg in REAL_CONFIGS.items():
+    e = estimate_config(name, cfg)
+    print(f"{e.name:20s} total={e.total/1e9:8.3f}B  active={e.active/1e9:7.3f}B  "
+          f"err={e.total_error_percent:+.3f}%  active_frac={e.active_fraction:5.2%}  "
+          f"state@32k={e.state_gib_32k:.3f} GiB")
+```
+
+Three published models, three total-count reconstructions within about half a percent, computed from a handful of integer fields. The stories the ledgers tell are exactly the two the chapter opened with. Llama's active equals its total — a dense model has one ledger. DeepSeek-V3 stores 671B but activates only 37.6B (5.6%): MoE bends the *active-weight* curve, and its MLA cache holds the 32K state to 2.1 GiB. Qwen3-Next stores ~80B, activates ~3.8B, and its 3:1 linear/full hybrid bends the *context-state* curve — most layers keep only a flat recurrent state, so 32K tokens cost well under a gibibyte, though its periodic full-attention layers still contribute a context-proportional slice.
+
+::: {.callout-note title="In the interview"}
+**Q. A model card says "3B active." Your capacity plan assumes 3B of weights need to be resident. What's wrong?**
+Two things. First, "active" is a *per-token compute* count under the publisher's convention — it usually excludes, or partially counts, embeddings, the output head, routers, shared experts, and norms; our parser puts Qwen3-Next's active near 3.8B once those are included. Second, active parameters are not resident memory: every routed expert must be reachable, so the *total* (here ~80B) is what has to live somewhere in the serving topology, plus KV and recurrent state per sequence. The trap is multiplying total by $k/E$ and sizing hardware to the result. The strong answer states the counting boundary and sizes both ledgers separately.
+:::
+
+These reconstructions are dated evidence — configs change — so the embedded fields carry their source and a 2026-07-19 verification date; re-fetch each `config.json` before trusting a row in a real capacity decision.
+
+## Landscape 2026: the moving edge {#sec-ch04-landscape}
+
+::: {.callout-note .landscape-2026}
+### Landscape 2026 — very large capacity, low active fraction
+
+The equations, the build, and the config-reading method above do not depend on which models are current; this box is the one dated snapshot and is safe to delete. As of the verification date, the visible open-weight trend is very large stored capacity with a low single-digit active fraction, and diversifying sequence mixers. Representative published figures (each from an official model card): DeepSeek-V4-Pro 1.6T total / 49B active and DeepSeek-V4-Flash 284B / 13B (hybrid compressed-sparse attention); Kimi K2.5 1T / 32B (384 experts, top-8 plus one shared, MLA); Qwen3.5 397B / 17B active (repeated groups of three Gated DeltaNet layers to one full-attention layer, 512 experts, top-10); GLM-5 744B / 40B (DeepSeek Sparse Attention); MiniMax-M2 230B / 10B, whose later guidance also documents full-attention variants — evidence that sparse attention is not a one-way migration; gpt-oss-120b 117B / 5.1B; and Llama 4 Maverick 400B / 17B (128 experts). @fig-ch04-landscape plots them.
+
+Settled enough to design around: conditional FFN computation as a capacity lever, compressed or shared KV for long context, and hybrid layer stacks as production architectures. Still contested: the best expert granularity and shared-expert design, auxiliary loss versus bias control, the ratio and placement of full attention, token- versus block-level learned sparsity, and whether diffusion decoding becomes a default.
+
+**Verify live:** re-check each record against the current official model cards for [DeepSeek-V4](https://huggingface.co/deepseek-ai), [Kimi K2.5](https://huggingface.co/moonshotai), [Qwen3.5](https://huggingface.co/Qwen), [GLM-5](https://huggingface.co/zai-org), and successors before quoting any number. **Verified:** 2026-07-19.
+:::
+
+```{python}
+#| label: fig-ch04-landscape
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where do 2026 open-weight MoE models sit on the total-versus-active plane? Both axes are logarithmic; dashed guides mark 3% and 5% active fractions. Almost every model activates a low single-digit percent of its stored parameters. Points are published counting conventions, not parser-normalized counts; dated 2026-07-19."
+landscape = {
+    "DeepSeek-V4-Pro": (1600, 49), "DeepSeek-V4-Flash": (284, 13), "Kimi K2.5": (1000, 32),
+    "Qwen3.5": (397, 17), "GLM-5": (744, 40), "MiniMax-M2": (230, 10),
+    "gpt-oss-120b": (117, 5.1), "Llama 4 Maverick": (400, 17),
+}
+fig, ax = plt.subplots(figsize=(6.6, 4.4))
+xs = [t for t, _ in landscape.values()]
+ax.scatter(xs, [a for _, a in landscape.values()], s=46, color="#2a7f9e", zorder=3)
+for label, (t, a) in landscape.items():
+    ax.annotate(label, (t, a), xytext=(4, 4), textcoords="offset points", fontsize=7.5)
+lo, hi = min(xs) * 0.8, max(xs) * 1.2
+ax.plot([lo, hi], [0.03 * lo, 0.03 * hi], "--", color="#7356a8", lw=1, label="3% active")
+ax.plot([lo, hi], [0.05 * lo, 0.05 * hi], ":", color="#a14f3b", lw=1.2, label="5% active")
+ax.set(xscale="log", yscale="log", xlabel="published total parameters (B)",
+       ylabel="published active parameters (B)")
+ax.legend(frameon=False, loc="lower right")
+fig.tight_layout()
+```
+
+## Summary
+
+We pulled apart the two numbers a model card reports. MoE stores many experts and routes each token to a few, so *stored* capacity and *active* per-token compute become separate ledgers — and a low task loss can hide a collapsed router, so balance must be measured, not assumed. Linear-attention and state-space layers replace the growing KV cache with a fixed recurrent state, trading exact recall for bounded memory; hybrids interleave the two and sum state by layer type. We built a top-$k$ router, a gated linear-attention block, and a config parser that reconstructed three real models to within half a percent. Chapter 10 turns these ledgers into serving decisions.
+
+## Exercises
+
+1. **Reconstruct a layer by hand.** For width $d={4096}$, $E={64}$ routed SwiGLU experts of width $h_e={1024}$, top-$k={2}$, and one shared expert, use @eq-ch04-ledgers to compute stored expert parameters, active expert parameters, and the active fraction. Check against the `stored`/`active` cell. Then explain, in terms of the common trunk, why the *model-wide* active fraction differs from the expert-bank fraction.
+
+2. **Sweep the balance coefficient.** Extend `train_router` to also return the maximum per-expert load, then run balance weights of ${0}$, ${0.01}$, ${0.1}$, ${0.5}$, and ${2}$. Plot maximum load and accuracy against the coefficient. (a) Identify a range that prevents collapse without making balance the apparent task. (b) Explain why this coefficient cannot be transferred directly to a full language-model run.
+
+3. **Price overflow policies.** For $N={8192}$, $E={32}$, top-$k={2}$, and capacity factors ${1.0}$, ${1.1}$, and ${1.25}$, compute per-expert capacity. Construct a skewed load vector where one expert draws 30% of assignments and quantify dropped tokens at each factor. Discuss how rerouting and dropless dispatch each change correctness versus step-time risk.
+
+4. **Attach recall to the block.** `associative_recall_curve` uses an identity feature map. Modify it to route keys and values through a `GatedLinearAttention` layer's `query`/`value` projections (decay pinned near 1) and re-measure at feature widths 16 and 64. Does the cliff move the same way? Explain which part of the change is the feature map and which is the state width.
+
+5. **Widen the state, move the cliff.** Using `associative_recall_curve`, find for each of several feature widths the number of pairs at which recall first drops below 0.5. Plot that threshold against feature width. Is the relationship closer to linear or to something else, and how does that inform choosing a recurrent-state size for a target recall workload?
+
+6. **Audit a new config.** Add a fourth entry to `REAL_CONFIGS` for a current open-weight model not already present, writing a one-line field-semantics comment for each ambiguous field (for example whether `num_experts_per_tok` includes a shared expert). Run `estimate_config`, and where the total error exceeds two percent, name the omitted parameter family most likely responsible.
