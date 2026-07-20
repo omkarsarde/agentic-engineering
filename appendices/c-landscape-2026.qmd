@@ -12,25 +12,6 @@ This appendix is therefore not a prediction market, leaderboard, or shopping gui
 
 The checked snapshot in this edition is **2026-07-19**. **Verify live:** every linked release, specification, model card, benchmark harness, product page, and government source before using it in a production decision.
 
-## Contents
-
-- [A claim needs a lifecycle](#app-c-lifecycle)
-- [The schema makes uncertainty visible](#app-c-schema)
-- [Model profiles are candidates, not rankings](#app-c-models)
-- [Local inference begins with fit, then measurement](#app-c-local)
-- [Tokenizer-free modeling is a frontier, not a foregone conclusion](#app-c-tokenizer-free)
-- [Frameworks and engines should sit behind owned contracts](#app-c-frameworks)
-- [Protocol versions form a compatibility matrix](#app-c-protocols)
-- [Retrieval policies need capability pins](#app-c-retrieval)
-- [Benchmarks need retirement rules](#app-c-benchmarks)
-- [Legal and governance entries are counsel-owned signals](#app-c-governance)
-- [Run an annual frontier audit](#app-c-audit)
-- [Keep an explicit open research agenda](#app-c-research)
-- [Build: audit the registry](#app-c-build)
-- [What endures, what changes](#app-c-endures)
-- [Exercises](#app-c-exercises)
-- [Notes and primary sources](#app-c-sources)
-
 ## A claim needs a lifecycle {#app-c-lifecycle}
 
 A current fact is not ordinary prose. It is an asset with an owner, source, review clock, and exit path. Treating it as a sentence hides those properties. The lifecycle in @fig-appc-lifecycle turns "I saw this online" into evidence that can be reviewed.
@@ -151,6 +132,16 @@ The runtime pin matters just as much. The snapshot records [vLLM 0.21.0]{#landsc
 A sound local benchmark uses the same prompt corpus and acceptance predicates as hosted candidates. Report model-quality deltas introduced by quantization alongside speed. Separate prefill from decode, warm from cold start, and single request from production concurrency. Include rejected outputs and retries in cost and throughput. A fast invalid JSON response has not completed useful work.
 
 Local deployment can improve data control and disconnection tolerance, but it does not automatically provide privacy. Prompts can leak through logs, crash dumps, desktop telemetry, swap, shared model servers, or plugin processes. Apply the data-flow, least-privilege, observability, patching, and incident controls from Chapters 24 through 28 to the local boundary too.
+
+## The training stack is pinned as examples, not a recommended build {#app-c-training}
+
+Chapter 6 teaches the durable arithmetic of a frontier run — the memory ledger, ZeRO sharding, tensor and pipeline parallelism, model-FLOPs utilization, and the cost model that ends in megawatts. The volatile pieces that arithmetic sits on top of are registered here, dated, so a rewritten chapter never carries a silently stale reference stack. None of these rows ranks a component; each locates one and says what must be re-tested when it moves.
+
+Four rows pin the assembly. PyTorch's [FSDP2 `fully_shard`](https://docs.pytorch.org/docs/main/distributed.fsdp.fully_shard.html) documents the per-parameter-sharding API a ZeRO-3 run depends on; [TorchTitan](https://github.com/pytorch/torchtitan) and [MaxText](https://github.com/AI-Hypercomputer/maxtext) are the PyTorch and JAX reference platforms that compose those features end to end; and DeepSeek's [DeepEP](https://github.com/deepseek-ai/DeepEP) is a current mixture-of-experts dispatch-and-combine communication library. All four are vendor-reported interfaces that move quickly: pin the commit, then revalidate layout, checkpoint portability, throughput, and fault recovery before adopting them.
+
+Two rows record low-precision and optimizer recipes as measured results under their authors' setups — NVIDIA's [NVFP4 training paper](https://arxiv.org/abs/2509.25149) and the [Kimi K2 report](https://arxiv.org/abs/2507.20534) that introduced MuonClip. Three more record operations at scale: [MegaScale](https://arxiv.org/abs/2402.15627)'s model-FLOPs-utilization and restart figures, the [Llama 3 report](https://arxiv.org/abs/2407.21783)'s 466-interruption training snapshot, and [Decoupled DiLoCo](https://arxiv.org/abs/2604.21428)'s decentralized-training study. Treat each number as a dated existence proof, never a target to transfer to a different model and cluster.
+
+The accelerators those runs land on are procurement inputs, not durable mechanisms. Google's [Ironwood](https://blog.google/innovation-and-ai/infrastructure-and-cloud/google-cloud/ironwood-google-tpu-things-to-know/) TPU and NVIDIA's announced [Vera Rubin](https://nvidianews.nvidia.com/news/nvidia-vera-rubin-platform) platform quote peaks under sparsity and precision conventions that are not comparable across vendors; benchmark the target model, precision, topology, collective mix, and power envelope before trusting a spec sheet. Finally, compute-threshold governance is a dated legal status rather than settled law: Executive Order 14110's 10^26-operation reporting trigger was revoked in January 2025 and has no active general successor, per the [Congressional Research Service summary](https://www.congress.gov/crs_external_products/R/HTML/R48555.web.html). Qualified counsel must recheck federal, state, export-control, and sector obligations; the broader governance surface is registered below and taught in Chapter 25.
 
 ## Tokenizer-free modeling is a frontier, not a foregone conclusion {#app-c-tokenizer-free}
 
@@ -400,21 +391,9 @@ The tests exercise the database itself plus missing fields, stale and future dat
 
 The linter cannot tell whether a source is primary, a benchmark is valid, a statute applies, or a vendor result generalizes. Those are review responsibilities. Its value is narrower and real: it makes the editorial contract executable and ensures every moving claim carries the metadata needed for human judgment.
 
-## What endures, what changes {#app-c-endures}
+## Summary {#app-c-summary}
 
-The enduring method is:
-
-- separate mechanisms from moving examples;
-- phrase one atomic, decision-relevant claim per record;
-- classify unlike evidence honestly;
-- pin the referent and verification date;
-- use primary sources;
-- give interpretation to an owner chapter;
-- write migration and retirement rules before they are needed;
-- automate consistency, not truth;
-- preserve historical context without letting it drive current launch gates.
-
-The changing surface includes model rosters and endpoints, weights and licenses, framework APIs, runtime kernels, hardware, prices, protocol revisions, telemetry conventions, benchmark tasks and leaderboards, official guidance, proposals, statutes, and application dates. Their presence in this appendix does not make them durable. Their explicit dates make their instability visible.
+The method endures even as every entry ages: separate durable mechanisms from moving examples, phrase one atomic claim per record, classify measured, vendor-reported, and illustrative evidence honestly, pin the referent and verification date to a primary source, give each row an owner that interprets it, and write migration and retirement rules before they are needed — automating consistency, never truth. The changing surface is everything else: model rosters, weights and licenses, framework and runtime APIs, hardware, prices, protocol revisions, telemetry conventions, benchmarks, and the status of statutes and proposals. Listing those facts here does not make them durable; their explicit dates make their instability visible, and the exercises below put the practice to work.
 
 ## Exercises {#app-c-exercises}
 

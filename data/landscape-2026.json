@@ -10,7 +10,7 @@
       "pin": "PyTorch fully_shard documentation checked 2026-07-19",
       "checked": "2026-07-19",
       "source": "https://docs.pytorch.org/docs/main/distributed.fsdp.fully_shard.html",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Pin the PyTorch release and repeat layout, checkpoint, numerical-equivalence, and resharding tests before changing FSDP APIs or policies."
     },
     {
@@ -21,7 +21,7 @@
       "pin": "NVFP4 Training paper, arXiv 2509.25149",
       "checked": "2026-07-19",
       "source": "https://arxiv.org/abs/2509.25149",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Treat the format as a dated recipe; validate hardware support, scale granularity, accumulator precision, saturation telemetry, and quality against a higher-precision control."
     },
     {
@@ -32,7 +32,7 @@
       "pin": "Kimi K2 technical report, arXiv 2507.20534",
       "checked": "2026-07-19",
       "source": "https://arxiv.org/abs/2507.20534",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Reproduce the logit threshold, eligible parameter families, optimizer split, precision, and scale rules; compare equal-token quality and stability against tuned controls."
     },
     {
@@ -43,7 +43,7 @@
       "pin": "DeepEP repository checked 2026-07-19",
       "checked": "2026-07-19",
       "source": "https://github.com/deepseek-ai/DeepEP",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Pin the commit and benchmark the exact token shapes, topology, routing skew, overlap, precision, and failure behavior before adopting its kernels or hooks."
     },
     {
@@ -54,7 +54,7 @@
       "pin": "TorchTitan repository checked 2026-07-19",
       "checked": "2026-07-19",
       "source": "https://github.com/pytorch/torchtitan",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Reference stacks change quickly; pin code and configuration, then revalidate memory, convergence, throughput, checkpoint portability, and fault recovery."
     },
     {
@@ -65,7 +65,7 @@
       "pin": "MaxText repository checked 2026-07-19",
       "checked": "2026-07-19",
       "source": "https://github.com/AI-Hypercomputer/maxtext",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Pin JAX, XLA, MaxText, topology, and model configuration; repeat numerical, sharding, checkpoint, throughput, and recovery validation on the target system."
     },
     {
@@ -76,7 +76,7 @@
       "pin": "Llama 3 technical report, arXiv 2407.21783",
       "checked": "2026-07-19",
       "source": "https://arxiv.org/abs/2407.21783",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Use these values only as a dated existence proof; estimate interruption, detection, recovery, and replay distributions from the target fleet."
     },
     {
@@ -87,7 +87,7 @@
       "pin": "MegaScale paper, arXiv 2402.15627",
       "checked": "2026-07-19",
       "source": "https://arxiv.org/abs/2402.15627",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Do not transfer utilization or recovery rates across models and clusters; publish the FLOP convention and measure the target topology and operating process."
     },
     {
@@ -98,7 +98,7 @@
       "pin": "Decoupled DiLoCo, arXiv 2604.21428",
       "checked": "2026-07-19",
       "source": "https://arxiv.org/abs/2604.21428",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Treat convergence, staleness, quorum, fault, and bandwidth assumptions as algorithmic inputs; reproduce them before using wide-area training."
     },
     {
@@ -121,7 +121,7 @@
       "pin": "Google Ironwood overview checked 2026-07-19",
       "checked": "2026-07-19",
       "source": "https://blog.google/innovation-and-ai/infrastructure-and-cloud/google-cloud/ironwood-google-tpu-things-to-know/",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Recheck availability and specifications, then benchmark the target model, precision, topology, collective mix, compiler, and power boundary."
     },
     {
@@ -132,7 +132,7 @@
       "pin": "NVIDIA Vera Rubin announcement checked 2026-07-19",
       "checked": "2026-07-19",
       "source": "https://nvidianews.nvidia.com/news/nvidia-vera-rubin-platform",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "Track delivered systems rather than announcement ceilings and obtain workload-shaped benchmarks, power data, topology guarantees, schedule, and quotes."
     },
     {
@@ -143,7 +143,7 @@
       "pin": "Congressional Research Service status summary checked 2026-07-19",
       "checked": "2026-07-19",
       "source": "https://www.congress.gov/crs_external_products/R/HTML/R48555.web.html",
-      "owner_chapter": "chapters/06-distributed-frontier-training.qmd",
+      "owner_chapter": "appendices/c-landscape-2026.qmd",
       "migration_note": "This is a dated legal-status correction, not legal advice; qualified counsel must recheck federal, state, export-control, contract, and sector obligations."
     },
     {
