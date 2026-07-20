@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import sys
 from pathlib import Path
@@ -10,12 +11,17 @@ import torch
 from torch import nn
 
 
-HERE = Path(__file__).resolve().parent
-CH02 = HERE.parent / "ch02"
-if str(CH02) not in sys.path:
-    sys.path.insert(0, str(CH02))
+_GENERATED = Path(__file__).resolve().parent.parent / "ch02" / "_generated.py"
+if "ch02_generated" in sys.modules:
+    _ch02 = sys.modules["ch02_generated"]
+else:
+    _spec = importlib.util.spec_from_file_location("ch02_generated", _GENERATED)
+    assert _spec is not None and _spec.loader is not None
+    _ch02 = importlib.util.module_from_spec(_spec)
+    sys.modules["ch02_generated"] = _ch02
+    _spec.loader.exec_module(_ch02)
 
-from tinygpt import GPTConfig, TinyGPT  # noqa: E402
+GPTConfig, TinyGPT = _ch02.GPTConfig, _ch02.TinyGPT
 
 
 def wsd_multiplier(step: int, total_steps: int, *, warmup_fraction: float = 0.1, decay_fraction: float = 0.2) -> float:

@@ -1,599 +1,1192 @@
 ---
-description: "Derive and train a decoder-only Transformer, from byte-pair tokens and causal attention through exact cached decoding."
+description: "Build and train a complete GPT from first principles — byte-pair tokenizer, derived attention, causal masking, the residual stream, a tied LM head — then watch it learn and measure its KV cache."
 ---
 
-# The Transformer from First Principles [F] {#sec-ch02}
+# The Transformer from First Principles {#sec-ch02}
 
-## What you need going in {#sec-ch02-prerequisites}
+We are now ready to build a complete GPT from scratch and train it while we read. Chapter 1 treated the model as a served endpoint that maps context to a continuation; this chapter opens the box and implements everything inside that endpoint, in small executed steps: (i) a byte-pair tokenizer trained on our own corpus; (ii) scaled dot-product attention, derived rather than asserted; (iii) the causal mask that keeps the future out of the past; (iv) multi-head attention, the feed-forward block, and the residual stream that ties them together; (v) the full decoder-only model with a tied language-model head; (vi) a training loop — AdamW, a warmup-cosine schedule — whose loss curve and generated samples we read honestly; and (vii) cached generation, whose speed and memory we measure rather than estimate.
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter 1, A Model Call Maps Context to a Continuation](01-operational-on-ramp.qmd#sec-ch01-call) — a model call returns a continuation by making one conditional next-token decision at a time.
->
-> **Not required:** natural-language processing, tokenization, attention, language-model training, positional encodings, or inference serving.
+The corpus is nine kilobytes of *Alice's Adventures in Wonderland* — public domain, small enough to embed in the book's repository, and real English rather than synthetic filler. The model is about 140,000 parameters and trains in seconds on a CPU, which means every number and every generated string on these pages is produced live when the book is built. That is the point of working at toy scale: nothing is hidden, everything is checkable, and the mechanisms are exactly the ones running inside a frontier model — only the constants change. Implementing the pieces ourselves, once, is the cheapest insurance we can buy against every later chapter: serving (Chapter 10), long context (Chapter 3), and interpretability (Chapter 25) all assume the picture we build here.
 
-## Contents {#sec-ch02-contents}
+## A byte-pair tokenizer {#sec-ch02-bpe}
 
-- [A suspiciously good loss](#sec-ch02-failure)
-- [What you will build](#sec-ch02-will-build)
-- [Tokens from bytes: BPE essentials](#sec-ch02-bpe)
-- [The next-token objective](#sec-ch02-objective)
-- [Attention as a learned weighted lookup](#sec-ch02-attention)
-- [Multi-head attention and the causal mask](#sec-ch02-multihead)
-- [The residual stream and a modern block](#sec-ch02-residual)
-- [Decoder-only: from embeddings to logits](#sec-ch02-decoder)
-- [Cache past keys and values exactly](#sec-ch02-kv-cache)
-- [Count parameters, FLOPs, and bytes](#sec-ch02-accounting)
-- [Train it and read the loss curve](#sec-ch02-training)
-- [Build](#sec-ch02-build)
-- [What endures, what changes](#sec-ch02-endures)
-- [Exercises](#sec-ch02-exercises)
-- [Notes and sources](#sec-ch02-notes)
+A neural network consumes integers, not strings. The tokenizer defines the mapping between them, and that mapping fixes more than convenience: it determines the rows of the embedding table, the columns of the output head, and the unit in which context, cost, and throughput are measured. In @sec-ch01-context we trained a toy character-pair encoder to see why frequent strings become cheap; here we build the real thing — a byte-level BPE tokenizer of the kind production models actually freeze and ship [@sennrich2016neural].
 
-## A Suspiciously Good Loss {#sec-ch02-failure}
+We start from the corpus. It is the opening of *Alice's Adventures in Wonderland* (Carroll, 1865), sliced to just over nine kilobytes and stored under `data/ch02/`.
 
-A team trains its first tiny language model. Within a few hundred updates, loss collapses and held-out next-token accuracy looks extraordinary. Generated text is incoherent.
+```{python}
+from pathlib import Path
 
-The architecture has no causal mask. At position $i$, attention can read the token at position $i+1$—the exact label the model is asked to predict. Training rewards this shortcut. The low loss is real arithmetic attached to an invalid information path.
+corpus = Path("data/ch02/alice.txt").read_text(encoding="utf-8")
+print(f"{len(corpus)} characters, {len(corpus.encode('utf-8'))} UTF-8 bytes")
+print(corpus[:193])
+```
 
-That failure gives us the chapter’s governing invariant:
+Note the two counts differ: the text contains curly quotation marks, and UTF-8 encodes each of those as three bytes. That detail decides our base vocabulary. If we started from characters we would need an inventory of every character we might ever meet — an open-ended set. If we start from *bytes*, the base vocabulary is exactly the 256 possible byte values, and every string in every language already has an encoding before we learn anything. There is no unknown-token case, ever. Byte-pair encoding then makes common strings cheaper: it repeatedly finds the most frequent adjacent pair of tokens and merges it into a new token. We record each learned rule in a small immutable value.
 
-> The logits at position $i$ may depend on tokens at positions ${0}$ through $i$, but never on a token at a later position.
+```{python}
+# @save
+from dataclasses import dataclass
 
-Every mechanism in a causal language model serves or preserves that invariant. The tokenizer determines the prediction alphabet. The shifted loss defines which token is the label. The attention mask closes the future path. Residual connections let many transformations update the same per-position state. Positional information distinguishes order. The language-model head maps the final state back to the frozen vocabulary. During generation, a key-value cache must produce the same next-token logits as recomputing the whole visible prefix.
 
-The incident also illustrates why a loss curve is not self-interpreting. A decreasing scalar can mean learning, memorization, label leakage, a broken denominator, or an easier batch. An engineer needs predicted baselines and executable invariants. Before training, a model with near-uniform predictions over a vocabulary of size $V$ should have cross-entropy near $\ln V$. After training, changing future tokens must leave all earlier logits unchanged. During cached decoding, reusing states must agree with the uncached computation.
+@dataclass(frozen=True)
+class Merge:
+    """One learned BPE rule: the adjacent pair (left, right) becomes new_id.
 
-By the end of the chapter, you will derive those claims, implement them, and test them on one small decoder-only Transformer.
+    Merges are the entire learned state of a BPE tokenizer. Applied in
+    training order they encode text; expanded recursively they decode it.
+    """
 
-## What you will build {#sec-ch02-will-build}
+    left: int
+    right: int
+    new_id: int
 
-::: {.callout-tip}
-**The chapter artifact.** You will train one nanoGPT-style causal language model end to end. [`bpe.py`](../code/ch02/bpe.py) learns a frozen byte-level BPE vocabulary with exact round trips and no unknown-token path. [`tinygpt.py`](../code/ch02/tinygpt.py) implements masked multi-head attention, pre-RMSNorm residual blocks, QK normalization, SwiGLU, tied embeddings, and cached decoding. [`train.py`](../code/ch02/train.py) owns one experiment: train, sample at three temperatures, plot loss, verify cached logits against full-prefix logits, and plot cache growth. The deterministic CPU fixture is the default; a larger run over a supplied public-domain corpus is optional.
-:::
 
-These are three modules of one build, not competing model implementations. Tokenization is a distinct mechanism with its own round-trip contract. The model has one forward path whether it is training, evaluating, or extending a cache. The trainer calls that path and writes all numeric evidence under `code/ch02/generated/`.
+def _merge_pair(ids: list[int], pair: tuple[int, int], new_id: int) -> list[int]:
+    """Replace every non-overlapping occurrence of pair with new_id."""
+    merged: list[int] = []
+    index = 0
+    while index < len(ids):
+        if index + 1 < len(ids) and (ids[index], ids[index + 1]) == pair:
+            merged.append(new_id)
+            index += 2
+        else:
+            merged.append(ids[index])
+            index += 1
+    return merged
+```
 
-## Tokens From Bytes: BPE Essentials {#sec-ch02-bpe}
+The tokenizer itself holds the merge list and the byte expansion of every token ID. Training is a loop: count adjacent pairs, pick the most frequent (with a deterministic tie-break, so two runs always learn the same vocabulary), rewrite the stream, repeat until the vocabulary reaches the requested size.
 
-A neural network consumes integer indices, not strings. The tokenizer defines the mapping from text to those indices and therefore fixes the embedding table’s rows, the output head’s columns, the loss dimension, and the unit in which context and throughput are measured.
+```{python}
+# @save
+from collections import Counter
 
-Whole-word vocabularies fail on an open-ended language. New names, misspellings, source code, and productive word forms keep appearing. A character vocabulary avoids unknown words but makes common strings long. **Byte-pair encoding** (BPE) starts from small units and repeatedly merges frequent adjacent pairs, retaining fallback units for uncommon text.
 
-This artifact starts from all 256 possible byte values. UTF-8 maps any Unicode string to a byte sequence, so every input is representable before a merge is learned. Training counts adjacent token pairs, chooses the most frequent pair with a deterministic tie break, replaces its non-overlapping occurrences with a new token ID, and repeats until reaching the requested vocabulary size.
+class BytePairTokenizer:
+    """A byte-level BPE tokenizer: 256 byte tokens plus learned merges.
 
-Suppose a training stream contains the byte-token sequence
+    Because the base vocabulary is every possible byte, any Unicode string
+    encodes without an unknown-token path — unfamiliar text simply falls
+    back to more, smaller tokens. The vocabulary is fixed the moment
+    training stops; a model trained on top of it inherits that freeze.
+    """
+
+    def __init__(self, merges: list[Merge] | None = None) -> None:
+        self.merges = list(merges or [])
+        self.token_bytes = {index: bytes([index]) for index in range(256)}
+        for merge in self.merges:
+            self.token_bytes[merge.new_id] = (
+                self.token_bytes[merge.left] + self.token_bytes[merge.right]
+            )
+
+    @property
+    def vocab_size(self) -> int:
+        """Return the fixed number of token IDs this tokenizer recognizes."""
+        return 256 + len(self.merges)
+
+    @classmethod
+    def train(cls, text: str, vocab_size: int) -> "BytePairTokenizer":
+        """Learn merges from UTF-8 text until the vocabulary reaches vocab_size.
+
+        Args:
+            text: Training text; it determines merge order and nothing else.
+            vocab_size: Target vocabulary size, at least 256.
+
+        Returns:
+            A tokenizer with up to ``vocab_size - 256`` learned merges.
+
+        Raises:
+            ValueError: If vocab_size would not retain all 256 byte tokens.
+        """
+        if vocab_size < 256:
+            raise ValueError("vocab_size must retain all 256 byte tokens")
+        ids = list(text.encode("utf-8"))
+        tokenizer = cls()
+        for new_id in range(256, vocab_size):
+            counts = Counter(zip(ids, ids[1:]))
+            if not counts:
+                break
+            pair = min(counts, key=lambda item: (-counts[item], item))
+            ids = _merge_pair(ids, pair, new_id)
+            tokenizer.merges.append(Merge(*pair, new_id))
+            tokenizer.token_bytes[new_id] = (
+                tokenizer.token_bytes[pair[0]] + tokenizer.token_bytes[pair[1]]
+            )
+        return tokenizer
+
+    def encode(self, text: str) -> list[int]:
+        """Encode any Unicode string by replaying the learned merges in order.
+
+        Args:
+            text: Text to encode as UTF-8 bytes plus merges.
+
+        Returns:
+            Token IDs, every one below ``vocab_size``.
+        """
+        ids = list(text.encode("utf-8"))
+        for merge in self.merges:
+            ids = _merge_pair(ids, (merge.left, merge.right), merge.new_id)
+        return ids
+
+    def decode(self, ids: list[int], errors: str = "strict") -> str:
+        """Expand token IDs to bytes and decode the result as UTF-8.
+
+        Args:
+            ids: Token IDs produced by ``encode`` (or by a model).
+            errors: UTF-8 error policy; a sampling model can emit byte
+                sequences that are not valid UTF-8, so generation uses
+                ``"replace"`` while round-trip checks keep ``"strict"``.
+
+        Returns:
+            The reconstructed string.
+        """
+        return b"".join(self.token_bytes[index] for index in ids).decode(
+            "utf-8", errors=errors
+        )
+```
+
+We train it on the corpus, asking for a vocabulary of 512 — the 256 bytes plus 256 learned merges — and look at what it learned first.
+
+```{python}
+tokenizer = BytePairTokenizer.train(corpus, vocab_size=512)
+print(f"vocab_size = {tokenizer.vocab_size}")
+for merge in tokenizer.merges[:8]:
+    left, right = tokenizer.token_bytes[merge.left], tokenizer.token_bytes[merge.right]
+    print(f"  id {merge.new_id}: {left!r} + {right!r} -> {tokenizer.token_bytes[merge.new_id]!r}")
+```
+
+The first merges are exactly what frequency predicts: `e` followed by space, `th`, spaced articles. Later merges build on earlier ones, so whole common words condense into single IDs. Encoding replays this history; decoding expands it back to the original bytes. We check the round trip on a string the tokenizer has never seen, including an emoji that exists nowhere in the corpus.
+
+```{python}
+probe = "Alice waited by the rabbit-hole 🐇"
+ids = tokenizer.encode(probe)
+print(f"{len(probe.encode('utf-8'))} bytes -> {len(ids)} tokens")
+print("ids:", ids)
+print("round trip exact:", tokenizer.decode(ids) == probe)
+```
+
+The familiar words compress to single high-numbered IDs, while the emoji falls back to its four raw bytes (the IDs below 256 at the end) — inefficient but never unrepresentable. That asymmetry is called *fertility*: the same byte count costs different token counts depending on how well the tokenizer's training distribution matches the input. Chapter 5 measures fertility across languages at pretraining scale. On its own corpus, the tokenizer earns its keep:
+
+```{python}
+stream = tokenizer.encode(corpus)
+print(f"{len(corpus.encode('utf-8'))} bytes -> {len(stream)} tokens "
+      f"({len(corpus.encode('utf-8')) / len(stream):.2f} bytes/token)")
+```
+
+One consequence deserves stating before we build the model on top: the tokenizer is now **frozen**. The model we are about to construct will have an embedding table with exactly 512 rows and an output layer with exactly 512 columns. Adding a merge later would create a row and a column no gradient has ever touched. You can always encode new text — the byte fallback guarantees it — but you cannot change the vocabulary without surgery on the model itself. Tokenization is part of the architecture, not a request-time utility.
+
+## The next-token objective {#sec-ch02-objective}
+
+What should the model *do* with these token streams? A language model assigns probability to sequences. The probability chain rule factorizes any joint distribution over a sequence $x_{1:T}=(x_1,\ldots,x_T)$ into one conditional per position:
 
 $$
-[t,h,e,\;t,h,e,\;t,h,e,r,e].
-$$
+p_\theta(x_{1:T})=\prod_{t=1}^{T}p_\theta\!\left(x_t\mid x_{1:t-1}\right),
+$$ {#eq-ch02-chainrule}
 
-If $(t,h)$ is the most frequent adjacent pair, BPE creates a token `th` and replaces every non-overlapping occurrence. A later merge may combine `th` and `e` into `the`. Encoding new text replays the learned merges in order. Decoding expands each merged token back to its exact bytes, concatenates them, and runs UTF-8 decoding.
+where $\theta$ is the set of all model parameters. A **causal language model** implements the right-hand side directly: one network that, given a prefix, outputs a distribution over the next token. Nothing about @eq-ch02-chainrule is an approximation — the factorization is exact for any distribution. The modeling assumption is only that one network with shared weights can represent every conditional.
 
-The core is intentionally small:
+Training pairs each prefix with the token that actually followed it. From one contiguous token stream we can manufacture an aligned example at every position: the input at position $t$ is $x_t$, and the label is $x_{t+1}$. This is **teacher forcing** — during training every prefix comes from the real text, never from the model's own (initially terrible) predictions. The alignment is easiest to trust after seeing it once with real IDs:
 
-```python
-# bpe.py — BytePairTokenizer.train() and encode()
-for token in range(256, vocab_size):
-    counts = Counter(zip(ids, ids[1:]))
-    if not counts:
-        break
-    pair = min(counts, key=lambda item: (-counts[item], item))
-    ids = _replace_pair(ids, pair, token)
-    tokenizer.merges.append(Merge(*pair, token))
-    tokenizer.token_bytes[token] = (
-        tokenizer.token_bytes[pair[0]] + tokenizer.token_bytes[pair[1]]
+```{python}
+window = stream[:9]
+print("input  -> target")
+for current, nxt in zip(window, window[1:]):
+    print(f"{current:5d}  -> {nxt:5d}   "
+          f"{tokenizer.decode([current])!r} -> {tokenizer.decode([nxt])!r}")
+```
+
+Every row is one training example, and an input window of $T$ tokens yields $T$ of them at once. The helper that draws such windows from a stream is four lines of indexing, and it is worth reading closely because an off-by-one here is the classic way to leak labels:
+
+```{python}
+# @save
+import torch
+
+
+def next_token_batch(
+    data: torch.Tensor,
+    block_size: int,
+    batch_size: int,
+    generator: torch.Generator,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Draw aligned (input, target) windows from one contiguous token stream.
+
+    Targets are the same window shifted one position later, so position t of
+    the input is paired with the token that actually followed it. Every
+    position in the window is a training example.
+
+    Args:
+        data: A 1-D tensor holding the encoded token stream.
+        block_size: Window length T; each example predicts T next tokens.
+        batch_size: Number of windows to draw.
+        generator: Seeded generator choosing the window start offsets.
+
+    Returns:
+        A tuple ``(inputs, targets)``, each shaped ``(batch_size, block_size)``.
+    """
+    starts = torch.randint(
+        0, data.numel() - block_size - 1, (batch_size,), generator=generator
     )
-
-def encode(self, text: str) -> list[int]:
-    ids = list(text.encode("utf-8"))
-    for merge in self.merges:
-        ids = _replace_pair(ids, (merge.left, merge.right), merge.token)
-    return ids
+    inputs = torch.stack([data[start : start + block_size] for start in starts])
+    targets = torch.stack([data[start + 1 : start + block_size + 1] for start in starts])
+    return inputs, targets
 ```
 
-Two properties deserve separate tests. **Round-trip correctness** means `decode(encode(text)) == text` for empty strings, line breaks, emoji, and multilingual text. **Zero OOV** means encoding never needs an “unknown” token: an unseen string may fall back to several bytes, but every byte has an ID. Zero OOV does not mean equal efficiency. A string well represented in tokenizer training may use one merged token; an equally long string from another language or domain may require many. Chapter 5 measures this fertility effect at pretraining scale.
-
-The tokenizer is **frozen** before model pretraining. Once the model’s input embedding has shape $V\times d$ and its output head predicts $V$ logits, adding a merge would introduce a new row and output class with untrained parameters. You can continue to encode novel text through bytes, but you cannot silently change the vocabulary without changing and retraining model parameters. This is why tokenization is part of a model’s architecture contract, not a replaceable request-time utility.
-
-The byte fallback has one more consequence. A model can generate arbitrary byte tokens that do not yet form valid UTF-8. A streaming decoder may need to buffer an incomplete sequence; an undertrained model may emit permanently invalid sequences and require an explicit error policy. The build uses replacement characters only when rendering samples. Its tokenizer round-trip tests remain strict.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `bpe.py`: byte base vocabulary and deterministic merges | 80 total lines | Any Unicode input encodes without OOV and valid inputs round-trip exactly. |
-:::
-
-## The Next-Token Objective {#sec-ch02-objective}
-
-Let $x_{1:T}=(x_1,\ldots,x_T)$ be a token sequence of length $T$. The probability chain rule factorizes its joint probability as
-
-$$
-p_\theta(x_{1:T})=\prod_{t=1}^{T}p_\theta(x_t\mid x_{1:t-1}),
-$$
-
-where $\theta$ denotes all model parameters. A **causal language model** represents each conditional distribution using only the prefix before the target token.
-
-Training uses **teacher forcing**: every input prefix comes from the observed sequence, even if the model would have generated a different previous token. In code, one contiguous stream produces aligned arrays:
-
-$$
-\text{input}=[x_1,x_2,\ldots,x_{T-1}],\qquad
-\text{target}=[x_2,x_3,\ldots,x_T].
-$$
-
-The model emits logits $z_{t,v}$ for every position $t$ and vocabulary item $v\in\{1,\ldots,V\}$. Softmax converts logits into probabilities. For a batch with $B$ sequences and $T$ prediction positions, mean cross-entropy is
-
-$$
-\mathcal{L}(\theta)=
--\frac{1}{BT}\sum_{b=1}^{B}\sum_{t=1}^{T}
-\log p_\theta\!\left(x^{(b)}_{t+1}\mid x^{(b)}_{1:t}\right).
-$$
-
-Minimizing this loss makes the observed next token more probable. It does not directly reward factuality, helpfulness, or a completed downstream task. Those behaviors can emerge from data and later post-training, but the base objective is conditional likelihood.
-
-**Perplexity** is $\exp(\mathcal{L})$. It can be read as an effective branching factor only when loss is computed with the same tokenizer, masking, and data convention. Comparing perplexities across different vocabularies can mislead because each model predicts different units.
-
-Before learning, small random logits are often close enough to equal that $p(v)\approx1/V$. The expected target loss is then
-
-$$
--\log(1/V)=\ln V.
-$$
-
-For the build’s $V=280$, this baseline is $\ln 280=5.635$. The measured initial loss is 5.636. That agreement is not a quality result; it is a plumbing check. A much lower initial value invites an investigation into target leakage, duplicated labels, or a mask error.
-
-The trainer forms shifted examples explicitly:
-
-```python
-# train.py — _batch(), constructing teacher-forced examples
-starts = torch.randint(
-    0, data.numel() - block_size - 1, (batch_size,), generator=generator
-)
-inputs = torch.stack([
-    data[start : start + block_size] for start in starts
-])
-targets = torch.stack([
-    data[start + 1 : start + block_size + 1] for start in starts
-])
+```{python}
+data = torch.tensor(stream, dtype=torch.long)
+sampler = torch.Generator().manual_seed(11)
+inputs, targets = next_token_batch(data, block_size=8, batch_size=4, generator=sampler)
+print("inputs ", tuple(inputs.shape), " targets", tuple(targets.shape))
+print("shifted by exactly one:", torch.equal(inputs[:, 1:], targets[:, :-1]))
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `train.py`: shifted batch construction | 7 new lines | Each target is exactly the token one position after its input prefix. |
-:::
-
-## Attention as a Learned Weighted Lookup {#sec-ch02-attention}
-
-At each position, the model needs a content-dependent way to combine earlier states. A fixed-width convolution can only inspect a fixed neighborhood; a recurrent state must compress everything seen so far into one sequentially updated vector. Self-attention instead lets each position perform a learned lookup over visible positions.
-
-Let $X\in\mathbb{R}^{T\times d}$ contain one $d$-dimensional vector per token position. Learned matrices project it into queries, keys, and values:
+The model will emit a logit for every vocabulary item at every position; softmax turns each row of logits into a distribution, and the loss is the mean negative log probability of the true next token:
 
 $$
-Q=XW_Q,\qquad K=XW_K,\qquad V=XW_V,
+\mathcal{L}(\theta)=-\frac{1}{BT}\sum_{b=1}^{B}\sum_{t=1}^{T}
+\log p_\theta\!\left(x^{(b)}_{t+1}\mid x^{(b)}_{1:t}\right),
+$$ {#eq-ch02-loss}
+
+for a batch of $B$ windows of length $T$. This is cross-entropy, and it rewards exactly one thing: putting probability mass on the observed next token. It does not reward truthfulness, helpfulness, or task completion — those arrive, to the extent they do, through data and through the post-training of Chapter 7. **Perplexity** is $\exp(\mathcal{L})$, readable as an effective branching factor among tokens.
+
+The objective also hands us a free diagnostic. Before any training, a sanely initialized model spreads probability almost uniformly, so its loss should sit near $-\log(1/V)=\ln V$. For our $V=512$ that is $\ln 512 = 6.24$. When we first run the assembled model later in this chapter, we will check its initial loss against this number — if it starts much lower, something (usually the mask or the target alignment) is letting the label leak into the input.
+
+## Scaled dot-product attention {#sec-ch02-attention}
+
+The model must turn "a prefix of tokens" into "a prediction at each position", and the hard part is letting position $t$ use *relevant* earlier positions, where relevance depends on content. A convolution sees a fixed neighborhood. A recurrent state compresses the whole prefix into one vector updated in order. Attention takes a third route: every position performs a learned lookup over all visible positions [@vaswani2017attention].
+
+The intuition has three roles. Each position publishes a **query** — a vector describing what it is looking for. Each position also publishes a **key** — a vector advertising what it can offer — and a **value** — the actual information it will hand over if selected. A query is compared against every key; positions whose keys match the query contribute their values, in proportion to the match. Queries ask, keys advertise, values deliver.
+
+Formally, let $X\in\mathbb{R}^{T\times d}$ hold one $d$-dimensional vector per position. Learned projection matrices produce the three roles, $Q=XW_Q$, $K=XW_K$, $V=XW_V$, each row a $d_k$-dimensional vector, and one attention output row is a weighted average of value rows:
+
 $$
-
-with $Q,K,V\in\mathbb{R}^{T\times d_h}$ for one head of width $d_h$. A query describes what the current position seeks. A key describes how a source position can be matched. A value contains the information returned when that source is selected.
-
-The raw compatibility between query position $i$ and key position $j$ is the dot product $q_i^\top k_j$. Softmax makes the compatible scores nonnegative and sum to one:
-
-$$
-a_{ij}=
-\frac{\exp(q_i^\top k_j/\sqrt{d_h})}
-{\sum_{r}\exp(q_i^\top k_r/\sqrt{d_h})},
+A=\operatorname{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}\right),
 \qquad
-o_i=\sum_j a_{ij}v_j.
-$$
+O=AV,
+$$ {#eq-ch02-attention}
 
-Why divide by $\sqrt{d_h}$? If query and key components are independent, centered, and have unit variance, their dot product sums $d_h$ products and has variance proportional to $d_h$. Without scaling, increasing head width drives logits into saturated softmax regions with very small gradients. Dividing by $\sqrt{d_h}$ keeps the score scale roughly stable.
+where $A\in\mathbb{R}^{T\times T}$ holds the attention weights ($A_{ij}$ is how much position $i$ draws from position $j$), softmax is applied to each row, and $d_k$ is the width of each query and key. Every symbol except the $\sqrt{d_k}$ is forced by the intuition: dot products measure query-key match, softmax turns scores into a positive, sum-to-one mixture, and the matrix product $AV$ takes the mixture of values.
 
-Attention weights are input-dependent routing coefficients, not explanations by default. A high coefficient says that a value vector contributes strongly through this head at this layer. Residual paths, other heads, later layers, and the value/output projections all affect the final prediction. Chapter 25 returns to the residual stream as the more useful coordinate system for causal analysis.
+So why divide by $\sqrt{d_k}$? Because dot products grow with dimension. If query and key components are roughly independent with unit variance, their dot product is a sum of $d_k$ terms and its standard deviation is about $\sqrt{d_k}$. We can watch this happen:
 
-The dense computation forms a $T\times T$ score matrix. Its prefill cost grows quadratically with sequence length, even though the learned projection parameter count is independent of $T$. Chapter 3 develops alternatives and the effective-context tradeoffs; this chapter keeps dense attention so the causal contract is visible.
-
-## Multi-Head Attention and the Causal Mask {#sec-ch02-multihead}
-
-One attention map must use one similarity geometry and one value representation. **Multi-head attention** runs $H$ such lookups in parallel. With model width $d$ and $H$ heads, this build uses $d_h=d/H$. It concatenates the $H$ head outputs back to width $d$ and applies an output projection $W_O$:
-
-$$
-\operatorname{MHA}(X)=
-\operatorname{Concat}(O^{(1)},\ldots,O^{(H)})W_O.
-$$
-
-Heads are not separate networks. They are slices of tensors produced by shared layer input and batched matrix operations. Different learned projections allow different matching patterns, while $W_O$ mixes their returned information into one update.
-
-Causality enters before softmax. Define mask $M\in\mathbb{R}^{T\times T}$ as
-
-$$
-M_{ij}=
-\begin{cases}
-0,&j\le i,\\
--\infty,&j>i.
-\end{cases}
-$$
-
-Then
-
-$$
-A=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_h}}+M\right).
-$$
-
-An exponentiated negative infinity contributes zero probability, so row $i$ can mix only values at positions ${0}$ through $i$. The triangular structure is easiest to audit directly:
-
-| Query position | Key 0 | Key 1 | Key 2 | Key 3 |
-|---:|:---:|:---:|:---:|:---:|
-| 0 | allow | block | block | block |
-| 1 | allow | allow | block | block |
-| 2 | allow | allow | allow | block |
-| 3 | allow | allow | allow | allow |
-
-The implementation constructs absolute query and key positions, which also makes the same mask work when a cache precedes a chunk:
-
-```python
-# tinygpt.py — CausalSelfAttention.forward()
-qkv = self.qkv(x).view(
-    batch, steps, 3, self.n_heads, self.head_dim
-)
-query, key, value = qkv.permute(2, 0, 3, 1, 4).unbind(0)
-query, key = self.q_norm(query), self.k_norm(key)
-past_steps = 0 if past is None else past[0].size(-2)
-if past is not None:
-    key = torch.cat((past[0], key), dim=-2)
-    value = torch.cat((past[1], value), dim=-2)
-scores = query @ key.transpose(-2, -1) / math.sqrt(self.head_dim)
-query_positions = past_steps + torch.arange(steps, device=x.device)[:, None]
-key_positions = torch.arange(key.size(-2), device=x.device)[None, :]
-scores = scores.masked_fill(
-    key_positions > query_positions, float("-inf")
-)
-mixed = scores.softmax(dim=-1) @ value
+```{python}
+torch.manual_seed(0)
+for dim in (4, 64, 256):
+    queries, keys = torch.randn(10_000, dim), torch.randn(10_000, dim)
+    dots = (queries * keys).sum(-1)
+    print(f"d_k={dim:4d}  std(q.k) = {dots.std():6.2f}   "
+          f"sqrt(d_k) = {dim ** 0.5:6.2f}   std(q.k/sqrt(d_k)) = {(dots / dim ** 0.5).std():.2f}")
 ```
 
-The test changes only future token IDs and asserts bit-for-bit equality of all earlier logits on the CPU path. This is stronger than checking that a mask tensor looks triangular: it verifies the externally relevant information-flow invariant through the assembled model.
+The measured standard deviation tracks $\sqrt{d_k}$ almost exactly, and dividing by it restores scale 1.0 at every width. The reason we care is what large scores do to softmax. Feed it scores at the spread a width-256 head would produce unscaled, and the distribution collapses:
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `tinygpt.py`: QKV projections, multi-head reshape, and causal mask | 31 new lines | Changing future tokens cannot change earlier logits. |
+```{python}
+torch.set_printoptions(precision=2, sci_mode=False)
+scores = torch.randn(6, generator=torch.Generator().manual_seed(1))
+print("softmax at score scale  2:", torch.softmax(scores * 2, -1))
+print("softmax at score scale 16:", torch.softmax(scores * 16, -1))
+```
+
+At scale 16 nearly all mass sits on two entries and the rest are zero to two decimal places. A saturated softmax passes almost no gradient to the losing positions, so the model cannot learn to redistribute its attention. The $\sqrt{d_k}$ keeps scores in softmax's responsive range regardless of head width. That is the entire derivation — @eq-ch02-attention is the intuition plus one variance correction.
+
+The implementation is @eq-ch02-attention line for line, returning the weights as well as the output so we can inspect them:
+
+```{python}
+# @save
+import math
+
+
+def scaled_dot_product_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute attention outputs and weights for one set of projections.
+
+    Scores are query-key dot products scaled by sqrt(d_k) so their spread
+    stays inside softmax's responsive range at any head width; each output
+    row is the weight-averaged mixture of value rows.
+
+    Args:
+        query: Queries shaped ``(..., T_q, d_k)``.
+        key: Keys shaped ``(..., T_k, d_k)``.
+        value: Values shaped ``(..., T_k, d_v)``.
+        mask: Optional boolean tensor broadcastable to ``(..., T_q, T_k)``;
+            True marks pairs that must receive zero weight.
+
+    Returns:
+        A tuple ``(output, weights)`` shaped ``(..., T_q, d_v)`` and
+        ``(..., T_q, T_k)``; each weight row is non-negative and sums to 1.
+    """
+    scores = query @ key.transpose(-2, -1) / math.sqrt(query.size(-1))
+    if mask is not None:
+        scores = scores.masked_fill(mask, float("-inf"))
+    weights = scores.softmax(dim=-1)
+    return weights @ value, weights
+```
+
+To see it produce something interpretable, we run a four-token example small enough to check by hand. Pretend the sequence is "The rabbit was late" and that the projections have already been learned. We write the query, key, and value rows ourselves, with a story: the query of "was" is looking for its subject, and the key of "rabbit" advertises "I am a noun". Values are one-hot so that each position's payload is recognizable in the output.
+
+```{python}
+tokens = ["The", "rabbit", "was", "late"]
+queries = torch.tensor([[0.0, 0, 0, 0],    # The: asks for nothing
+                        [0.0, 0, 2, 0],    # rabbit: seeks a determiner
+                        [3.0, 0, 0, 0],    # was: seeks its subject noun
+                        [2.0, 0, 0, 2]])   # late: seeks a noun and a verb
+keys = torch.tensor([[0.0, 0, 2, 0],       # The advertises: determiner
+                     [3.0, 0, 0, 0],       # rabbit advertises: noun
+                     [0.0, 0, 0, 2],       # was advertises: verb
+                     [0.0, 2, 0, 0]])      # late advertises: adjective
+values = torch.eye(4)
+output, weights = scaled_dot_product_attention(queries, keys, values)
+print("attention weights (rows: query position, columns: key position)")
+print(weights)
+print("output shape:", tuple(output.shape))
+```
+
+Read the weight matrix one row at a time, since each row is one position's lookup. Row 0, "The", has a zero query — it asks for nothing — and gets the uniform mixture 0.25 everywhere: attention with no preference is an average. Row 2, "was", is the sharp one: its query aligns with the key of "rabbit" and takes 0.97 of the weight, so its output is essentially the value of "rabbit" — the lookup found the subject. Row 3, "late", splits its attention: 0.68 on "rabbit" and 0.25 on "was", a soft mixture of two relevant positions rather than a hard choice. And because we chose one-hot values, each output row *is* its weight row — a reminder that attention's output is never anything more exotic than a weighted average of value vectors.
+
+One thing about this matrix should bother you: row 0 draws weight from columns 1, 2, and 3 — positions that come *later* in the sequence. For a model trained to predict the next token, that is not a quirk; it is a fatal bug, and it is the next section's problem.
+
+::: {.callout-note title="In the interview"}
+**Q. Why does attention divide by $\sqrt{d_k}$ and not, say, $d_k$?**
+The dot product of two roughly independent unit-variance vectors has standard deviation $\sqrt{d_k}$, so dividing by $\sqrt{d_k}$ restores spread 1.0 at any head width; dividing by $d_k$ would crush scores toward zero and flatten every attention pattern toward uniform. The trap is answering "it stabilizes training" without the variance argument — the interviewer wants the one-line derivation, and it is the difference between recalling the formula and owning it.
 :::
 
-## The Residual Stream and a Modern Block {#sec-ch02-residual}
+## Multi-head attention and the causal mask {#sec-ch02-multihead}
 
-Attention returns one proposed update per position. A feed-forward network returns another. The **residual stream** is the shared width-$d$ state that carries the original embedding and every accumulated update through the stack.
+First, the bug. A team trains its first language model and the loss collapses within a few hundred steps to near zero, while generated text stays incoherent. The architecture has no causal mask: at position $t$, attention can read position $t+1$ — which is, by the teacher-forcing construction of @sec-ch02-objective, the exact label the model is being scored on. The optimizer discovers the shortcut immediately. The loss is real arithmetic attached to an invalid information path, and every downstream number the run produced is worthless. The fix is the **causal mask**: position $t$ may attend to positions ${1}$ through $t$ and to nothing later. In @eq-ch02-attention this means forcing $A_{ij}=0$ whenever $j>i$, which we achieve by setting those scores to $-\infty$ before the softmax — an exponentiated $-\infty$ contributes zero mass. Applied to the worked example:
 
-For layer $\ell$, this build uses a pre-normalized block:
+```{python}
+future = torch.triu(torch.ones(4, 4, dtype=torch.bool), diagonal=1)
+print(future)
+masked_output, masked_weights = scaled_dot_product_attention(
+    queries, keys, values, mask=future
+)
+print(masked_weights)
+```
+
+The upper triangle is exactly zero — those lookups no longer exist. Row 0 now has nowhere to look but itself, so its weight is 1.0 there; row 2 still finds "rabbit", because its subject sits safely in the past. Each row renormalizes over what remains visible. The mask costs nothing to apply and is the single most important line in the model: with it, all $T$ positions can be trained in parallel on one window (each position sees precisely its own prefix) and generation cannot cheat because there is nothing ahead to read.
+
+The second upgrade is capacity. One attention map imposes one notion of relevance per layer: a single softmax over the prefix must simultaneously serve "find my subject", "find the matching quotation mark", and "copy the previous token". **Multi-head attention** runs $H$ independent lookups in parallel, each in a subspace of width $d_h=d/H$, then concatenates the $H$ outputs and mixes them with a final projection $W_O$. The heads are not separate networks — they are slices of the same three projected tensors, computed in one batched matrix multiply. With that, plus two practical details, we can write the layer we will actually use. The details: we normalize queries and keys per head before the dot product (**QK normalization**, an RMS rescaling that keeps score magnitudes controlled over a long training run), and we accept an optional cache of past keys and values — idle until the final section, where it becomes the entire story.
+
+```{python}
+# @save
+from torch import Tensor, nn
+
+LayerCache = tuple[Tensor, Tensor]
+
+
+@dataclass(frozen=True)
+class GPTConfig:
+    """Hyperparameters that fix every tensor shape in the model.
+
+    vocab_size ties the model to one frozen tokenizer; block_size caps how
+    many positions the model can represent at once; d_model is the width of
+    the residual stream; n_heads splits attention into d_model // n_heads
+    subspaces; n_layers stacks identical blocks; mlp_ratio sizes the
+    feed-forward hidden width relative to d_model.
+    """
+
+    vocab_size: int
+    block_size: int = 128
+    d_model: int = 64
+    n_heads: int = 4
+    n_layers: int = 2
+    mlp_ratio: float = 8 / 3
+```
+
+```{python}
+# @save
+class CausalSelfAttention(nn.Module):
+    """Masked multi-head attention over a token sequence, cache-ready.
+
+    One linear layer projects the input to queries, keys, and values for
+    all heads at once; heads are views of that tensor, not separate
+    modules. Masking compares absolute key positions with absolute query
+    positions, so the same code is correct whether the layer sees a full
+    window (training) or one new token extending a cache (generation).
+    """
+
+    def __init__(self, config: GPTConfig) -> None:
+        super().__init__()
+        if config.d_model % config.n_heads:
+            raise ValueError("d_model must be divisible by n_heads")
+        self.n_heads = config.n_heads
+        self.head_dim = config.d_model // config.n_heads
+        self.qkv = nn.Linear(config.d_model, 3 * config.d_model, bias=False)
+        self.q_norm = nn.RMSNorm(self.head_dim)
+        self.k_norm = nn.RMSNorm(self.head_dim)
+        self.output = nn.Linear(config.d_model, config.d_model, bias=False)
+
+    def forward(self, x: Tensor, past: LayerCache | None = None) -> tuple[Tensor, LayerCache]:
+        batch, steps, width = x.shape
+        qkv = self.qkv(x).view(batch, steps, 3, self.n_heads, self.head_dim)
+        query, key, value = qkv.permute(2, 0, 3, 1, 4).unbind(0)
+        query, key = self.q_norm(query), self.k_norm(key)
+        past_steps = 0 if past is None else past[0].size(-2)
+        if past is not None:
+            key = torch.cat((past[0], key), dim=-2)
+            value = torch.cat((past[1], value), dim=-2)
+        scores = query @ key.transpose(-2, -1) / math.sqrt(self.head_dim)
+        query_positions = past_steps + torch.arange(steps, device=x.device)[:, None]
+        key_positions = torch.arange(key.size(-2), device=x.device)[None, :]
+        scores = scores.masked_fill(key_positions > query_positions, float("-inf"))
+        mixed = scores.softmax(dim=-1) @ value
+        mixed = mixed.transpose(1, 2).contiguous().view(batch, steps, width)
+        return self.output(mixed), (key, value)
+```
+
+A shape trace confirms the plumbing: a batch of 2 sequences of 6 positions at width 64 goes in, the same shape comes out, and the returned cache holds one key and one value tensor per head per position.
+
+```{python}
+torch.manual_seed(1)
+config = GPTConfig(vocab_size=tokenizer.vocab_size)
+attention = CausalSelfAttention(config)
+x = torch.randn(2, 6, config.d_model)
+out, (cached_keys, cached_values) = attention(x)
+print("input ", tuple(x.shape), " -> output", tuple(out.shape))
+print("cached keys per layer:", tuple(cached_keys.shape),
+      "  (batch, heads, positions, head_dim)")
+```
+
+And the property that matters more than any shape — the mask actually seals the future. We change the last position's input and check that every earlier output is bit-for-bit unchanged:
+
+```{python}
+x_changed = x.clone()
+x_changed[:, -1] = torch.randn(2, config.d_model)
+out_changed, _ = attention(x_changed)
+print("earlier outputs changed by:", (out[:, :-1] - out_changed[:, :-1]).abs().max().item())
+```
+
+Zero — not small, zero. Information from position 6 has no path into positions 1 through 5. This is the executable form of the causal contract, and the chapter's test suite pins it permanently.
+
+## The residual stream and the transformer block {#sec-ch02-residual}
+
+Attention moves information *between* positions. It is deliberately bad at transforming it: the output is a weighted average of linearly projected inputs. The transformer pairs it with a second sublayer, a position-wise feed-forward network (FFN), that does the opposite — a genuine nonlinear transformation applied to each position independently, with no communication at all. The architecture alternates the two, and the way they compose is the most useful mental picture in the book: the **residual stream**.
+
+Each position carries a width-$d$ vector from the embedding all the way to the output. No sublayer ever replaces that vector. Instead each sublayer *reads* the stream, computes an update, and *adds* it back:
 
 $$
-X^{\ell+\frac12}
-=X^\ell+
-\operatorname{Attention}\!\left(\operatorname{RMSNorm}(X^\ell)\right),
-$$
+X^{\ell+\frac{1}{2}}=X^{\ell}+\operatorname{Attn}\!\left(\operatorname{Norm}(X^{\ell})\right),
+\qquad
+X^{\ell+1}=X^{\ell+\frac{1}{2}}+\operatorname{FFN}\!\left(\operatorname{Norm}(X^{\ell+\frac{1}{2}})\right).
+$$ {#eq-ch02-residual}
 
-$$
-X^{\ell+1}
-=X^{\ell+\frac12}+
-\operatorname{SwiGLU}\!\left(
-\operatorname{RMSNorm}(X^{\ell+\frac12})
-\right).
-$$
-
-The plus signs are load-bearing. A sublayer writes an update rather than replacing the state. This gives gradients a direct identity path and gives analysis a stable question: what information does a component read from the stream, and what direction does it write back?
+The plus signs carry the meaning. Gradients flow through the identity path untouched, which is what lets deep stacks train; and semantically, the stream becomes a shared bus into which every sublayer writes and from which every later sublayer reads. Chapter 25 builds its interpretability toolkit on exactly this picture — asking what each component reads from the stream and what direction it writes back. @fig-ch02-residual-stream draws one block.
 
 ```{mermaid}
 %%| label: fig-ch02-residual-stream
-%%| fig-cap: "How do attention and the MLP update one shared residual stream?"
+%%| fig-cap: "How does one block update the residual stream? Both sublayers read a normalized copy and add their update back; attention is the only place positions communicate, and the FFN transforms each position independently."
 flowchart LR
-    X["Residual stream X(l)"] --> N1["RMSNorm"]
-    N1 --> A["Causal multi-head attention"]
-    A --> P1["add"]
+    X["residual stream X(l)"] --> N1["RMSNorm"]
+    N1 --> A["causal multi-head attention<br/>(mixes across positions)"]
+    A --> P1(("+"))
     X --> P1
-    P1 --> H["Residual stream X(l+1/2)"]
+    P1 --> H["X(l + 1/2)"]
     H --> N2["RMSNorm"]
-    N2 --> F["SwiGLU feed-forward"]
-    F --> P2["add"]
+    N2 --> F["SwiGLU FFN<br/>(each position independently)"]
+    F --> P2(("+"))
     H --> P2
-    P2 --> Y["Residual stream X(l+1)"]
+    P2 --> Y["residual stream X(l+1)"]
 ```
 
-@fig-ch02-residual-stream shows why attention is not the whole Transformer. Attention moves information among positions. The feed-forward network transforms each position independently using the same weights. Depth alternates communication and per-position computation while the residual stream preserves and combines their updates.
-
-The feed-forward sublayer expands width $d$ to a hidden width $h$, applies a gated nonlinearity, and projects back:
+Two design choices in @eq-ch02-residual are worth naming because they differ from the 2017 original. Normalization happens *before* each sublayer (pre-norm), which keeps the identity path clean and trains stably at depth, and the statistic is RMSNorm — a rescaling by root-mean-square without mean subtraction, which does LayerNorm's stabilizing job with less work [@zhang2019rmsnorm]. The FFN is a gated variant called SwiGLU [@shazeer2020glu]: expand the input to a hidden width $h$, split into a *gate* and a *value* path, multiply them elementwise after a smooth nonlinearity on the gate, and project back down:
 
 $$
-\operatorname{SwiGLU}(x)
-=W_{\text{down}}
-\left[
-\operatorname{SiLU}(W_{\text{gate}}x)
-\odot(W_{\text{value}}x)
-\right].
-$$
+\operatorname{SwiGLU}(x)=W_{\text{down}}\big[\operatorname{SiLU}(W_{\text{gate}}\,x)\odot(W_{\text{value}}\,x)\big].
+$$ {#eq-ch02-swiglu}
 
-Here $\odot$ is elementwise multiplication. The artifact combines gate and value projections into one matrix for efficient code, then splits its output.
+The implementation fuses the gate and value projections into one matrix and splits the result, which is how production code writes it:
 
-The taught block is modernized without pretending one recipe is universal:
+```{python}
+# @save
+from torch.nn import functional as F
 
-| Design surface | Original Transformer baseline | Taught block | Engineering reason |
+
+class SwiGLU(nn.Module):
+    """A gated feed-forward sublayer applied to each position independently.
+
+    One fused projection produces both the gate and the value path; the
+    SiLU-activated gate multiplicatively filters the value before the down
+    projection. This is where the model does its per-position nonlinear
+    computation — no information crosses positions here.
+    """
+
+    def __init__(self, config: GPTConfig) -> None:
+        super().__init__()
+        hidden = max(8, round(config.mlp_ratio * config.d_model))
+        self.up_gate = nn.Linear(config.d_model, 2 * hidden, bias=False)
+        self.down = nn.Linear(hidden, config.d_model, bias=False)
+
+    def forward(self, x: Tensor) -> Tensor:
+        gate, value = self.up_gate(x).chunk(2, dim=-1)
+        return self.down(F.silu(gate) * value)
+```
+
+The block is @eq-ch02-residual verbatim — two reads, two adds:
+
+```{python}
+# @save
+class Block(nn.Module):
+    """One pre-norm transformer block: attention update, then FFN update.
+
+    The block never replaces the residual stream; each sublayer reads a
+    normalized copy and adds its result back, so stacking blocks composes
+    updates rather than chaining replacements.
+    """
+
+    def __init__(self, config: GPTConfig) -> None:
+        super().__init__()
+        self.attention_norm = nn.RMSNorm(config.d_model)
+        self.attention = CausalSelfAttention(config)
+        self.mlp_norm = nn.RMSNorm(config.d_model)
+        self.mlp = SwiGLU(config)
+
+    def forward(self, x: Tensor, past: LayerCache | None = None) -> tuple[Tensor, LayerCache]:
+        update, present = self.attention(self.attention_norm(x), past)
+        x = x + update
+        return x + self.mlp(self.mlp_norm(x)), present
+```
+
+Running one freshly initialized block shows the additive design at work: with small random weights the updates are small, so the block starts life close to the identity function — a gentle default from which training can grow structure.
+
+```{python}
+torch.manual_seed(2)
+block = Block(config)
+stream_in = torch.randn(1, 6, config.d_model)
+stream_out, _ = block(stream_in)
+update_size = (stream_out - stream_in).abs().mean()
+print("shape preserved:", tuple(stream_in.shape) == tuple(stream_out.shape))
+print(f"mean |update| = {update_size:.4f} vs mean |stream| = {stream_in.abs().mean():.4f}")
+```
+
+## The full model: embeddings to logits {#sec-ch02-decoder}
+
+Four stages remain to turn token IDs into next-token distributions: an **embedding table** that maps each of the $V$ token IDs to a learned width-$d$ vector; a **position embedding** that lets the model distinguish the same token at different offsets (attention alone is permutation-blind); the stack of $L$ blocks; and a final norm followed by the **language-model head**, a $d\times V$ linear map from the last residual state to one logit per vocabulary item. We use a learned absolute position table here because it is the simplest thing that works at one fixed block size; Chapter 3 replaces it with rotary embeddings and treats context extension properly. @fig-ch02-forward-path locates all four stages.
+
+```{mermaid}
+%%| label: fig-ch02-forward-path
+%%| fig-cap: "What happens between token IDs and a next-token distribution? Embeddings and positions initialize the residual stream, the blocks refine it under the causal mask, and the tied head reads logits out of the final state."
+flowchart LR
+    T["token IDs<br/>(B, T)"] --> E["token embedding<br/>V x d (tied with head)"]
+    P["positions 0..T-1"] --> PE["position embedding<br/>block_size x d"]
+    E --> S["residual stream<br/>(B, T, d)"]
+    PE --> S
+    S --> B1["block 1"] --> B2["block 2"] --> N["final RMSNorm"]
+    N --> LM["LM head = E transposed"] --> L["logits (B, T, V)"]
+```
+
+One deliberate economy: the LM head reuses the embedding table. **Weight tying** sets $W_{\text{head}}=E$, so the same row serves both as "the vector we read in when we see token $v$" and "the direction we score against when predicting token $v$" [@press2017tying]. It removes $V\times d$ parameters — a large fraction of a small model — and shares one token geometry between input and output.
+
+```{python}
+# @save
+class TinyGPT(nn.Module):
+    """A decoder-only causal language model with a tied LM head.
+
+    The forward pass is the whole story of this chapter: embed tokens and
+    positions into the residual stream, apply the blocks under the causal
+    mask, normalize, and read logits out through the tied head. The same
+    method serves training (pass targets to get a loss) and cached
+    generation (pass the cache from the previous call).
+    """
+
+    def __init__(self, config: GPTConfig) -> None:
+        super().__init__()
+        self.config = config
+        self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
+        self.position_embedding = nn.Embedding(config.block_size, config.d_model)
+        self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
+        self.final_norm = nn.RMSNorm(config.d_model)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.apply(self._initialize)
+        self.lm_head.weight = self.token_embedding.weight
+
+    @staticmethod
+    def _initialize(module: nn.Module) -> None:
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(
+        self,
+        tokens: Tensor,
+        targets: Tensor | None = None,
+        cache: list[LayerCache] | None = None,
+    ) -> tuple[Tensor, Tensor | None, list[LayerCache]]:
+        """Compute causal logits, an optional loss, and the updated cache.
+
+        Args:
+            tokens: Token IDs shaped ``(batch, steps)``.
+            targets: Optional next-token labels with the same shape; when
+                given, the mean cross-entropy of @eq-ch02-loss is returned.
+            cache: Optional per-layer past keys and values; when given,
+                ``tokens`` is treated as a continuation of that prefix.
+
+        Returns:
+            Logits shaped ``(batch, steps, vocab_size)``, the loss or
+            ``None``, and one ``(key, value)`` pair per layer.
+
+        Raises:
+            ValueError: If cached plus new positions exceed ``block_size``.
+        """
+        _, steps = tokens.shape
+        past_steps = 0 if cache is None else cache[0][0].size(-2)
+        if past_steps + steps > self.config.block_size:
+            raise ValueError("sequence exceeds configured block_size")
+        positions = torch.arange(past_steps, past_steps + steps, device=tokens.device)
+        x = self.token_embedding(tokens) + self.position_embedding(positions)
+        present: list[LayerCache] = []
+        for index, block in enumerate(self.blocks):
+            layer_past = None if cache is None else cache[index]
+            x, layer_present = block(x, layer_past)
+            present.append(layer_present)
+        logits = self.lm_head(self.final_norm(x))
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.flatten(0, 1), targets.flatten())
+        return logits, loss, present
+```
+
+We build it and run the two checks we earned earlier: the shape trace, and the $\ln V$ plumbing check from @sec-ch02-objective.
+
+```{python}
+torch.manual_seed(20)
+torch.set_num_threads(1)
+model = TinyGPT(config)
+print(f"parameters: {sum(p.numel() for p in model.parameters()):,}")
+logits, _, _ = model(inputs[:1])
+print("tokens", tuple(inputs[:1].shape), "-> logits", tuple(logits.shape))
+_, initial_loss, _ = model(inputs, targets)
+print(f"initial loss = {initial_loss.item():.3f}   ln(512) = {math.log(512):.3f}")
+```
+
+The initial loss lands within a tenth of $\ln V$ (the residue is initialization noise on a small evaluation batch): the untrained model is honestly clueless, predicting near-uniformly, with no label leaking in. Weight tying is also checkable rather than take-our-word-for-it — the head and the embedding are one tensor in storage, and untying would cost another $V\times d$ parameters:
+
+```{python}
+tied = model.lm_head.weight.data_ptr() == model.token_embedding.weight.data_ptr()
+total = sum(p.numel() for p in model.parameters())
+untied_extra = config.vocab_size * config.d_model
+print(f"head and embedding share storage: {tied}")
+print(f"tied: {total:,} params   untied would be: {total + untied_extra:,} "
+      f"(+{100 * untied_extra / total:.0f}%)")
+```
+
+Nearly a quarter more parameters, declined with one line. To see text rather than tensors we need a generation loop around the model: take the logits at the last position, choose a token, append it, repeat. Temperature works exactly as we measured in @sec-ch01-sampling — dividing logits before softmax to sharpen or flatten the draw — so we reuse it here without re-deriving it.
+
+```{python}
+# @save
+@torch.inference_mode()
+def generate(
+    model: TinyGPT,
+    prompt: Tensor,
+    max_new_tokens: int,
+    temperature: float = 0.0,
+    seed: int = 0,
+    use_cache: bool = True,
+) -> Tensor:
+    """Autoregressively extend a prompt, with or without KV caching.
+
+    Each step feeds the model either the whole sequence so far (uncached)
+    or only the newest token plus the cache (cached); the two paths must
+    produce the same tokens, which the chapter verifies directly.
+
+    Args:
+        model: A ``TinyGPT`` in any mode; evaluation mode is set here.
+        prompt: Token IDs shaped ``(batch, prompt_steps)``.
+        max_new_tokens: How many tokens to append.
+        temperature: Zero selects the argmax; positive values sample from
+            the temperature-scaled distribution.
+        seed: Generator seed used when sampling.
+        use_cache: Reuse past keys and values instead of recomputing them.
+
+    Returns:
+        The prompt with ``max_new_tokens`` generated IDs appended.
+
+    Raises:
+        ValueError: If the finished sequence would exceed ``block_size``.
+    """
+    model.eval()
+    if prompt.size(1) + max_new_tokens > model.config.block_size:
+        raise ValueError("generation would exceed configured block_size")
+    output = prompt.clone()
+    cache: list[LayerCache] | None = None
+    sampler = torch.Generator(device=prompt.device).manual_seed(seed)
+    for _ in range(max_new_tokens):
+        step_input = output if not use_cache or cache is None else output[:, -1:]
+        logits, _, cache = model(step_input, cache=cache if use_cache else None)
+        next_logits = logits[:, -1]
+        if temperature == 0:
+            next_token = next_logits.argmax(dim=-1, keepdim=True)
+        else:
+            probabilities = (next_logits / temperature).softmax(dim=-1)
+            next_token = torch.multinomial(probabilities, 1, generator=sampler)
+        output = torch.cat((output, next_token), dim=1)
+    return output
+
+
+TinyGPT.generate = generate
+```
+
+What does a freshly initialized model have to say? We ask it, honestly:
+
+```{python}
+prompt = torch.tensor([tokenizer.encode("Alice ")])
+untrained = generate(model, prompt, 40, temperature=1.0, seed=1)
+print(repr(tokenizer.decode(untrained[0].tolist(), errors="replace")))
+```
+
+Byte soup — including fragments that are not valid UTF-8, which the `errors="replace"` policy renders as replacement characters. This is the correct output of a correct implementation: the machinery works end to end, and the weights know nothing yet. Keep this string in mind; it is the baseline that training must beat.
+
+Why did this decoder-only shape — rather than the original encoder-decoder transformer — become the default for language modeling at scale [@radford2019language]? Because one causal stream is the lowest-friction interface to text. Any document trains it without task-specific input/output boundaries; prompts, examples, retrieved passages, and answers all live in a single sequence; and autoregressive inference maps directly onto a reusable prefix cache, which Chapter 10 shows is the economic heart of serving. Encoder-only models still make sense when every position may look both directions and nothing is generated (embedding models, classifiers — Chapter 14 uses them); encoder-decoder shapes persist where a fully visible input maps to a distinct output. The convergence is an engineering verdict, not a theorem.
+
+The block we built is the *2026 recipe*, and it differs from the 2017 original in ways that have themselves become stable. The pattern of the table below is worth internalizing: nothing in the transformer was sacred, and each entry was replaced by something simpler or better-conditioned once training runs got long enough to expose the difference.
+
+| Design surface | Original transformer (2017) | This chapter's block | Why it moved |
 |---|---|---|---|
-| Normalization placement | After each residual addition | Before each sublayer | A clean identity path and better-behaved initialization gradients |
-| Normalization statistic | LayerNorm | RMSNorm | Rescaling without mean subtraction |
-| Query/key control | Scale only by $\sqrt{d_h}$ | Per-head RMS normalization plus scaling | Prevent uncontrolled query/key magnitude from dominating scores |
-| Feed-forward activation | ReLU | SwiGLU | Learned gate over a smooth nonlinear projection |
-| Linear biases | Present | Omitted | Smaller, simpler parameter surface |
-| Output embedding | Separate matrix | Tied to input embeddings | Removes $Vd$ parameters and shares token geometry |
+| Overall shape | Encoder-decoder | Decoder-only | One stream, one objective, one cache |
+| Norm placement | After the residual add | Before each sublayer | Clean identity path; stable at depth |
+| Norm statistic | LayerNorm | RMSNorm | Same stabilization, no mean subtraction |
+| FFN | ReLU, width ${4d}$ | SwiGLU, width $\tfrac{8}{3}d$ | Gated path wins at equal parameter count |
+| Positions | Fixed sinusoids added once | Learned table here; RoPE in practice | Relative offsets extend; Chapter 3 |
+| Attention logits | ${1/\sqrt{d_k}}$ only | Plus QK normalization | Bounds score growth over long runs |
+| Linear biases | Present everywhere | Omitted | No measurable loss, simpler kernels |
+| Dropout | 0.1 throughout | None | Near-one-epoch training rarely overfits |
 
-These are choices, not laws. Post-LN, LayerNorm, GELU, biases, untied heads, and attention-score controls can still be appropriate. “Often replaced” is more accurate than “retired.” A production architecture is an interacting configuration whose choices must be verified together.
-
-```python
-# tinygpt.py — Block.forward()
-update, present = self.attention(self.attention_norm(x), past)
-x = x + update
-return x + self.mlp(self.mlp_norm(x)), present
-
-# tinygpt.py — SwiGLU.forward()
-gate, value = self.up_gate(x).chunk(2, dim=-1)
-return self.down(F.silu(gate) * value)
-```
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `tinygpt.py`: pre-norm attention and SwiGLU residual updates | 25 new lines | Every sublayer reads and writes width $d$, so residual additions are shape-preserving. |
+::: {.landscape-2026}
+**The recipe above matches current open-weight releases as of 2026-07-20** — pre-norm RMSNorm, gated FFNs, RoPE, no biases, and QK-norm in several major families — but individual choices keep shifting at the margins (some frontier models untie embeddings, revisit attention variants, or restore selective dropout). Verify live: open the `config.json` of any current open-weight model on Hugging Face and map each field to a row of this table.
 :::
 
-## Decoder-Only: From Embeddings to Logits {#sec-ch02-decoder}
+## Counting parameters and FLOPs {#sec-ch02-accounting}
 
-The Transformer originally paired a bidirectional encoder with an autoregressive decoder for sequence-to-sequence translation. A general causal language model can use only the decoder-style stack: represent all conditioning text and desired continuation as one token stream, then apply the next-token objective everywhere.
+Before training the model we should be able to predict its size and cost from the configuration alone — the habit that later chapters (5, 6, and 10) turn into capacity planning. The rules fall out of the shapes we just built. Each block carries ${4d^2}$ attention weights (three projections in the fused QKV plus the output) and ${3dh}$ FFN weights (the fused gate-and-value up projection plus the down projection). The tied embedding contributes $Vd$ once, the position table $T_{\max}d$, and the norms a rounding error. We write it as a function so the claim is executable:
 
-The path from token ID to distribution has four stages:
+```{python}
+# @save
+def param_breakdown(config: GPTConfig) -> dict[str, int]:
+    """Predict parameter counts per component from shapes alone.
 
-1. **Token embeddings** look up one vector in $E\in\mathbb{R}^{V\times d}$ for each token.
-2. **Position representations** distinguish identical tokens at different sequence locations.
-3. **Decoder blocks** update the residual stream under the causal mask.
-4. **The language-model head** maps each final vector to $V$ logits.
+    Attention costs 4·d² per layer (fused QKV plus output projection);
+    the SwiGLU FFN costs 3·d·h per layer (fused gate and value up
+    projections plus the down projection); the tied embedding is counted
+    once because the LM head shares its storage.
 
-This build uses learned absolute position embeddings so Chapter 2 remains self-contained. That choice imposes a fixed table and does not extrapolate naturally beyond trained positions. Chapter 3 replaces the placeholder with rotary position mechanisms and treats extension in depth.
+    Args:
+        config: The architecture hyperparameters.
 
-The output head would normally require a matrix $W_{\text{out}}\in\mathbb{R}^{V\times d}$. **Weight tying** sets $W_{\text{out}}=E$, interpreting the same row both as the representation read for a token and the direction used to score that token. It saves $Vd$ parameters. The test checks storage identity, not merely equal initial values.
+    Returns:
+        A dict mapping component names to parameter counts, plus a
+        ``"total"`` entry summing them.
+    """
+    d, layers = config.d_model, config.n_layers
+    hidden = max(8, round(config.mlp_ratio * d))
+    head_dim = d // config.n_heads
+    breakdown = {
+        "embedding (tied with LM head)": config.vocab_size * d,
+        "position table": config.block_size * d,
+        "attention projections": layers * 4 * d * d,
+        "feed-forward (SwiGLU)": layers * 3 * d * hidden,
+        "norm scales": layers * (2 * d + 2 * head_dim) + d,
+    }
+    breakdown["total"] = sum(breakdown.values())
+    return breakdown
 
-```python
-# tinygpt.py — TinyGPT.__init__(), embeddings through tied head
-self.token_embedding = nn.Embedding(
-    config.vocab_size, config.d_model
-)
-self.position_embedding = nn.Embedding(
-    config.block_size, config.d_model
-)
-self.blocks = nn.ModuleList(
-    Block(config) for _ in range(config.n_layers)
-)
-self.final_norm = nn.RMSNorm(config.d_model)
-self.lm_head = nn.Linear(
-    config.d_model, config.vocab_size, bias=False
-)
-self.apply(self._initialize)
-self.lm_head.weight = self.token_embedding.weight
+
+def parameter_count(model: nn.Module) -> int:
+    """Return the number of unique trainable scalars in a model."""
+    return sum(parameter.numel() for parameter in model.parameters())
+
+
+TinyGPT.parameter_count = parameter_count
 ```
 
-Temperature belongs after the head. If final logits are $z_v$, sampling uses
+The prediction has to match the built model exactly, or the mental model is wrong somewhere:
 
-$$
-p(v\mid x_{1:t})=
-\frac{\exp(z_v/\tau)}
-{\sum_{u=1}^{V}\exp(z_u/\tau)},
-$$
-
-where $\tau>0$ is temperature. Greedy decoding takes the maximum logit directly. Chapter 9 owns the full decoding strategy; the build uses three temperatures only to make the learned distribution observable.
-
-Why did decoder-only become the standard shape for broad generative language modeling? The causal objective accepts raw token streams without task-specific encoder/decoder boundaries; prompts, examples, tool text, and answers share one representation; training can draw examples from any text; and autoregressive inference maps directly to a reusable prefix cache. This is an engineering convergence, not proof that other shapes are inferior. Encoder-only models remain natural when every input position may read both directions and no free-form continuation is needed. Encoder-decoder models retain a useful separation for conditional generation where an input is fully visible before an output begins.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `tinygpt.py`: embeddings, stack, norm, and tied LM head | 21 new lines | Every output logit corresponds to exactly one frozen tokenizer ID, with no second output embedding table. |
-:::
-
-## Cache Past Keys and Values Exactly {#sec-ch02-kv-cache}
-
-Autoregressive generation repeatedly extends one prefix. Without caching, producing token $t+1$ sends all $t$ existing tokens through every layer again. Their projected keys and values are unchanged, so that work is redundant.
-
-For each layer, cache the tensors
-
-$$
-K_{1:t}\in\mathbb{R}^{B\times H\times t\times d_h},
-\qquad
-V_{1:t}\in\mathbb{R}^{B\times H\times t\times d_h}.
-$$
-
-For the new token, compute only $q_{t+1}$, $k_{t+1}$, and $v_{t+1}$; append the new key and value; then attend the new query over $K_{1:t+1}$ and $V_{1:t+1}$. At every layer, the new token’s representation still depends on the attention and MLP computation at that layer. The cache stores intermediate projections, not finished future answers.
-
-Be precise about complexity. Caching reduces **past-token projection work** per layer from proportional to prefix length to one new projection. It does not make dense attention independent of prefix length: the new query still scores and mixes $t+1$ keys and values, so attention work per decoded token is $O(t)$. Cache storage is also $O(t)$. Claims that “KV caching makes decode $O(1)$” are valid only for the avoided re-projection term, not for the complete attention step.
-
-With bytes per scalar $s$, cache storage for multi-head attention is
-
-$$
-\text{KV bytes}=2BLTHd_hs=2BLTds,
-$$
-
-where $B$ is batch size, $L$ layers, $T$ cached positions, $H$ heads, and $d=Hd_h$. The factor 2 is for keys and values. Chapter 3 changes this arithmetic for shared or compressed KV architectures.
-
-Correctness comes before speed. For a fixed model in evaluation mode, cached and full-prefix decoding represent the same function. They may differ by tiny floating-point roundoff because matrix operation shapes differ, but their logits must agree within a stated tolerance and their selected tokens must agree under a stable decision rule.
-
-The artifact has one forward method. Passing no cache performs the ordinary masked computation. Passing layer caches concatenates only the new keys and values and offsets positions by the cached length:
-
-```python
-# tinygpt.py — TinyGPT.forward(), cache ownership
-past_steps = 0 if cache is None else cache[0][0].size(-2)
-if past_steps + steps > self.config.block_size:
-    raise ValueError("sequence exceeds configured block_size")
-positions = torch.arange(
-    past_steps, past_steps + steps, device=tokens.device
-)
-x = self.token_embedding(tokens) + self.position_embedding(positions)
-present: list[LayerCache] = []
-for index, block in enumerate(self.blocks):
-    layer_past = None if cache is None else cache[index]
-    x, layer_present = block(x, layer_past)
-    present.append(layer_present)
+```{python}
+breakdown = param_breakdown(config)
+for name, count in breakdown.items():
+    print(f"{name:32s} {count:8,}")
+print("matches the built model:", breakdown["total"] == model.parameter_count())
 ```
 
-In the measured CPU run, the maximum absolute difference between cached and full-prefix logits is ${9.54\times10^{-7}}$, and greedy generation returns exactly the same token IDs. At $B=1$, $L=2$, $d=48$, and four-byte floating-point scalars, each new token adds
+It matches. Notice the shape of the budget at this scale: the embedding is almost a quarter of the model — small models are dominated by their vocabularies — while in a frontier model the $L(4d^2+3dh)$ block term grows quadratically with width and dwarfs everything else. Compute follows a similarly simple rule. Every weight in a matrix multiply costs one multiply and one add per token, so a forward pass costs about ${2N_{\text{mm}}}$ FLOPs per token, where $N_{\text{mm}}$ counts matmul weights (the embedding lookup is free — it is an index, not a product). Attention adds a term the parameter count cannot see: computing scores against $T$ keys and mixing $T$ values costs about ${4Td}$ per layer per token, growing with context rather than with weights.
 
-$$
-2\cdot1\cdot2\cdot48\cdot4=768\text{ bytes}.
-$$
+```{python}
+# @save
+def flops_per_token(config: GPTConfig, context_len: int) -> dict[str, int]:
+    """Estimate forward-pass FLOPs for one token at a given context length.
 
-![For the tiny two-layer model, measured KV-cache storage grows by exactly 768 bytes for every additional represented token.](../code/ch02/generated/kv-cache-growth.svg){#fig-ch02-kv-growth fig-alt="A straight line of KV-cache bytes against token count, increasing by 768 bytes per token."}
+    Weight FLOPs follow the 2-per-parameter rule for every matmul weight
+    (block projections plus the LM head; embedding lookups are free).
+    Attention FLOPs cover the score and value-mixing products, which scale
+    with context length rather than parameter count — the term that makes
+    long context expensive even when weights are fixed.
 
-@fig-ch02-kv-growth answers one question: does the implementation’s storage match the formula? It does. It does not predict production memory without substituting the production batch size, layer count, KV-head count, head width, scalar format, allocator overhead, and cache-management policy.
+    Args:
+        config: The architecture hyperparameters.
+        context_len: How many positions the token attends over.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `tinygpt.py`: optional per-layer cache | 23 new lines | Cached and uncached logits agree numerically, greedy tokens agree exactly, and storage grows by the derived per-token slice. |
-:::
+    Returns:
+        A dict with ``"weights"``, ``"attention"``, and ``"total"`` FLOPs.
+    """
+    d, layers = config.d_model, config.n_layers
+    hidden = max(8, round(config.mlp_ratio * d))
+    weight_params = layers * (4 * d * d + 3 * d * hidden) + config.vocab_size * d
+    weights = 2 * weight_params
+    attention_flops = 4 * layers * context_len * d
+    return {
+        "weights": weights,
+        "attention": attention_flops,
+        "total": weights + attention_flops,
+    }
+```
 
-## Count Parameters, FLOPs, and Bytes {#sec-ch02-accounting}
+```{python}
+for context in (1, 128):
+    flops = flops_per_token(config, context)
+    share = 100 * flops["attention"] / flops["total"]
+    print(f"context {context:4d}: {flops['total']:9,} FLOPs/token "
+          f"(attention {share:4.1f}%)")
+print(f"2 x total parameters = {2 * model.parameter_count():,} (the folk rule)")
+```
 
-Architecture accounting turns a configuration into resource expectations before training. Let $V$ be vocabulary size, $T_{\max}$ the learned position-table length, $d$ model width, $L$ block count, and $h$ SwiGLU hidden width.
+At context 1 the estimate sits about 6% under the folk rule "forward FLOPs ≈ 2 parameters per token" — the gap is the position table and the norms, which own parameters but perform no matrix multiplies. At our full window, attention has grown to a fifth of the budget, and it keeps growing linearly with context while the weight term stands still. Training costs roughly three times the forward pass (the backward pass computes gradients with respect to both activations and weights), giving the standard ${6N}$ FLOPs-per-token planning number that Chapter 5's scaling laws are denominated in.
 
-The tied token embedding contributes $Vd$ parameters, the position table contributes $T_{\max}d$, and the final RMSNorm contributes $d$. In each block:
+Raw FLOPs, however, do not predict speed, because a processor can starve for data. The **roofline model** [@williams2009roofline] makes this one picture: plot attainable throughput against **arithmetic intensity** — FLOPs performed per byte moved from memory. Below the machine's balance point (its peak FLOPs divided by its memory bandwidth), performance is capped by the bandwidth line, not the compute ceiling. Generating one token at batch 1 reads every weight to do just two FLOPs with each — intensity around 1 — while processing a long prompt reuses each loaded weight across every position in the prompt. The two phases of the same model sit on opposite sides of the roof:
 
-- Q, K, V, and output projections contribute ${4d^2}$ weights.
-- The SwiGLU gate and value projections plus down projection contribute ${3dh}$ weights.
-- Two residual-stream RMSNorms contribute ${2d}$ scales.
-- Per-head QK normalization in this implementation shares one $d_h$ scale vector across heads for Q and one for K, contributing ${2d_h}$.
+```{python}
+#| label: fig-ch02-roofline
+#| fig-cap: "Why is generating one token so much slower per FLOP than processing a prompt? On a machine with a 50 FLOP/byte balance point, single-token decode (intensity about 1) sits deep in the bandwidth-bound region at about 2% of peak, while a 512-token prefill reuses each loaded weight 512 times and reaches the compute ceiling."
+import matplotlib.pyplot as plt
+import numpy as np
 
-Ignoring small terms gives
+peak_tflops, bandwidth_tb = 100.0, 2.0     # a generic 2026 accelerator
+intensity = np.logspace(-1, 4, 200)
+attainable = np.minimum(peak_tflops, bandwidth_tb * intensity)
 
-$$
-N\approx Vd+T_{\max}d+L(4d^2+3dh).
-$$
+fig, ax = plt.subplots(figsize=(6.6, 3.6))
+ax.loglog(intensity, attainable, color="#2a7f9e")
+for x, label in ((1, "decode, batch 1"), (512, "prefill, 512 tokens")):
+    y = min(peak_tflops, bandwidth_tb * x)
+    ax.plot([x], [y], marker="o", color="#b13f3f")
+    ax.annotate(label, (x, y), textcoords="offset points", xytext=(8, -14))
+ax.axvline(peak_tflops / bandwidth_tb, ls="--", color="0.6")
+ax.set_xlabel("arithmetic intensity (FLOPs per byte moved)")
+ax.set_ylabel("attainable TFLOP/s")
+fig.tight_layout()
+plt.show()
+```
 
-For the actual fixture, $V=280$, $T_{\max}=32$, $d=48$, $L=2$, $H=4$, $d_h=12$, and $h=128$:
+@fig-ch02-roofline is the single most economical explanation of inference behavior we will meet: prefill is compute-bound, decode is memory-bandwidth-bound, and no kernel wizardry moves a workload's intensity — only batching, caching, and quantization do, which is Chapter 10's subject matter. Keep the two dots in mind; they explain why time-to-first-token and time-per-output-token, measured in @sec-ch01-latency, obey different budgets.
 
-| Component | Parameters |
-|---|---:|
-| Tied token embedding / LM head | 13,440 |
-| Learned position embedding | 1,536 |
-| QKV and attention outputs, two blocks | 18,432 |
-| SwiGLU projections, two blocks | 36,864 |
-| Residual, QK, and final norm scales | 288 |
-| **Measured total unique parameters** | **70,560** |
+## Training: watch it learn {#sec-ch02-training}
 
-The table is checked against `model.parameter_count()`. Tying matters: an untied head would add another 13,440 parameters, a 19 percent increase for this tiny model. At large $V$, embeddings can dominate small models even though block weights dominate sufficiently deep and wide ones.
+Everything is assembled; now we train it and watch. The optimizer is **AdamW**: Adam's per-parameter step sizes from running moment estimates, with weight decay applied as a separate decoupled subtraction rather than mixed into the adaptive gradient — the difference that gives the W its name and makes decay behave like true regularization [@loshchilov2019decoupled]. The learning rate follows the standard shape: a brief linear **warmup** (large steps under empty moment estimates are dangerous), then a smooth **cosine decay** to a small floor. And we clip the global gradient norm at 1.0, which bounds the damage of any single bad batch without pretending to fix its cause.
 
-A rough dense-model FLOP heuristic follows from parameter use. A matrix weight participating once in a forward pass costs about one multiply and one add per token, or approximately ${2N}$ floating-point operations. Backpropagation through activations and weights adds roughly twice the forward work, giving the familiar training estimate near ${6N}$ FLOPs per token. These are planning approximations, not profiler readings. Attention-score and value-mixing work add terms that scale with sequence length and are not represented by counting learned parameters.
+```{python}
+# @save
+def lr_schedule(step: int, total_steps: int, peak: float) -> float:
+    """Return the learning rate for one step of warmup-then-cosine decay.
 
-The **roofline** view compares arithmetic intensity—FLOPs performed per byte moved—with a machine’s ratio of peak compute to memory bandwidth. Prefill applies large matrix-matrix operations across many tokens, reusing weights and often achieving high arithmetic intensity. One-token decoding resembles repeated matrix-vector work: each request uses the weights for little new data, while reading model weights and KV state consumes bandwidth. This is why equal FLOP counts can have very different throughput and why Chapter 10 treats prefill and decode separately.
+    The first 5% of steps ramp linearly from near zero to ``peak`` while
+    optimizer moment estimates fill; the remainder follows a half cosine
+    from ``peak`` down to one tenth of it.
 
-Counting is a falsifiable forecast. Parameter totals should match the framework. Cache bytes should match tensor storage. Estimated operations should be labeled with inclusions, such as embeddings, attention-score terms, and backward pass. Measured utilization then reveals kernel, scheduler, and memory effects that the algebra intentionally omits.
+    Args:
+        step: The current optimizer step, from 0.
+        total_steps: Total steps in the run.
+        peak: The maximum learning rate.
 
-## Train It and Read the Loss Curve {#sec-ch02-training}
+    Returns:
+        The learning rate to apply at this step.
+    """
+    warmup = max(1, total_steps // 20)
+    if step < warmup:
+        return peak * (step + 1) / warmup
+    progress = (step - warmup) / max(1, total_steps - warmup - 1)
+    return peak * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * progress)))
+```
 
-The build optimizes next-token cross-entropy with AdamW. Adam tracks moving averages of gradients and squared gradients. AdamW applies weight decay as a separate parameter update rather than mixing it into the adaptive gradient term. The tiny run uses one optimizer for all parameters; large training recipes commonly assign different decay treatment to norms, biases, or embeddings.
+A loss number on data the model is training on cannot tell us about generalization, so we hold out the final 15% of the token stream untouched and evaluate on it periodically:
 
-Learning rate changes over the run. A short **warmup** increases it linearly from a small value, reducing the shock of noisy early updates when optimizer statistics are empty. A **cosine decay** then lowers it smoothly. Gradient clipping bounds the global norm of one update’s gradient, limiting damage from a rare spike without fixing its underlying cause.
+```{python}
+split = int(0.85 * data.numel())
+train_stream, val_stream = data[:split], data[split:]
+print(f"train: {train_stream.numel():,} tokens   validation: {val_stream.numel():,} tokens")
 
-The loop is ordinary PyTorch:
 
-```python
-# train.py — run_build(), one optimizer update
-for step in range(steps):
-    inputs, targets = _batch(
-        encoded, config.block_size, batch_size, generator
+@torch.inference_mode()
+def heldout_loss(model: TinyGPT, tokens: torch.Tensor, windows: int = 4) -> float:
+    """Average the loss over fixed windows of a stream the model never trains on."""
+    model.eval()
+    block = model.config.block_size
+    starts = torch.linspace(0, tokens.numel() - block - 1, windows).long()
+    losses = [
+        model(tokens[s : s + block][None], tokens[s + 1 : s + block + 1][None])[1].item()
+        for s in starts
+    ]
+    return sum(losses) / len(losses)
+```
+
+We also want to see what training changes *inside* the model, not just in its loss. The helper below recomputes one layer's attention pattern for a prompt, and we snapshot it now, before any training, for comparison afterwards.
+
+```{python}
+# @save
+@torch.inference_mode()
+def attention_weights(model: TinyGPT, token_ids: list[int], layer: int = 0) -> Tensor:
+    """Recompute one layer's per-head attention pattern for a prompt.
+
+    Runs the embedding and the blocks below ``layer`` to reproduce that
+    layer's input, then reapplies its QKV projections and causal softmax.
+    Each returned row is a probability distribution over visible positions.
+
+    Args:
+        model: A ``TinyGPT`` whose pattern we want to inspect.
+        token_ids: The prompt as a list of token IDs.
+        layer: Which block's attention to extract, from 0.
+
+    Returns:
+        Weights shaped ``(n_heads, T, T)``; rows sum to 1 and the upper
+        triangle is exactly zero.
+    """
+    model.eval()
+    tokens = torch.tensor([token_ids])
+    positions = torch.arange(tokens.size(1))
+    x = model.token_embedding(tokens) + model.position_embedding(positions)
+    for block in model.blocks[:layer]:
+        x, _ = block(x)
+    attn = model.blocks[layer].attention
+    normed = model.blocks[layer].attention_norm(x)
+    batch, steps, _ = normed.shape
+    qkv = attn.qkv(normed).view(batch, steps, 3, attn.n_heads, attn.head_dim)
+    query, key, _ = qkv.permute(2, 0, 3, 1, 4).unbind(0)
+    query, key = attn.q_norm(query), attn.k_norm(key)
+    scores = query @ key.transpose(-2, -1) / math.sqrt(attn.head_dim)
+    mask = torch.triu(torch.ones(steps, steps, dtype=torch.bool), diagonal=1)
+    return scores.masked_fill(mask, float("-inf")).softmax(dim=-1)[0]
+```
+
+```{python}
+probe_ids = tokenizer.encode("The rabbit-hole went straight on like a tunnel")
+weights_before = attention_weights(model, probe_ids)
+print("pattern shape:", tuple(weights_before.shape), " rows sum to",
+      weights_before.sum(-1).mean().item())
+```
+
+Now the loop itself — deliberately plain PyTorch, because this exact sequence of calls (batch, schedule, zero, forward, backward, clip, step) reappears in every training chapter of this book. We record the training loss at every step, the held-out loss every 25, and freeze a generated sample at two checkpoints so we can watch the model's voice change.
+
+```{python}
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-3, weight_decay=0.01)
+sampler = torch.Generator().manual_seed(7)
+total_steps, batch_size = 400, 16
+train_losses, val_points, snapshots = [], [], {}
+
+import time
+started = time.perf_counter()
+for step in range(total_steps):
+    batch_inputs, batch_targets = next_token_batch(
+        train_stream, config.block_size, batch_size, sampler
     )
     for group in optimizer.param_groups:
-        group["lr"] = _schedule(step, steps, 3e-3)
+        group["lr"] = lr_schedule(step, total_steps, peak=3e-3)
     optimizer.zero_grad(set_to_none=True)
-    _, loss, _ = model(inputs.to(device), targets.to(device))
-    assert loss is not None
+    model.train()
+    _, loss, _ = model(batch_inputs, batch_targets)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
-    losses.append(loss.item())
+    train_losses.append(loss.item())
+    if (step + 1) % 25 == 0:
+        val_points.append((step + 1, heldout_loss(model, val_stream)))
+    if step + 1 in (100, 400):
+        sample = generate(model, prompt, 32, temperature=0.8, seed=5)
+        snapshots[step + 1] = tokenizer.decode(sample[0].tolist(), errors="replace")
+elapsed = time.perf_counter() - started
+print(f"{total_steps} steps in {elapsed:.1f}s ({total_steps / elapsed:.0f} steps/s)")
+print(f"train loss: {train_losses[0]:.3f} -> {sum(train_losses[-10:]) / 10:.3f} (mean of last 10)")
+best_step, best_val = min(val_points, key=lambda point: point[1])
+print(f"held-out loss: minimum {best_val:.3f} at step {best_step}, "
+      f"then up to {val_points[-1][1]:.3f} at step 400")
 ```
 
-![The deterministic fixture begins at the uniform-prediction baseline and descends over forty optimizer updates.](../code/ch02/generated/loss-curve.svg){#fig-ch02-loss fig-alt="Training cross-entropy over forty updates, starting near the horizontal ln vocabulary baseline and falling below it."}
+The train loss has collapsed; the held-out loss has not. @fig-ch02-loss shows both curves against the $\ln V$ baseline, and it is the most instructive figure in the chapter precisely because it is *not* a success story.
 
-@fig-ch02-loss is a training-batch curve over a tiny repeated fixture. Its initial agreement with $\ln V$ checks initialization and labels. Its descent shows that gradients, optimizer, and model can fit structure in the stream. It does not demonstrate generalization. A serious run splits documents before sampling windows, evaluates a held-out stream without gradient updates, records tokens rather than steps on the horizontal axis, and reports the tokenizer and data version.
+```{python}
+#| label: fig-ch02-loss
+#| fig-cap: "What does this training run actually demonstrate? Training loss falls from the ln(512) uniform baseline toward zero, but held-out loss bottoms out inside the first hundred steps and then climbs: a 140K-parameter model is memorizing a 3.9K-token corpus, not learning English."
+fig, ax = plt.subplots(figsize=(6.6, 3.6))
+ax.plot(range(1, total_steps + 1), train_losses, color="#2a7f9e", label="training batch loss")
+ax.plot(*zip(*val_points), marker="o", ms=3.5, color="#b7791f", label="held-out loss")
+ax.axhline(math.log(512), ls="--", color="0.6", label="ln(512): uniform prediction")
+ax.set_xlabel("optimizer step")
+ax.set_ylabel("cross-entropy loss")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
 
-Read loss curves diagnostically:
+Read @fig-ch02-loss the way an engineer reads any loss curve — as a set of questions. The first point checks initialization: training loss starts at the uniform baseline, so no label is leaking (a start far *below* $\ln V$ is the signature of the missing-mask bug from @sec-ch02-multihead). The early descent shows the whole gradient path works. Then the curves split: training loss keeps falling toward zero while held-out loss bottoms out before step 100 and turns upward. That divergence is overfitting in its purest form — our model has roughly 42 parameters per training token, so it can simply memorize the stream, and does. At pretraining scale the ratio is reversed by orders of magnitude (Chapter 5), which is why frontier base-model curves show the two losses moving together. The same diagnostic stance handles the other shapes you will meet: a flat curve at $\ln V$ means gradients are not reaching parameters; a spike mid-run means data, precision, or learning rate changed; a smooth curve with terrible samples means the objective and the hope were never aligned.
 
-| Trace | Likely questions |
-|---|---|
-| Starts far below $\ln V$ | Can the model see its label? Are targets duplicated in inputs? |
-| Flat near $\ln V$ | Do gradients reach parameters? Is learning rate nonzero? Are labels aligned? |
-| Falls, then spikes | Did data, precision, gradient norm, or learning rate change? |
-| Training falls, validation rises | Is the model memorizing? Is the split contaminated or too small? |
-| Smooth but samples remain poor | Is the run undertrained, the tokenizer inefficient, or the sample policy inappropriate? |
+The samples tell the same story in prose. Here is the model at step 100 and at step 400, and the untrained byte soup from @sec-ch02-decoder for comparison:
 
-The default fixture is intentionally small. After 40 updates its mean loss over the final 10 batches is 3.52, down from 5.636. Its samples contain local fragments and repetition rather than coherent prose. This is an honest result: a 70,560-parameter model trained for seconds on a repetitive micro-corpus establishes the mechanism, not language competence. The optional fuller run is where sample quality becomes a meaningful experiment.
+```{python}
+print("step 100:", repr(snapshots[100]))
+print("step 400:", repr(snapshots[400]))
+```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `train.py`: AdamW, warmup/cosine schedule, clipping, and metrics | 146 total lines | Loss starts near $\ln V$, decreases on the fixture, and all plotted claims come from saved measurements. |
+The step-100 sample is this book's version of d2l's famous `'it has in the the the'`: word-shaped fragments with real spacing — `in her`, `see`, `th the s` — and no meaning anywhere. The model has learned the *texture* of English (which merges tend to follow which) but none of its structure. By step 400 the output reads like Carroll, and that is exactly the problem: it reads like Carroll because it largely *is* Carroll — `think it so _very_ much out of the` is a span of the training text, complete with Gutenberg's underscore italics, spliced awkwardly onto "Alice". Greedy decoding makes the memorization plainest:
+
+```{python}
+finished = generate(model, prompt, 40, temperature=0.0)
+print("greedy:", repr(tokenizer.decode(finished[0].tolist(), errors="replace")))
+```
+
+An honest summary of the artifact: mechanism demonstrated, competence absent. Everything a real pretraining run adds — a corpus millions of times larger than the model, deduplication, an actual data pipeline — exists to keep that held-out curve falling, and is the subject of Chapter 5. Meanwhile, training visibly reorganized the model's internals. @fig-ch02-attention compares the layer-0 attention pattern we snapshotted before training with the same pattern now.
+
+```{python}
+#| label: fig-ch02-attention
+#| fig-cap: "What did training do to attention? Before training (left), a layer-0 head spreads its weight broadly over the visible prefix; after training (right), the same head commits — many rows place half or more of their mass on one informative earlier token (the 'abb' of 'rabbit' collects much of it) instead of averaging everything."
+weights_after = attention_weights(model, probe_ids)
+head = 0
+fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.4), sharey=True)
+for ax, weights, title in ((axes[0], weights_before, "before training"),
+                           (axes[1], weights_after, "after training")):
+    image = ax.imshow(weights[head], cmap="Blues", vmin=0, vmax=1)
+    ax.set_title(f"layer 0, head {head}: {title}", fontsize=10)
+    ax.set_xlabel("key position")
+axes[0].set_ylabel("query position")
+fig.colorbar(image, ax=axes, fraction=0.03, label="attention weight")
+plt.show()
+```
+
+Both panels are strictly lower-triangular — the mask holds no matter what the weights learn — but the texture changes from indiscriminate averaging to committed lookups. This is what "training the attention" means, one head at a time.
+
+## Generation and the KV cache {#sec-ch02-kv-cache}
+
+Look back at the generation loop in `generate`: without caching, producing token $t+1$ feeds all $t$ existing tokens through every layer again. But their keys and values cannot have changed — the causal mask guarantees that earlier positions never see later ones, so their projections are frozen the moment they are computed. Recomputing them is pure waste. The **KV cache** stores, per layer, the keys and values of every position seen so far; each new step then projects only the newest token, appends its key and value, and attends its single query over the whole cache. That is precisely what `CausalSelfAttention` does when `past` is not `None`, and the absolute-position masking we wrote there makes the cached path compute the same function as the full one.
+
+"The same function" is a testable claim, not a slogan. We generate greedily both ways and compare, then push a single token through the cached path against a full recomputation and measure the worst logit disagreement:
+
+```{python}
+with_cache = generate(model, prompt, 40, use_cache=True)
+without_cache = generate(model, prompt, 40, use_cache=False)
+print("identical greedy tokens:", torch.equal(with_cache, without_cache))
+
+context = with_cache
+with torch.inference_mode():
+    cached_logits, _, _ = model(context[:, -1:], cache=model(context[:, :-1])[2])
+    full_logits, _, _ = model(context)
+print(f"max |cached - full| logit gap: "
+      f"{(cached_logits[:, -1] - full_logits[:, -1]).abs().max().item():.1e}")
+```
+
+The tokens match exactly and the logits agree to within float32 roundoff (the two paths batch their matrix products differently, so bit-identity is not owed — functional identity is). Now the accounting, where a popular claim needs careful surgery. Per decoded token, the cache reduces *projection* work from $O(t)$ recomputed positions to $O(1)$ — one new token through the weights, regardless of prefix length. But the attention step itself still scores the new query against all $t$ cached keys and mixes $t$ values: $O(t)$ compute per step, and the cache occupies $O(t)$ memory. For multi-head attention the storage is exact and predictable:
+
+$$
+\text{cache bytes} = 2\,B\,L\,T\,d\,s,
+$$ {#eq-ch02-kvbytes}
+
+with batch $B$, $L$ layers, $T$ cached positions, model width $d$ (keys and values each store $H\,d_h=d$ scalars per layer per position — hence the 2), and $s$ bytes per scalar. Both claims are checkable on our toy, so we check them. We extend a prefix 100 times; at each length we time a cached step and a full recomputation (taking the best of five runs each, the standard defense against timer noise at millisecond scale) and read the cache's true storage from its tensors:
+
+```{python}
+# @save
+def kv_cache_bytes(cache: list[LayerCache]) -> int:
+    """Return the storage bytes occupied by all cached keys and values."""
+    return sum(t.numel() * t.element_size() for pair in cache for t in pair)
+```
+
+```{python}
+def best_of(runs: int, call) -> float:
+    """Return the fastest of several timed calls, in milliseconds."""
+    times = []
+    for _ in range(runs):
+        tick = time.perf_counter()
+        call()
+        times.append((time.perf_counter() - tick) * 1000)
+    return min(times)
+
+
+model.eval()
+context = prompt.clone()
+cached_ms, full_ms, cache_sizes, prefix_lengths = [], [], [], []
+with torch.inference_mode():
+    logits, _, cache = model(context)
+    for _ in range(100):
+        next_token = logits[:, -1].argmax(dim=-1, keepdim=True)
+        context = torch.cat((context, next_token), dim=1)
+        cached_ms.append(best_of(5, lambda: model(next_token, cache=cache)))
+        full_ms.append(best_of(5, lambda: model(context)))
+        logits, _, cache = model(next_token, cache=cache)
+        prefix_lengths.append(context.size(1))
+        cache_sizes.append(kv_cache_bytes(cache))
+
+print(f"cached step:   {cached_ms[0]:.2f} ms at prefix {prefix_lengths[0]}, "
+      f"{cached_ms[-1]:.2f} ms at prefix {prefix_lengths[-1]}")
+print(f"full forward:  {full_ms[0]:.2f} ms at prefix {prefix_lengths[0]}, "
+      f"{full_ms[-1]:.2f} ms at prefix {prefix_lengths[-1]}")
+```
+
+```{python}
+#| label: fig-ch02-decode-latency
+#| fig-cap: "What work does the cache actually avoid? The full-recomputation cost climbs steadily with prefix length — every step re-pays for the entire past — while the cached step stays flat: constant projection work, plus an O(t) attention term too small to register at this width."
+fig, ax = plt.subplots(figsize=(6.6, 3.4))
+ax.plot(prefix_lengths, full_ms, color="#b13f3f", label="no cache: full recomputation")
+ax.plot(prefix_lengths, cached_ms, color="#2a7f9e", label="cached step")
+ax.set_xlabel("prefix length (tokens)")
+ax.set_ylabel("time per generated token (ms)")
+ax.legend()
+fig.tight_layout()
+plt.show()
+```
+
+The uncached cost more than doubles across a hundred tokens of prefix — every step re-pays for the whole past — while the cached line is flat to within measurement noise. That flatness deserves an honest caveat rather than a cheer: the cached step's $O(t)$ attention term is present in the code, but at $d=64$ it amounts to a few tens of thousands of FLOPs — microseconds, invisible next to the fixed projection cost. At production scale, with tens of thousands of cached positions across dozens of layers, that same term and the cache's memory footprint come to dominate the step — which is why "KV caching makes decoding $O(1)$" is a claim to correct, not repeat. Storage tells its side of the story with perfect predictability:
+
+```{python}
+slope = (cache_sizes[-1] - cache_sizes[0]) // (prefix_lengths[-1] - prefix_lengths[0])
+predicted = 2 * 1 * config.n_layers * config.d_model * 4
+print(f"measured growth: {slope} bytes/token   "
+      f"predicted 2BLds = {predicted} bytes/token   match: {slope == predicted}")
+```
+
+```{python}
+#| label: fig-ch02-kv-growth
+#| fig-cap: "Does cache storage follow the formula? Measured bytes climb by exactly 2BLds = 1,024 bytes per cached token — memory per generation step is O(n) even though projection compute is O(1)."
+fig, ax = plt.subplots(figsize=(6.6, 3.2))
+ax.plot(prefix_lengths, [size / 1024 for size in cache_sizes], color="#7356a8")
+ax.set_xlabel("tokens in cache")
+ax.set_ylabel("KV cache storage (KiB)")
+fig.tight_layout()
+plt.show()
+```
+
+Every cached token costs 1,024 bytes here — @eq-ch02-kvbytes with our constants, verified against the tensors themselves. Substitute a production configuration into the same formula and the number stops being cute; Chapter 3 does that arithmetic and then spends most of its pages on the architectural responses (grouped and compressed KV heads, sliding windows) that exist to shrink it. Finally, the end-to-end payoff at our scale:
+
+```{python}
+for use_cache in (True, False):
+    tick = time.perf_counter()
+    generate(model, torch.tensor([tokenizer.encode("Alice was ")]), 110,
+             use_cache=use_cache)
+    seconds = time.perf_counter() - tick
+    print(f"use_cache={str(use_cache):5s}: {110 / seconds:6.0f} tokens/s")
+```
+
+A solid speedup from a dictionary of tensors and zero change in output — and the gap widens with every token of prefix, every layer, and every unit of width. This measurement, more than any diagram, is why every serving stack in Chapter 10 is organized around keeping, sharing, and paging these caches.
+
+::: {.callout-note title="In the interview"}
+**Q. A teammate says "the KV cache makes generation O(1) per token." Where is that right, and where is it wrong?**
+Right for projection work: each step pushes one token, not $t$, through the weights. Wrong for the attention step (the new query still scores and mixes $t$ cached entries — $O(t)$ compute) and wrong for memory (${2BLTds}$ bytes, growing linearly). The trap is accepting the claim whole; the strong answer splits it into the three terms and names the measurement — per-step latency and cache bytes versus prefix length — that would show each one.
 :::
 
-## Build {#sec-ch02-build}
+## Summary
 
-Run the deterministic CPU path from the `newbook` directory:
+We built a GPT from its parts and watched every claim execute: a byte-level BPE tokenizer with zero unknown tokens and a frozen 512-entry vocabulary; attention derived as a scaled softmax lookup, with the $\sqrt{d_k}$ earned from a measured variance blowup; a causal mask verified bit-for-bit; blocks that add updates to a residual stream; a tied head whose savings we counted. Training collapsed the train loss while the held-out loss rose — memorization, honestly diagnosed — and cached generation reproduced uncached logits while its storage grew by exactly ${2BLds}$ bytes per token. Chapter 3 now asks what happens when the context, and that cache, get long.
 
-```powershell
-python code/ch02/train.py
-python -m pytest tests/test_ch02_tinygpt.py -q
-```
+## Exercises
 
-The default command trains for 40 optimizer updates and writes:
-
-- `metrics.json` with configuration, unique parameters, initial and final loss, cached-logit error, device, and every cache measurement;
-- `tokenizer.json` with the frozen merge sequence;
-- `samples.txt` with generations at temperatures 0.0, 0.7, and 1.1;
-- `loss-curve.svg`, used in @fig-ch02-loss;
-- `kv-cache-growth.svg`, used in @fig-ch02-kv-growth.
-
-Check the build in this order.
-
-First, open `tokenizer.json` and confirm that IDs 0–255 remain implicit byte tokens while learned merges begin at 256. Run `encode` and `decode` on text absent from the training fixture, including multilingual text and emoji. A new string may tokenize inefficiently, but it must not become unknown.
-
-Second, compare `initial_loss` with `uniform_loss_ln_vocab`. They should be close, not identical. Then inspect the loss curve and samples. The default run is a mechanism test, so do not promote its training loss into a language-quality claim.
-
-Third, compare cache storage differences. The fixture adds exactly 768 bytes per represented token. Recompute that number from ${2BLds}$. Then inspect `max_cached_logit_error` and run the greedy cached/uncached test. Storage efficiency is irrelevant if the optimization changes the modeled function.
-
-To make the experiment substantive rather than merely fast, provide a UTF-8 public-domain corpus and opt into the larger configuration:
-
-```powershell
-python code/ch02/train.py --full --text path/to/public-domain-corpus.txt --steps 800
-```
-
-The fuller mode uses width 128, four layers, eight heads, a 96-token block, a slightly larger BPE vocabulary, and CUDA when available. These defaults are starting points, not a competitive recipe. Record corpus provenance, train/validation split, token count, device, elapsed time, and configuration before interpreting the curve.
-
-**Honesty note.** The learned absolute position table is a didactic placeholder; Chapter 3 owns modern positional methods. The tokenizer omits production features such as normalization policy, reserved special tokens, parallel training, and a serialized compatibility identifier. The model omits dropout, distributed training, mixed precision, fused kernels, checkpointing, and evaluation suites. The KV cache is append-only and single-request; it does not implement paging, sharing, eviction, or serving concurrency. The build proves causal isolation, trainability, accounting, BPE round trips, and cached-decoding equivalence—no more.
-
-## What Endures, What Changes {#sec-ch02-endures}
-
-**What endures.** A causal language model factorizes sequence probability into next-token conditionals. Its tokenizer fixes the vocabulary and prediction units. Byte fallback can eliminate OOV while still producing unequal token efficiency. Scaled dot-product attention is a content-dependent weighted lookup; the causal mask enforces the information boundary. Attention and an MLP write updates into a shared residual stream. Embeddings, positions, decoder blocks, normalization, and the LM head form one differentiable path. Weight tying shares the vocabulary geometry. A KV cache must preserve full-prefix logits while trading avoided projections for linearly growing state. Parameter, FLOP, loss, and byte estimates are predictions to verify.
-
-**What changes.** Tokenizer algorithms and vocabulary sizes, positional mechanisms, normalization placement, attention variants, MLP activations, optimizer recipes, precision formats, kernels, hardware balance, and cache layouts change. Some architectures untie embeddings, share KV heads, interleave local attention, or replace parts of dense attention. Those choices alter constants and sometimes scaling terms, but they do not relax the need to state the objective, information boundary, tensor shapes, and equivalence tests.
-
-## Exercises {#sec-ch02-exercises}
-
-1. **Derive the mask.** For a three-token input and a two-token existing cache, write the full Boolean mask for a two-token appended chunk. Match its query and key position arrays to `CausalSelfAttention.forward`.
-2. **Expose cheating.** Remove the causal `masked_fill` line, train for a few updates, and add a test that changes future tokens. Explain why a lower loss is now evidence of a broken model.
-3. **Audit BPE.** Train separate 272-token vocabularies on a prose file and a source-code file. Compare the first 16 merges, token counts on the opposite domain, and exact round trips. Defend where the tokenizer should be frozen.
-4. **Change the head count budget-neutrally.** Double $H$ while holding $d$ fixed. Predict which parameter counts and cache-byte terms change, then verify in code. Explain what changes even when the totals do not.
-5. **Untie the head.** Replace weight tying with an independently initialized output matrix. Predict the added parameters as $Vd$, verify the count, and compare early loss over several seeds.
-6. **Account for a larger model.** Given $V=32{,}000$, $d=4{,}096$, $h=11{,}008$, and $L=32$, estimate embeddings, attention, MLP, and total parameters. State every term you omit and why the exact configuration can differ.
-7. **Defend cached decoding.** In a design review, respond to the claim “KV caching makes every generated token constant-time.” Separate projection work, dense attention work, memory growth, and measured end-to-end latency; name the experiment that would settle each claim.
-
-## Notes and Sources {#sec-ch02-notes}
-
-- Sennrich, Haddow, and Birch, [“Neural Machine Translation of Rare Words with Subword Units”](https://arxiv.org/abs/1508.07909), introduces the subword BPE approach. The chapter’s byte base is an engineering adaptation that makes its no-OOV and round-trip contracts explicit.
-- Vaswani et al., [“Attention Is All You Need”](https://arxiv.org/abs/1706.03762), is the primary source for scaled dot-product attention, multi-head attention, causal decoder masking, residual sublayers, and the original encoder-decoder Transformer.
-- Press and Wolf, [“Using the Output Embedding to Improve Language Models”](https://arxiv.org/abs/1608.05859), analyzes and evaluates tying input and output embeddings.
-- Zhang and Sennrich, [“Root Mean Square Layer Normalization”](https://arxiv.org/abs/1910.07467), introduces RMSNorm; Xiong et al., [“On Layer Normalization in the Transformer Architecture”](https://arxiv.org/abs/2002.04745), analyzes Post-LN and Pre-LN gradient behavior.
-- Shazeer, [“GLU Variants Improve Transformer”](https://arxiv.org/abs/2002.05202), evaluates gated feed-forward variants including SwiGLU. Henry et al., [“Query-Key Normalization for Transformers”](https://arxiv.org/abs/2010.04245), studies controlling query/key norms before attention softmax.
-- Loshchilov and Hutter, [“Decoupled Weight Decay Regularization”](https://arxiv.org/abs/1711.05101), introduces AdamW’s separation of weight decay from adaptive gradient updates.
-- Brown et al., [“Language Models are Few-Shot Learners”](https://arxiv.org/abs/2005.14165), is a primary example of scaling a decoder-only autoregressive objective into a general text interface.
-- Pope et al., [“Efficiently Scaling Transformer Inference”](https://arxiv.org/abs/2211.05102), develops analytical models for Transformer inference and KV-memory tradeoffs.
-- Williams, Waterman, and Patterson, [“Roofline: An Insightful Visual Performance Model for Multicore Architectures”](https://escholarship.org/uc/item/3qf383m0), provides the arithmetic-intensity framework used for the prefill/decode intuition.
-- Karpathy’s [nanoGPT repository](https://github.com/karpathy/nanoGPT) is the code-lineage inspiration for a compact, inspectable GPT training loop; this chapter implements a smaller modernized teaching model and adds explicit tokenizer and cache-correctness contracts.
+1. **Expose the cheat.** Delete the `masked_fill` line from `CausalSelfAttention.forward` and rerun the training loop. (a) Predict where the training loss will start and where it will go, then check. (b) Rerun the future-change probe from @sec-ch02-multihead and report the earlier-position drift. (c) Explain why the held-out loss also improves — and why that makes the bug more dangerous, not less.
+2. **Trade heads for width.** Double `n_heads` to 8 while holding `d_model` at 64. Use `param_breakdown` and @eq-ch02-kvbytes to predict which parameter and cache terms change before you run anything, then verify with `parameter_count` and `kv_cache_bytes`. What *did* change, given that the totals did not?
+3. **Audit the tokenizer's domain.** Train a second 512-entry `BytePairTokenizer` on a few kilobytes of Python source instead of Carroll. Compare the first 16 merges, then measure bytes-per-token for each tokenizer on the *other* corpus. Where does the fertility penalty come from, and at what point in a model's life is it locked in?
+4. **Untie the head.** Remove the weight-tying line from `TinyGPT.__init__`, predict the new parameter count with `param_breakdown` plus $Vd$, verify it, and train for 400 steps at three seeds. Does the extra capacity buy anything measurable on the held-out stream at this scale?
+5. **Slow the memorization.** Using the loss curve in @fig-ch02-loss as the baseline, find the combination of `weight_decay`, model width, and step count that yields the lowest held-out loss you can reach on this corpus. Report the best curve and where its minimum sits relative to step 100.
+6. **Account for a real model.** A 7B-class configuration is roughly $V=32{,}000$, $d=4{,}096$, $h=11{,}008$, $L=32$, $H=32$. Run `param_breakdown` and `flops_per_token` on it, report which components dominate compared with our toy, and compute its KV cache bytes per token at fp16 from @eq-ch02-kvbytes. State explicitly what the estimate omits.
+7. **Place decode on the roofline.** Using @fig-ch02-roofline's machine (100 TFLOP/s, 2 TB/s), estimate the arithmetic intensity of batch-8 decode and of a 128-token prefill for the 7B configuration from Exercise 6, place both on the roofline, and state which knob a serving team turns to move each point — then check your reasoning against Chapter 10's batching sections.

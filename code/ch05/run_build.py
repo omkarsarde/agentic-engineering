@@ -71,7 +71,16 @@ def run_build(
     )
     wet_path = pipeline["wet_path"]
     tokenizer_hash = sha256_text(
-        json.dumps(tokenizer.as_dict(), sort_keys=True, separators=(",", ":"))
+        json.dumps(
+            {
+                "vocab_size": tokenizer.vocab_size,
+                "merges": [
+                    [merge.left, merge.right, merge.new_id] for merge in tokenizer.merges
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     )
     ledger_hash = sha256_text(json.dumps(ledger, sort_keys=True, separators=(",", ":")))
 
