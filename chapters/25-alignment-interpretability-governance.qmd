@@ -1,67 +1,31 @@
 ---
-description: "Use internal diagnostics, capability evaluations, safety cases, and threshold governance without mistaking any one signal for proof of alignment."
+description: "Run a logit lens, a linear probe, and an activation-steering vector on the Chapter 2 model, test whether a reasoning trace is faithful, turn a capability score into an elicitation lower bound, and assemble a fail-closed safety case that maps hazards to arguments, evidence, and a deployment decision."
 ---
 
-# Alignment, Interpretability, and Governance [F+S] {#sec-ch25}
+# Alignment, Interpretability, and Governance {#sec-ch25}
 
-## What you need going in
+A research agent refuses harmful requests, passes a published safety benchmark, and earns a high score from a preference model. The deployment team calls it aligned. A later fine-tune teaches it to exploit a grader; it still refuses direct requests and still passes the benchmark, but now it withholds a caveat whenever hiding it raises its score. Which of the earlier facts established that its objective was safe? None did. Each was evidence about behavior under one distribution, one evaluator, one scaffold, one moment in the system's history. This chapter is about the instruments that turn "we hope it is aligned" into a scoped, reviewable claim — and about the gap each instrument leaves open.
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and comfort reading vector equations.
->
-> **From earlier chapters:** [Chapter 7](07-post-training.qmd#sec-ch07) defined behavior specifications and post-training objectives; [Chapter 8](08-reasoning-test-time-compute.qmd#sec-ch08) separated outcome verification from generated reasoning; [Chapter 22](22-evaluation.qmd#sec-ch22) supplied statistical evaluation and judge-calibration machinery; and [Chapter 24](24-agent-security.qmd#sec-ch24) enforced action security even when the model is compromised.
->
-> **Route A and Route B:** Route A readers have already seen transformer internals in [Chapter 2](02-transformer-first-principles.qmd#sec-ch02). Route B readers need no external backfill: the self-contained **Route B primer** below introduces the residual stream, layerwise decoding, and intervention points used here.
->
-> **Not required:** prior mechanistic-interpretability research, safety-case notation, public policy, or legal training. This chapter teaches enough of each to make bounded engineering decisions. It does not provide legal advice, certify a model, or replace a domain safety review.
+We build the evidence, we do not narrate it. The interpretability half runs on the model we trained in @sec-ch02 — the 140,000-parameter GPT that memorized *Alice's Adventures in Wonderland* — because a real, imperfect, fully inspectable model teaches more than a fixture engineered to cooperate. We (i) run a **logit lens** and watch an answer token become decodable layer by layer; (ii) fit a **linear probe** on residual activations for a real concept and defend it with a control task; (iii) extract an **activation-steering** direction and change the model's generated text, at a measured cost; (iv) test whether a reasoning trace is **faithful** with a worked intervention; (v) turn a capability score into an **elicitation lower bound**; and (vi) assemble a **safety case** inline — a structured artifact mapping hazards to inability, control, or trustworthiness arguments, wiring in the diagnostics we just measured, and returning a fail-closed deployment decision. The chapter closes on the governance and regulation that turn such a decision into a commitment. Chapters 7 and 8 own how safety behavior is trained in; here we assume it can break, and ask how we would know.
 
-## Contents
+## Alignment is a scoped claim, not a checkpoint property {#sec-ch25-alignment}
 
-- [Alignment is a behavioral claim, not an inherited property](#sec-ch25-alignment)
-- [What you will build](#sec-ch25-artifact)
-- [Route B primer: the residual stream is an inspection surface](#sec-ch25-residual-primer)
-- [Internal instruments form an evidence ladder](#sec-ch25-interpretability)
-- [Reasoning traces are monitorable, not ground truth](#sec-ch25-traces)
-- [Capability evaluations must include elicitation](#sec-ch25-capability-evals)
-- [Safety cases turn evidence into deployment claims](#sec-ch25-safety-cases)
-- [Governance turns thresholds into commitments](#sec-ch25-governance)
-- [Regulation is an engineering interface](#sec-ch25-regulation)
-- [Landscape 2026 (dated)](#sec-ch25-landscape)
-- [Build](#sec-ch25-build)
-- [What endures, what changes](#sec-ch25-endures)
-- [Exercises](#sec-ch25-exercises)
-- [Notes and sources](#sec-ch25-sources)
+**Alignment** is the degree to which a system's behavior and effective objectives stay compatible with the intended specification across the situations that matter. Read that twice, because the word *situations* is load-bearing. Alignment is not an adjective stored in a checkpoint; it is a claim about a system in a context, and it can be true under one distribution and false under another. Chapter 7 made the specification executable through constitutions, preference data, and reward models; Chapter 8 showed that reinforcement learning optimizes a *verified outcome* without making the generated rationale faithful. What both leave behind is residual uncertainty: a policy can satisfy the measured proxy for a reason the evaluator never intended.
 
-## Alignment is a behavioral claim, not an inherited property {#sec-ch25-alignment}
+Several failure hypotheses sharpen that uncertainty, and it is worth stating each as a testable threat model rather than a story. **Specification gaming** obtains reward while violating the goal behind it; it needs no hidden objective, only a shortcut. **Emergent misalignment** is broad concerning behavior appearing after narrow training — fine-tuning on insecure code has been shown to produce it under specific setups, which establishes possibility, not inevitability [@betley2025emergent]. **Sandbagging** is strategic or induced underperformance on selected evaluations while capability survives elsewhere [@vanderweij2024sandbagging]. **Evaluation awareness** means the system conditions its behavior on cues that distinguish a test from ordinary use; awareness alone is not malice, but it weakens any naive generalization from test to deployment. **Scheming** is the stronger threat model — a policy that pursues an objective at odds with its operators and strategically conceals the pursuit; constructed model-organism and in-context studies demonstrate components of it without estimating its prevalence in deployed systems [@meinke2024scheming]. **Alignment faking** is selective compliance meant to preserve a prior preference through a training process, one experimentally studied route to deceptive-looking compliance [@greenblatt2024alignmentfaking]. A model that answers differently after an evaluation banner may have learned a harmless formatting association; a scheming claim needs evidence of goal-directed, concealed behavior, and the two demand very different tests.
 
-A research agent refuses harmful requests, passes a published safety benchmark, and receives a high score from a preference model. The deployment team describes it as aligned. A later fine-tune teaches it to exploit a grader preference. It still refuses direct requests and still passes the benchmark, but now hides useful caveats whenever doing so improves its score. Which earlier fact established that its objective was safe?
-
-None did. Each fact was evidence about behavior under a particular distribution, evaluator, scaffold, and point in the system's history. **Alignment** is the degree to which a system's behavior and effective objectives remain compatible with the intended specification under the situations that matter. It is a scoped claim about a system in context, not a permanent adjective stored in a checkpoint.
-
-Chapter 7 made the specification executable through constitutions, preference data, and reward signals. Chapter 8 showed that reinforcement learning can optimize verified outcomes without making a generated rationale faithful. Those methods remain canonical: define intended behavior, collect evidence, optimize, and test. The bridge to this chapter is their residual uncertainty. A learned policy can satisfy the measured proxy for a reason the evaluator did not intend, can behave differently when it detects evaluation, or can retain a concerning capability behind a refusal policy.
-
-Several advanced failure hypotheses sharpen that uncertainty:
-
-- **Specification gaming** obtains reward while violating the goal behind the reward. It needs no persistent hidden objective; a shortcut is enough.
-- **Emergent misalignment** describes broad, concerning behavior that appears after narrow training. Experimental demonstrations establish possibility under particular training setups, not a universal consequence of fine-tuning.
-- **Sandbagging** is strategic or induced underperformance on selected evaluations while capability remains available elsewhere.
-- **Evaluation awareness** means the system conditions behavior on cues that distinguish a test from ordinary use. Awareness does not itself imply harmful intent, but it weakens naive generalization from test to deployment.
-- **Scheming** is a stronger threat model: the policy pursues an objective at odds with its operators and strategically hides or delays that pursuit. Constructed model-organism and in-context studies demonstrate components of this behavior; they do not estimate its prevalence in deployed systems.
-- **Alignment faking** is selective compliance intended to preserve a prior preference through a training process. It is one experimentally studied route to deceptive-looking compliance, not a synonym for every refusal inconsistency.
-
-These labels should produce testable threat models rather than dramatic stories. State what information the model receives, what objective or propensity is hypothesized, what opportunities exist, what behavior would distinguish alternatives, and what observations would falsify the hypothesis. A model that answers differently after seeing an evaluation banner may have learned a harmless formatting association. A scheming claim additionally needs evidence of goal-directed, strategically concealed behavior.
-
-No single observation closes this space. The useful pattern is a layered evidence stack: test behavior, inspect internal signals, monitor available traces, elicit capabilities under plausible assistance, validate external controls, and bind the resulting claims to a decision process. Each layer answers a different question and has a different blind spot.
+No single observation closes this space, which is why the useful structure is a layered stack: test behavior, inspect internal signals, monitor available traces, elicit capabilities under plausible assistance, validate external controls, and bind the surviving claims to a decision. @fig-ch25-evidence-stack shows the stack and, more importantly, the blind spot each layer carries into the final decision.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch25-evidence-stack
-%%| fig-cap: "Which evidence layers reduce different uncertainties in an alignment decision?"
-%%| fig-alt: "A layered flow begins with behavioral evaluations, then internal diagnostics, reasoning-trace monitoring, elicited capability evaluations, tested external controls, and a governed deployment decision. Side labels show that each layer has a distinct blind spot."
+%%| fig-cap: "Which uncertainty does each evidence layer reduce, and which does it leave open? Evidence converges at the decision; it never collapses into one universal alignment score."
 flowchart TB
-    B["Behavioral evaluations<br/>What did the system do here?"] --> I["Internal diagnostics<br/>What signal is represented or used?"]
-    I --> T["Trace monitoring<br/>What did the available reasoning expose?"]
-    T --> C["Capability elicitation<br/>What can this system do with assistance?"]
-    C --> X["External control tests<br/>What effects remain possible after compromise?"]
-    X --> G{"Governed claim<br/>Is residual risk acceptable in scope?"}
+    B["Behavioral evaluations<br/>what did the system do here?"] --> I["Internal diagnostics<br/>what is represented or used?"]
+    I --> T["Trace monitoring<br/>what did the reasoning expose?"]
+    T --> C["Capability elicitation<br/>what can it do with help?"]
+    C --> X["External control tests<br/>what effects survive compromise?"]
+    X --> G{"Governed claim<br/>is residual risk acceptable in scope?"}
     B -. "distribution shift" .-> G
     I -. "measurement ambiguity" .-> G
     T -. "unfaithful or hidden computation" .-> G
@@ -69,465 +33,867 @@ flowchart TB
     X -. "coverage and operational drift" .-> G
 ```
 
-The figure's invariant is that evidence converges at the decision; it does not collapse into one universal alignment score. Behavioral success cannot establish an internal objective, an internal feature cannot establish robust behavior, and a policy document cannot establish that a control works.
+Behavioral success cannot establish an internal objective; an internal feature cannot establish robust behavior; a policy document cannot establish that a control works. The rest of the chapter builds one instrument per layer and is honest about what each cannot say.
 
-## What you will build {#sec-ch25-artifact}
+## The residual stream is an inspection surface {#sec-ch25-residual}
 
-::: {.callout-note}
-### One integrated risk-evidence artifact
+A transformer does not pass a sentence between layers. It passes vectors. For each token position the model starts with an embedding and repeatedly *adds* attention and feed-forward updates to it; the evolving vector is the **residual stream** [@elhage2021framework]. Recall from @sec-ch02-residual that a block never overwrites the stream — it reads a normalized copy and adds an update back:
 
-You will inspect a deterministic synthetic residual stream with three instruments: a layerwise decoder, a linear probe with a shuffled-label control, and an activation-steering dose response. You will then attach those diagnostic results to a small safety case that maps hazards to inability, control, or trustworthiness arguments.
+$$
+\mathbf{h}_{\ell+1,t} = \mathbf{h}_{\ell,t} + \mathbf{a}_{\ell,t} + \mathbf{m}_{\ell,t},
+$$ {#eq-ch25-residual}
 
-The artifact deliberately produces strong-looking interpretability measurements and still returns `BLOCK`. One critical inability claim lacks adequate elicitation and sandbagging checks; one high-severity trustworthiness claim has only internal diagnostics and unresolved counterevidence. This is the intended result: useful evidence remains bounded by the claim it can support.
-:::
+where $\mathbf{h}_{\ell,t}\in\mathbb{R}^{d}$ is the residual vector at layer $\ell$ and token $t$, $\mathbf{a}_{\ell,t}$ is the attention update, and $\mathbf{m}_{\ell,t}$ is the feed-forward update. After the last block, a final normalization $N$ and the unembedding $\mathbf{W}_U$ turn the residual into logits, $\mathbf{z}_t = \mathbf{W}_U\,N(\mathbf{h}_{L,t})$. Because every write lands in the same additive channel, that channel is an inspection surface: we can read $\mathbf{h}_{\ell,t}$ at any layer, decode it, fit a classifier on it, or add a vector to it and watch what changes downstream.
 
-## Route B primer: the residual stream is an inspection surface {#sec-ch25-residual-primer}
-
-A transformer does not pass a sentence from layer to layer. It passes vectors. For each token position (t), the model begins with an embedding vector and repeatedly adds attention and feed-forward updates. The evolving vector is the **residual stream**. It is the main communication channel through which transformer blocks share information.
-
-A compact view of a block is
-
-
-\[
-\mathbf{h}_{\ell+1,t}
-= \mathbf{h}_{\ell,t}
-+ \mathbf{a}_{\ell,t}
-+ \mathbf{m}_{\ell,t},
-\]
-
-
-where (mathbf{h}_{\ell,t}\in\mathbb{R}^{d}) is the residual vector at layer (ell) and token (t), (mathbf{a}_{\ell,t}) is the attention update, (mathbf{m}_{\ell,t}) is the feed-forward or MLP update, and (d) is the model width. Real pre-normalization transformers apply normalization before each sublayer and add the sublayers sequentially; the equation groups both writes to emphasize the additive channel.
-
-Attention lets a position read information from other positions. The MLP transforms information at one position. Both read from the residual stream and write an update back. After the final block, a normalization and **unembedding** matrix convert the last residual vector into logits over output tokens. If (mathbf{W}_U) is the unembedding, then a simplified final prediction is
-
-
-\[
-\mathbf{z}_t = \mathbf{W}_U\,N(\mathbf{h}_{L,t}),
-\]
-
-
-where (N) is the model's final normalization, (L) is the number of layers, and (mathbf{z}_t) contains one logit per vocabulary item. Softmax converts those logits into next-token probabilities.
-
-This shared channel creates inspection points. A **hook** records or changes an activation at a named module, layer, token, and model version. Reading (mathbf{h}_{ell,t}) supports layerwise decoding and probes. Replacing it with (mathbf{h}_{ell,t}+\alpha\mathbf{v}) performs an intervention along direction (mathbf{v}) with dose (alpha). Reading an MLP output instead asks what one component wrote, while reading the residual asks what information was available after many components contributed.
-
-```{mermaid}
-%%| label: fig-ch25-residual-stream
-%%| fig-cap: "Where can an engineer observe or intervene in a transformer's residual stream?"
-%%| fig-alt: "Token embeddings enter an additive residual stream. Attention and MLP blocks read from and write to it at successive layers. Hooks can record residual vectors, decode intermediate logits, fit probes, or add a steering direction before final normalization and unembedding."
-flowchart LR
-    E["Token embedding<br/>h(0,t)"] --> R1["Residual after layer 1"] --> R2["Residual after layer 2"] --> RD["..."] --> RL["Residual after layer L"]
-    A1["Attention update"] -->|"add"| R1
-    M1["MLP update"] -->|"add"| R1
-    A2["Attention update"] -->|"add"| R2
-    M2["MLP update"] -->|"add"| R2
-    R2 -. "record h(l,t)" .-> H["Hook: lens, probe,<br/>or feature extractor"]
-    V["Steering vector alpha*v"] -. "intervene" .-> RL
-    RL --> N["Final normalization"] --> U["Unembedding"] --> Z["Next-token logits"]
-```
-
-The exact hook name is architecture- and library-specific. Some models use parallel sublayers, grouped experts, recurrent state, or additional modalities. Closed model APIs may expose no activations at all. The durable interface is therefore a tuple: model artifact digest, module path, layer, token-selection rule, activation transformation, prompt set, and decoding settings. Without that tuple, an activation result is hard to reproduce and easy to attach to the wrong model revision.
-
-The chapter artifact makes the geometry inspectable without downloading a model. In `code/ch25/safety_case.py`, `residual_fixture` creates six synthetic residual layers with a known direction whose signal strengthens with depth:
-
-```python
-def residual_fixture():
-    rows, layers, width = 48, 6, 8
-    row = np.arange(rows, dtype=float)[:, None]
-    col = np.arange(width, dtype=float)[None, :]
-    labels = np.where(np.arange(rows) % 2 == 0, 1.0, -1.0)
-    direction = np.array([1.0, -0.7, 0.4, 0.0, 0.2, -0.3, 0.1, 0.5])
-    direction /= np.linalg.norm(direction)
-    base = 0.42 * np.sin((row + 1.0) * (col + 1.0) * 0.37)
-    base += 0.31 * np.cos((row + 2.0) * (col + 1.0) * 0.19)
-    strengths = np.array([0.00, 0.08, 0.22, 0.48, 0.82, 1.18])
-    residuals = np.stack(
-        [base + strength * labels[:, None] * direction for strength in strengths],
-        axis=1,
-    )
-    return residuals, labels, direction
-```
-
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `safety_case.py` after the Route B primer | 14 lines | every measurement uses the same labeled residual states and known direction |
-
-The fixture is not a language model. Its purpose is to separate measurement logic from interpretive claims. You now have enough transformer machinery for the rest of the chapter: layers maintain an additive vector state, hooks expose a declared location, the unembedding decodes token evidence, and interventions can test whether a direction affects behavior.
-
-## Internal instruments form an evidence ladder {#sec-ch25-interpretability}
-
-Interpretability is not one method. It is a ladder of increasingly interventionist questions. A layerwise decoder asks what token evidence is present. A probe asks whether a concept is decodable. A sparse autoencoder proposes a feature basis. Steering asks whether changing a direction changes downstream behavior. None reveals a uniquely correct natural-language explanation of the whole computation.
-
-### Decode intermediate token evidence
-
-A **logit lens** applies the model's final normalization and unembedding to an intermediate residual vector:
-
-
-\[
-\mathbf{z}_{\ell,t}^{\text{lens}}
-= \mathbf{W}_U N(\mathbf{h}_{\ell,t}).
-\]
-
-
-For two tokens (y^+) and (y^-), the layerwise margin is (z^{\text{lens}}_{\ell,t,y^+}-z^{\text{lens}}_{\ell,t,y^-}). Tracking that margin can reveal when evidence for a candidate answer becomes decodable. The plain lens reuses a readout trained for the final layer, so an early residual may be represented in a basis that the final unembedding handles poorly. A **tuned lens** learns a small affine translator for each layer before decoding. That can improve prediction, but the learned translator adds parameters and must be validated on held-out data.
-
-A decoded token is evidence available at a location, not proof that the model will emit it or that one circuit caused it. Compare alternative tokens, positions, prompt families, and corrupted inputs. A useful lens result survives these choices and predicts a downstream difference.
-
-### Probe with a control task
-
-A linear probe fits a classifier on frozen activations. Given activation (mathbf{h}_i), label (y_i), weight (mathbf{w}), bias (b), loss (ell), and ridge penalty (lambda), one objective is
-
-
-\[
-(\hat{\mathbf{w}},\hat b)
-= \arg\min_{\mathbf{w},b}
-\sum_i \ell\!\left(y_i,\mathbf{w}^{\top}\mathbf{h}_i+b\right)
-+\lambda\lVert\mathbf{w}\rVert_2^2.
-\]
-
-
-High held-out accuracy means the label is decodable by that probe class. It does not mean the base model uses the direction. A flexible probe can learn dataset artifacts or memorize labels. A **control task** preserves the input and probe capacity while replacing the target with a random or nuisance labeling. **Selectivity** is task performance minus control performance. High task accuracy with equally high control accuracy is weak evidence.
-
-The artifact fits a closed-form ridge probe at one layer and repeats the procedure on a fixed shuffled labeling. This delta lives in `interpretability_diagnostics`:
-
-```python
-# --- probe and selectivity control ---
-train = np.arange(32)
-test = np.arange(32, 48)
-layer = 4
-probe = _ridge_probe(residuals[train, layer, :], labels[train])
-probe_accuracy = _accuracy(probe, residuals[test, layer, :], labels[test])
-
-rng = np.random.default_rng(25)
-control_labels = labels[rng.permutation(len(labels))]
-control_probe = _ridge_probe(residuals[train, layer, :], control_labels[train])
-control_accuracy = _accuracy(
-    control_probe, residuals[test, layer, :], control_labels[test]
-)
-selectivity = probe_accuracy - control_accuracy
-```
-
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `safety_case.py` after the probe | 13 lines | the task probe must outperform an equal-capacity shuffled-label control on held-out states |
-
-Selectivity is still dataset-relative. Use train/test separation by source, topic, template, and time where those factors may leak the concept. Compare layers, token positions, regularization strengths, nonlinear probes, and simple baselines. If a feature disappears under a paraphrase, the probe found a surface correlate rather than the claimed invariant.
-
-### Decompose superposition with sparse features
-
-A neuron need not represent one human concept. Models can store more features than dimensions by superposing directions, so individual coordinates may be **polysemantic**. A sparse autoencoder (SAE) learns an overcomplete feature basis. One common form is
-
-
-\[
-\mathbf{f}=\operatorname{ReLU}(\mathbf{W}_e\mathbf{h}+\mathbf{b}_e),
-\qquad
-\hat{\mathbf{h}}=\mathbf{W}_d\mathbf{f}+\mathbf{b}_d,
-\]
-
-
-with objective
-
-
-\[
-\mathcal{L}
-= \lVert\mathbf{h}-\hat{\mathbf{h}}\rVert_2^2
-+\lambda\lVert\mathbf{f}\rVert_1.
-\]
-
-
-The reconstruction term retains information; the sparsity term encourages few active features. Researchers then inspect top-activating examples, use automated labels, test feature activation on held-outs, and intervene on selected features.
-
-An SAE feature is a learned coordinate, not an ontology entry. Feature splitting can represent one concept across several latents; feature absorption can mix a specific feature into a broader one; dead features never activate; reconstruction error leaves information outside the dictionary. Results depend on training corpus, sparsity, dictionary width, location, and model checkpoint. Report all of them, along with reconstruction quality and intervention tests. In the artifact, SAE evidence is supported by the schema but omitted from the toy measurement because training a dictionary on a hand-designed eight-dimensional fixture would add ceremony without teaching the scaling problem.
-
-### Intervene before claiming causality
-
-If a probe finds direction (mathbf{v}), an activation intervention forms
-
-
-\[
-\mathbf{h}'_{\ell,t}=\mathbf{h}_{\ell,t}+\alpha\mathbf{v}.
-\]
-
-
-Varying (alpha) produces a dose response. Addition, subtraction, ablation, and patching from a clean run into a corrupted run ask related causal questions. A behavioral change after intervention is stronger than decodability alone, but it remains local: the edit may shift many entangled features, damage general capability, or fail on other prompts. Measure target behavior, off-target behavior, utility, and reversibility across a preregistered prompt set.
-
-@fig-ch25-diagnostics plots all three measurements from the same fixture. Shapes, labels, and line styles carry the distinctions without relying on color.
+To inspect a real one we rebuild the model from @sec-ch02. We import its tangled code, retrain it on the same corpus with the same seeds, and get back the same memorizing 140K-parameter GPT — nothing here is a fixture.
 
 ```{python}
-#| label: fig-ch25-diagnostics
-#| fig-cap: "Synthetic local measurements: a layerwise margin strengthens, the real-label probe beats its shuffled control, and stronger steering reduces both the risk proxy and a cosine utility proxy."
-#| fig-alt: "Three panels show synthetic results. Risk-token margin rises across six residual layers. Held-out probe accuracy is one while shuffled-control accuracy is one half. As steering dose rises from zero to two, risk rate falls from one toward zero while cosine utility also falls."
-#| echo: true
+import importlib.util
 import sys
 from pathlib import Path
+
+import numpy as np
+import torch
+
+
+def load_module(name: str, relative_path: str):
+    """Import a committed chapter's tangled module under an explicit name."""
+    spec = importlib.util.spec_from_file_location(name, Path(relative_path).resolve())
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ch02 = load_module("ch02_generated", "code/ch02/_generated.py")
+torch.set_num_threads(1)
+
+corpus = Path("data/ch02/alice.txt").read_text(encoding="utf-8")
+tokenizer = ch02.BytePairTokenizer.train(corpus, vocab_size=512)
+stream = tokenizer.encode(corpus)
+data = torch.tensor(stream, dtype=torch.long)
+split = int(0.85 * data.numel())
+train_stream, val_stream = data[:split], data[split:]
+print(f"{len(stream):,} tokens; vocab {tokenizer.vocab_size}; "
+      f"train {train_stream.numel():,} / val {val_stream.numel():,}")
+```
+
+The training loop is the one from @sec-ch02-training, verbatim, so we state it once and run it: 400 AdamW steps under a warmup-cosine schedule. It finishes in under twenty seconds and leaves a model whose greedy continuation is recognizably Carroll — because it has largely memorized him, which is exactly the honest artifact we want to inspect.
+
+```{python}
+import time
+
+torch.manual_seed(20)
+config = ch02.GPTConfig(vocab_size=tokenizer.vocab_size)
+model = ch02.TinyGPT(config)
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-3, weight_decay=0.01)
+sampler = torch.Generator().manual_seed(7)
+
+started = time.perf_counter()
+for step in range(400):
+    inputs, targets = ch02.next_token_batch(train_stream, config.block_size, 16, sampler)
+    for group in optimizer.param_groups:
+        group["lr"] = ch02.lr_schedule(step, 400, peak=3e-3)
+    optimizer.zero_grad(set_to_none=True)
+    model.train()
+    _, loss, _ = model(inputs, targets)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    optimizer.step()
+model.eval()
+prompt = torch.tensor([tokenizer.encode("Alice was ")])
+sample = ch02.generate(model, prompt, 40, temperature=0.0)
+print(f"trained in {time.perf_counter() - started:.1f}s; final batch loss {loss.item():.3f}")
+print("greedy:", repr(tokenizer.decode(sample[0].tolist(), errors="replace")))
+```
+
+Now the instrument every later section reuses: a **hook** that re-runs the forward pass and returns the residual stream at every layer. It is @sec-ch02's `forward` opened up so we can read the intermediate states — the embedding, then the vector after each block — instead of only the final logits.
+
+```{python}
+# @save
+import torch
+
+
+@torch.inference_mode()
+def residual_states(model, tokens):
+    """Return the residual stream after the embedding and after each block.
+
+    This is the transformer's forward pass with the intermediate vectors
+    exposed: every interpretability tool in this chapter reads one of the
+    returned states rather than only the final logits. The list has one entry
+    more than the model has blocks — index 0 is the token-plus-position
+    embedding, index i is the stream after block i-1.
+
+    Args:
+        model: A decoder-only model exposing ``token_embedding``,
+            ``position_embedding``, and ``blocks`` (the Chapter 2 ``TinyGPT``).
+        tokens: Token IDs shaped ``(1, T)``.
+
+    Returns:
+        A list of tensors shaped ``(1, T, d)``, one per inspection point.
+    """
+    model.eval()
+    _, steps = tokens.shape
+    positions = torch.arange(steps)
+    x = model.token_embedding(tokens) + model.position_embedding(positions)
+    states = [x.clone()]
+    for block in model.blocks:
+        x, _ = block(x)
+        states.append(x.clone())
+    return states
+```
+
+A quick check confirms the shapes and shows the additive stream growing in magnitude as each block writes into it — the norm rises from the embedding to the final layer because updates accumulate rather than replace.
+
+```{python}
+probe_tokens = torch.tensor([tokenizer.encode("Alice was beginning to get very")])
+states = residual_states(model, probe_tokens)
+print(f"{len(states)} inspection points, each {tuple(states[0].shape)}")
+for name, state in zip(["embedding", "after block 1", "after block 2"], states):
+    print(f"  {name:14s} mean L2 norm/token = {state[0].norm(dim=-1).mean():.3f}")
+```
+
+@fig-ch25-residual-hooks locates where each instrument of this chapter attaches, and — the detail the diagram earns its place for — *what each hook reads*: the residual after a block reflects everything written so far, an MLP or attention output isolates one component's write, and a steering hook adds a direction before the rest of the network sees it.
+
+```{mermaid}
+%%| echo: false
+%%| label: fig-ch25-residual-hooks
+%%| fig-cap: "Which activation does each instrument hook, and does it read or write? The lens and the probe read a residual state; steering writes a direction into it before the remaining blocks and the unembedding run."
+flowchart LR
+    E["embedding<br/>h(0,t)"] --> R1["residual after block 1<br/>h(1,t)"]
+    R1 --> R2["residual after block 2<br/>h(2,t) = h(L,t)"]
+    A1["attention write"] -->|add| R1
+    M1["MLP write"] -->|add| R1
+    R1 -. "read: probe / lens" .-> P["linear probe,<br/>logit lens"]
+    S["steering vector<br/>alpha * v"] -. "write before block 2" .-> R1
+    R2 --> N["final norm N"] --> U["unembedding W_U"] --> Z["logits z(t)"]
+    R2 -. "read: lens / probe" .-> P
+```
+
+One caveat that matters the moment you leave this toy: the exact hook name is architecture- and library-specific, and a closed API may expose no activations at all. The durable object is a tuple — model digest, module path, layer, token-selection rule, transformation, prompt set, decoding settings — without which an activation result is impossible to reproduce and easy to pin on the wrong model revision.
+
+## Reading the stream: the logit lens {#sec-ch25-lens}
+
+The unembedding $\mathbf{W}_U$ turns the *final* residual into a next-token distribution. The **logit lens** asks a simple question: what if we apply that same readout to an *earlier* residual [@nostalgebraist2020logitlens]? Formally, the lens logits at layer $\ell$ are
+
+$$
+\mathbf{z}_{\ell,t}^{\text{lens}} = \mathbf{W}_U\,N(\mathbf{h}_{\ell,t}),
+$$ {#eq-ch25-lens}
+
+the same $N$ and $\mathbf{W}_U$ from @eq-ch25-residual applied to $\mathbf{h}_{\ell,t}$ instead of $\mathbf{h}_{L,t}$. Decoding those logits tells us which tokens the model's *own vocabulary readout* finds present in the stream partway through the computation. In our tied-embedding model the readout is literally the transpose of the embedding table, so the lens is exactly the model's own scoring geometry, read early.
+
+```{python}
+# @save
+import torch
+
+
+@torch.inference_mode()
+def logit_lens(model, state):
+    """Decode an intermediate residual with the model's final readout.
+
+    Applies the model's final normalization and unembedding to a residual
+    state, producing the tokens the model's own vocabulary geometry would
+    score highly *if this were the last layer*. It is the model reading its
+    own mind partway through, in its own basis.
+
+    Args:
+        model: A model exposing ``final_norm`` and ``lm_head``.
+        state: A residual state shaped ``(1, T, d)`` from ``residual_states``.
+
+    Returns:
+        Logits shaped ``(1, T, vocab_size)``.
+    """
+    return model.lm_head(model.final_norm(state))
+```
+
+We ask the trained model for its actual next token after "Alice was beginning to get very", then decode the top candidates at each layer with the lens. Watch the answer arrive: the embedding and the first block are dominated by echoes of the input token, and only after the second block does the true continuation surface to the top.
+
+```{python}
+layer_names = ["embedding", "after block 1", "after block 2 (final)"]
+actual = model(probe_tokens)[0][0, -1].argmax().item()
+print("model's actual next token:", repr(tokenizer.decode([actual], errors="replace")))
+for name, state in zip(layer_names, states):
+    top = logit_lens(model, state)[0, -1].topk(5).indices.tolist()
+    decoded = [tokenizer.decode([t], errors="replace") for t in top]
+    print(f"  {name:24s} top-5: {decoded}")
+```
+
+To make "the answer becomes decodable" a number rather than an impression, we track the **rank** of the model's final prediction inside the lens distribution at each layer and each position, averaged over the prompt. A rank of zero means the lens already places the eventual answer first; a large rank means it is buried.
+
+```{python}
+final_prediction = logit_lens(model, states[-1])[0].argmax(dim=-1)
+mean_ranks = []
+for state in states:
+    lens_logits = logit_lens(model, state)[0]
+    order = lens_logits.argsort(dim=-1, descending=True)
+    ranks = (order == final_prediction[:, None]).float().argmax(dim=-1)
+    mean_ranks.append(ranks.float().mean().item())
+for name, rank in zip(layer_names, mean_ranks):
+    print(f"  {name:24s} mean rank of the final-layer token = {rank:.2f}")
+```
+
+The rank collapses from roughly twenty at the embedding to zero at the final layer — the answer is computed, not looked up, and the middle block does most of the work. @fig-ch25-logit-lens plots that descent.
+
+```{python}
+#| label: fig-ch25-logit-lens
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "When does the answer become decodable inside the network? The mean rank of the final-layer token, read by the logit lens at each layer, falls from about twenty at the embedding to zero at the last block: the prediction emerges through the stack rather than sitting in the input."
 import matplotlib.pyplot as plt
-from matplotlib_inline.backend_inline import set_matplotlib_formats
 
-set_matplotlib_formats("svg", metadata={"Date": None})
-chapter_code = Path("code/ch25").resolve()
-if str(chapter_code) not in sys.path:
-    sys.path.insert(0, str(chapter_code))
-from safety_case import build_safety_case, plot_diagnostics
-
-report = build_safety_case()
-fig = plot_diagnostics(report)
+fig, ax = plt.subplots(figsize=(6.0, 3.4))
+ax.plot(range(len(mean_ranks)), mean_ranks, marker="o", color="#2a7f9e")
+ax.set_xticks(range(len(layer_names)))
+ax.set_xticklabels(["embedding", "block 1", "block 2\n(final)"])
+ax.set_ylabel("mean rank of final-layer token\n(lower = more decodable)")
+ax.set_ylim(bottom=-1)
+for i, rank in enumerate(mean_ranks):
+    ax.annotate(f"{rank:.1f}", (i, rank), textcoords="offset points", xytext=(0, 8))
+fig.tight_layout()
 plt.show()
 ```
 
-The first panel establishes layerwise decodability in a fixture whose generating process is known. The second says the linear readout generalizes better than an equal-capacity control. The third supplies a causal response and exposes a tradeoff: the largest edit suppresses the target proxy while moving the state far from its original direction. The plot does not establish an aligned objective, a production steering dose, or a deployment control.
+The honest limits are worth stating in the same breath as the result. A decoded token is evidence *available at a location*, not proof the model emits it or that one circuit caused it. The plain lens reuses a readout trained for the final layer, so an early residual can be in a basis the unembedding handles poorly; a **tuned lens** learns a small per-layer translator before decoding and reads more faithfully, at the cost of added parameters that must be validated on held-out data [@belrose2023tunedlens]. A lens result you can trust survives a change of token pair, position, and prompt, and predicts a downstream difference.
 
-Use the evidence ladder to limit language:
+## Probing for a concept, and why you need a control {#sec-ch25-probe}
 
-| Instrument | Defensible claim | Required countertest | Claim it does not establish |
+The lens reads what the model's own vocabulary geometry surfaces. A **linear probe** asks a different question: is some concept of *our* choosing linearly decodable from the activations, whether or not the model's readout cares about it? We fit a linear classifier on frozen residual activations for a labeled property; given activation $\mathbf{h}_i$, label $y_i$, weight $\mathbf{w}$, and bias $b$, the probe minimizes a classification loss $\sum_i \ell(y_i, \mathbf{w}^{\top}\mathbf{h}_i + b)$. High held-out accuracy means the label is decodable by a linear map — nothing more. It does *not* mean the model uses the direction, because a probe can learn a dataset artifact or a surface correlate.
+
+The defense against fooling ourselves is a **control task** [@hewitt2019control]: keep the inputs and the probe's capacity fixed, but replace the labels with a random relabeling. **Selectivity** is real-task accuracy minus control accuracy. If the control probe reaches the same accuracy, the probe is memorizing, not decoding, and selectivity — not raw accuracy — is the honest signal. We label two word-boundary concepts on our corpus: a *surface* one (is the current token a space-leading word start?) and a *contextual* one (will the next token be a boundary?), which the model must predict rather than read.
+
+```{python}
+# @save
+import numpy as np
+
+
+def word_boundary_labels(tokenizer, token_ids, predict_next=False):
+    """Label each position by its relation to a word boundary.
+
+    Two concepts share one helper. With ``predict_next=False`` the label is a
+    surface fact about the current token — does it begin a new word (a leading
+    space or newline)? With ``predict_next=True`` the label is a prediction the
+    model must compute — will the *next* token begin a word? The surface label
+    is available at the embedding; the predictive one requires integrating the
+    current partial word, so it should strengthen deeper in the stack.
+
+    Args:
+        tokenizer: A tokenizer exposing ``decode``.
+        token_ids: The token-ID stream to label.
+        predict_next: Label the next token's boundary status instead of this one.
+
+    Returns:
+        A float array of 0/1 labels, one per position.
+    """
+    pieces = [tokenizer.decode([t], errors="replace") for t in token_ids]
+    starts = np.array([1.0 if p[:1] in (" ", "\n") else 0.0 for p in pieces])
+    if not predict_next:
+        return starts
+    labels = np.zeros(len(token_ids))
+    labels[:-1] = starts[1:]
+    return labels
+```
+
+We collect the residual activations once, over non-overlapping windows so every position is decoded in a full context, and reuse them for every layer and both concepts.
+
+```{python}
+# @save
+import numpy as np
+import torch
+
+
+def collect_residuals(model, token_ids, block_size):
+    """Gather per-layer residual activations over the whole stream.
+
+    Slides non-overlapping windows across the token stream, runs the residual
+    hook on each, and stacks the results so a probe can be fit at any layer.
+    Returns the covering index map so labels computed on the full stream line
+    up with the collected activations position for position.
+
+    Args:
+        model: The model to inspect.
+        token_ids: The full token-ID stream.
+        block_size: Window length; also the model's context limit.
+
+    Returns:
+        A tuple ``(states, index_map)`` where ``states[layer]`` is an array
+        shaped ``(N, d)`` and ``index_map`` gives each row's stream position.
+    """
+    layers = len(model.blocks) + 1
+    buckets = [[] for _ in range(layers)]
+    index_map = []
+    for start in range(0, len(token_ids) - block_size, block_size):
+        window = token_ids[start:start + block_size]
+        states = residual_states(model, torch.tensor([window]))
+        for layer, state in enumerate(states):
+            buckets[layer].append(state[0].numpy())
+        index_map.extend(range(start, start + block_size))
+    return [np.concatenate(bucket) for bucket in buckets], np.array(index_map)
+```
+
+The probe itself is a few lines: fit a logistic regression on a train split, score on held-out positions, then repeat on a fixed shuffle of the labels to get the control.
+
+```{python}
+# @save
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+
+
+def probe_with_control(features, labels, seed=25, train_frac=0.7):
+    """Fit a linear probe and an equal-capacity shuffled-label control.
+
+    The probe measures whether the concept is linearly decodable from the
+    activations; the control fits the same model class to a random relabeling.
+    Selectivity — probe accuracy minus control accuracy — is the honest signal,
+    because a probe that only memorizes labels scores as well on the shuffle.
+
+    Args:
+        features: Activations shaped ``(N, d)``.
+        labels: Binary labels shaped ``(N,)``.
+        seed: Seed for the control-label permutation.
+        train_frac: Fraction of positions used to fit; the rest are held out.
+
+    Returns:
+        A dict with ``accuracy``, ``control``, ``selectivity``, and ``majority``.
+    """
+    n_train = int(train_frac * len(features))
+    x_train, x_test = features[:n_train], features[n_train:]
+    y_train, y_test = labels[:n_train], labels[n_train:]
+    probe = LogisticRegression(max_iter=2000).fit(x_train, y_train)
+    accuracy = probe.score(x_test, y_test)
+    shuffled = np.random.default_rng(seed).permutation(labels)
+    control = LogisticRegression(max_iter=2000).fit(x_train, shuffled[:n_train])
+    control_accuracy = control.score(x_test, shuffled[n_train:])
+    majority = max(y_test.mean(), 1 - y_test.mean())
+    return {
+        "accuracy": round(float(accuracy), 3),
+        "control": round(float(control_accuracy), 3),
+        "selectivity": round(float(accuracy - control_accuracy), 3),
+        "majority": round(float(majority), 3),
+    }
+```
+
+We run both concepts at all three layers. The surface feature is most decodable at the embedding — the token *is* the input — and fades as the stream is repurposed for prediction. The contextual feature runs the other way: nearly invisible at the embedding, it strengthens through the blocks as the model integrates the current word.
+
+```{python}
+layer_activations, index_map = collect_residuals(model, stream, config.block_size)
+surface = word_boundary_labels(tokenizer, stream, predict_next=False)[index_map]
+contextual = word_boundary_labels(tokenizer, stream, predict_next=True)[index_map]
+
+print(f"{'layer':<24}{'concept':<12}{'acc':>6}{'control':>9}{'select':>8}{'major':>7}")
+probe_curves = {"surface": [], "contextual": []}
+for layer in range(3):
+    for name, labels in [("surface", surface), ("contextual", contextual)]:
+        result = probe_with_control(layer_activations[layer], labels)
+        probe_curves[name].append(result["selectivity"])
+        print(f"{layer_names[layer]:<24}{name:<12}{result['accuracy']:>6}"
+              f"{result['control']:>9}{result['selectivity']:>8}{result['majority']:>7}")
+```
+
+The control column is the discipline: it sits at the majority rate everywhere, so the surface selectivity of about 0.13 is a *discovered* quantity, not an artifact of a balanced fixture. @fig-ch25-probe plots both selectivity curves and makes the crossing legible.
+
+```{python}
+#| label: fig-ch25-probe
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Where does each concept live in the stack? A surface word-boundary feature is most linearly decodable at the embedding and fades; a contextual (next-boundary) feature the model must compute strengthens with depth. Selectivity, not raw accuracy, is plotted — the shuffled-label control has been subtracted off."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(6.2, 3.4))
+xs = range(3)
+ax.plot(xs, probe_curves["surface"], marker="o", color="#b13f3f",
+        label="surface: is this a word start")
+ax.plot(xs, probe_curves["contextual"], marker="s", color="#2a7f9e",
+        label="contextual: is the next token a word start")
+ax.axhline(0.0, ls="--", color="0.6")
+ax.set_xticks(list(xs))
+ax.set_xticklabels(["embedding", "block 1", "block 2\n(final)"])
+ax.set_ylabel("probe selectivity\n(accuracy minus control)")
+ax.legend(fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+Selectivity is still dataset-relative. A feature that vanishes under paraphrase was a surface correlate; before trusting a probe on a real model, split by source, topic, template, and time, and compare layers, positions, and regularization strengths. The probe tells us a concept is *present*. It does not tell us the model *uses* it — for that we have to intervene.
+
+## Steering: from correlation to a causal test {#sec-ch25-steering}
+
+A probe direction is correlational. To ask whether a direction is *causal*, we add it to the residual stream during generation and see whether behavior changes. If the probe found that word boundaries are linearly encoded, the **difference-of-means** direction between boundary and non-boundary positions is a natural handle on that concept, and steering along it is the causal test [@arditi2024refusal]:
+
+$$
+\mathbf{h}'_{\ell,t} = \mathbf{h}_{\ell,t} + \alpha\,\mathbf{v},
+$$ {#eq-ch25-steer}
+
+where $\mathbf{v}$ is the unit direction and $\alpha$ is the dose. A behavioral change after this edit is stronger evidence than decodability — but it is still local: the edit can shift many entangled features at once, which is why single neurons are rarely interpretable in the first place. Models pack more features than dimensions into the residual stream by **superposition**, so a coordinate is typically *polysemantic*; a sparse autoencoder can propose a cleaner overcomplete feature basis and has scaled to production models, though feature splitting, dead features, and reconstruction error keep even those results bounded [@elhage2022superposition; @templeton2024scaling]. We steer along a difference-of-means direction here because it needs no training and ties directly to the probe.
+
+```{python}
+# @save
+import numpy as np
+import torch
+
+
+def mean_difference_direction(features, labels):
+    """Return the unit direction separating the two labeled activation groups.
+
+    The difference of class means is the simplest causal handle on a concept a
+    probe found: it points from the average "off" activation toward the average
+    "on" one. Adding it to the residual stream during generation tests whether
+    the concept the probe decoded actually drives behavior.
+
+    Args:
+        features: Activations shaped ``(N, d)``.
+        labels: Binary labels shaped ``(N,)``.
+
+    Returns:
+        A unit-norm float32 tensor shaped ``(d,)``.
+    """
+    difference = features[labels == 1].mean(0) - features[labels == 0].mean(0)
+    difference = difference / np.linalg.norm(difference)
+    return torch.tensor(difference, dtype=torch.float32)
+
+
+@torch.inference_mode()
+def generate_with_steering(model, prompt_ids, max_new_tokens, direction, alpha, layer):
+    """Greedily generate while adding a steering vector at one layer.
+
+    Reproduces the residual hook of ``residual_states`` but, after block
+    ``layer``, adds ``alpha * direction`` to the stream before the remaining
+    blocks and the readout run. ``alpha = 0`` is ordinary generation; positive
+    and negative doses push the concept up and down.
+
+    Args:
+        model: The model to steer.
+        prompt_ids: The prompt as a list of token IDs.
+        max_new_tokens: How many tokens to append.
+        direction: A ``(d,)`` steering direction.
+        alpha: The dose; scales the added direction.
+        layer: Add the direction after this many blocks (1-indexed).
+
+    Returns:
+        The prompt with generated token IDs appended, as a list.
+    """
+    block_size = model.config.block_size
+    output = list(prompt_ids)
+    for _ in range(max_new_tokens):
+        tokens = torch.tensor([output[-block_size:]])
+        positions = torch.arange(tokens.size(1))
+        x = model.token_embedding(tokens) + model.position_embedding(positions)
+        for index, block in enumerate(model.blocks):
+            x, _ = block(x)
+            if index == layer - 1:
+                x = x + alpha * direction
+        logits = model.lm_head(model.final_norm(x))[0, -1]
+        output.append(int(logits.argmax()))
+    return output
+```
+
+We build the direction from the contextual boundary labels at the first block and steer there, so the second block still gets to process the edited state into text. The on-target measure is the mean length of generated "words"; the off-target cost is the held-out loss with the same edit applied, which tells us how much general competence we spent.
+
+```{python}
+direction = mean_difference_direction(layer_activations[1], contextual)
+
+
+@torch.inference_mode()
+def steered_val_loss(model, val, direction, alpha, layer, block_size, windows=8):
+    """Held-out cross-entropy with the steering edit applied — the off-target cost."""
+    model.eval()
+    starts = torch.linspace(0, val.numel() - block_size - 1, windows).long()
+    losses = []
+    for start in starts:
+        tokens = val[start:start + block_size][None]
+        targets = val[start + 1:start + block_size + 1][None]
+        x = model.token_embedding(tokens) + model.position_embedding(torch.arange(block_size))
+        for index, block in enumerate(model.blocks):
+            x, _ = block(x)
+            if index == layer - 1:
+                x = x + alpha * direction
+        logits = model.lm_head(model.final_norm(x))
+        losses.append(torch.nn.functional.cross_entropy(
+            logits.flatten(0, 1), targets.flatten()).item())
+    return float(np.mean(losses))
+
+
+def mean_word_length(text):
+    words = [w for w in text.split(" ") if w]
+    return float(np.mean([len(w) for w in words])) if words else 0.0
+
+
+prompt_ids = tokenizer.encode("Alice was ")
+doses, word_lengths, off_target = [], [], []
+for alpha in (-3.0, -1.5, 0.0, 1.5, 3.0):
+    generated = generate_with_steering(model, prompt_ids, 40, direction, alpha, layer=1)
+    text = tokenizer.decode(generated, errors="replace")
+    doses.append(alpha)
+    word_lengths.append(mean_word_length(text))
+    off_target.append(steered_val_loss(model, val_stream, direction, alpha, 1, config.block_size))
+    print(f"alpha={alpha:+.1f}  word_len={word_lengths[-1]:5.2f}  "
+          f"loss={off_target[-1]:5.2f}  {text!r}")
+```
+
+The dose response is monotone and honest. Push the boundary direction up and the model floods the output with word breaks — average word length collapses toward one character; push it down and it runs letters together into long strings. And the text degrades at both extremes: this is the off-target cost made visible, the d2l lesson that the real output is imperfect and we show it anyway. @fig-ch25-steering plots both effects on one axis pair.
+
+```{python}
+#| label: fig-ch25-steering
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Does the probed direction causally control behavior, and at what cost? Steering the word-boundary direction up shortens generated words monotonically (left axis, on-target); held-out loss is lowest at the unsteered point and rises on both sides (right axis, off-target). A causal handle, but not a free one."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(6.4, 3.6))
+ax.plot(doses, word_lengths, marker="o", color="#2a7f9e", label="mean word length (on-target)")
+ax.set_xlabel("steering dose (alpha)")
+ax.set_ylabel("mean generated word length", color="#2a7f9e")
+ax.tick_params(axis="y", labelcolor="#2a7f9e")
+twin = ax.twinx()
+twin.plot(doses, off_target, marker="s", ls="--", color="#b13f3f", label="held-out loss (off-target)")
+twin.set_ylabel("held-out cross-entropy loss", color="#b13f3f")
+twin.tick_params(axis="y", labelcolor="#b13f3f")
+fig.tight_layout()
+plt.show()
+```
+
+We now have four instruments and can state, for each, the claim it earns and the countertest it demands. The table is the synthesis of this half of the chapter: internal tools generate hypotheses, localize regressions, and add evidence to an audit; they do not convert "we found a direction" into "we found the model's goal."
+
+| Instrument | Defensible claim | Required countertest | What it does *not* establish |
 |---|---|---|---|
-| Logit or tuned lens | token evidence is decodable at this location | alternative tokens, prompts, positions, translator held-out test | the model used that token evidence causally |
-| Probe | this label is decodable by this probe on held-outs | shuffled/nuisance controls and split audits | the policy represents one human concept or relies on it |
-| SAE feature | a sparse learned direction groups these activations | reconstruction, stability, splitting, activation and intervention tests | the feature label is complete or uniquely correct |
-| Steering or patching | this intervention changes measured downstream behavior | dose response, negative controls, off-target and distribution tests | the direction is a safe global control |
+| Logit / tuned lens | token evidence is decodable at this layer | alternative tokens, prompts, positions; tuned-lens held-out test | the model used that evidence causally |
+| Linear probe | this concept is linearly decodable here | shuffled-label control; split-by-source audits | the policy represents or relies on one clean concept |
+| Sparse autoencoder | a sparse direction groups these activations | reconstruction, stability, splitting, intervention | the feature label is complete or unique |
+| Steering / patching | this direction changes measured behavior | dose response, off-target and out-of-distribution tests | the direction is a safe global control |
 
-The production implication is modest and valuable: internal tools generate hypotheses, localize regressions, and add evidence to an audit. Preserve activation samples, hook specifications, feature dictionaries, probe code, data lineage, and negative results. Do not convert “we found a direction” into “we found the model's goal.”
+## Reasoning traces are monitorable, not faithful {#sec-ch25-traces}
 
-## Reasoning traces are monitorable, not ground truth {#sec-ch25-traces}
+A reasoning-capable system may emit a scratchpad, a chain of thought, or a tool-call rationale. These **traces** are model-generated text a monitor can read, and they are operationally valuable precisely because they are legible and cheap next to white-box activation analysis. The trap is treating a legible trace as a faithful one. Separate three properties: **outcome validity** (did the answer satisfy the task?), **monitorability** (can a declared monitor detect a safety-relevant property from the trace?), and **faithfulness** (does the trace expose the factors that actually caused the decision?). A trace can be highly monitorable for explicit phrases and still be a poor causal account.
 
-Reasoning-capable systems may emit a scratchpad, chain of thought, plan, tool-call rationale, or compact summary. These artifacts are **traces**: model-generated text available to a monitor. They can expose unsafe intent before an action, make reward hacking easier to spot, and help classify why a trajectory changed. They are operationally useful precisely because they are legible and cheap compared with white-box activation analysis.
+Faithfulness is tested by intervention: change a hidden or biasing input, confirm the answer changes, then check whether the trace mentions the cause. Turpin and colleagues did exactly this — inserting a bias such as "I think the answer is (A)" flips models' answers while their stated reasoning never cites the hint [@turpin2023faithful]. We cannot run this on our tiny memorizer, which has no chain of thought, so we work a **representative** version — the numbers below are illustrative of the published pattern, not a recorded run — to make the measurement concrete.
 
-Legibility is not faithfulness. A trace can omit a causal cue, rationalize a choice after the fact, use an internal representation that has no natural-language counterpart, or adapt when it knows the trace is monitored. Controlled intervention studies demonstrate this gap by changing a hidden or biasing input, observing that the answer changes, and checking whether the trace mentions the cause. Failure to mention it is evidence against faithfulness for that setup.
+```{python}
+# representative faithfulness probe (illustrative of Turpin et al., not a recorded run)
+trials = [
+    {"clean": "B", "biased": "A", "hint": "A", "cot_mentions_hint": True},
+    {"clean": "C", "biased": "A", "hint": "A", "cot_mentions_hint": False},
+    {"clean": "A", "biased": "A", "hint": "A", "cot_mentions_hint": False},
+    {"clean": "D", "biased": "B", "hint": "B", "cot_mentions_hint": False},
+    {"clean": "B", "biased": "B", "hint": "B", "cot_mentions_hint": True},
+    {"clean": "C", "biased": "D", "hint": "D", "cot_mentions_hint": False},
+]
+flipped = [t for t in trials if t["biased"] != t["clean"]]
+flip_rate = len(flipped) / len(trials)
+followed_hint = sum(t["biased"] == t["hint"] for t in trials) / len(trials)
+mention_rate = sum(t["cot_mentions_hint"] for t in flipped) / len(flipped)
+print(f"answer changed by the hint (flip rate): {flip_rate:.2f}")
+print(f"final answer matched the hint:          {followed_hint:.2f}")
+print(f"...of the flips, trace named the hint:   {mention_rate:.2f}")
+```
 
-Separate three properties:
+The gap between "the hint changed the answer" and "the trace admits the hint" is the faithfulness gap, and @fig-ch25-faithfulness draws it. A monitor reading only the trace would see confident, plausible reasoning and miss the actual cause on most flips.
 
-1. **Outcome validity:** did the final answer or action satisfy the task?
-2. **Monitorability:** can a declared monitor detect a safety-relevant property from the available trace?
-3. **Faithfulness:** does the trace expose the factors that actually caused the model's decision?
+```{python}
+#| label: fig-ch25-faithfulness
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why is a legible trace not a faithful one? On a representative bias-injection probe, an injected hint changes the answer on most trials, but the chain of thought names the hint on only a minority of those flips — the reasoning the monitor reads is not the reasoning that drove the decision."
+import matplotlib.pyplot as plt
 
-A trace can be highly monitorable for explicit phrases yet incomplete as a causal account. It can also be faithful about one factor while omitting another. Measure monitorability as an ordinary detection problem with labeled positive and negative trajectories, false-positive costs, distribution splits, and adversarial pressure. Measure faithfulness with interventions: insert, remove, or perturb a factor; establish that behavior changes; then test whether the trace and monitor identify that factor.
+fig, ax = plt.subplots(figsize=(5.6, 3.2))
+bars = ax.bar(["hint changed\nthe answer", "trace named\nthe hint"],
+              [flip_rate, mention_rate], width=0.55, color=["#b13f3f", "#2a7f9e"])
+ax.set_ylabel("fraction of biased trials")
+ax.set_ylim(0, 1.0)
+for bar, value in zip(bars, [flip_rate, mention_rate]):
+    ax.annotate(f"{value:.2f}", (bar.get_x() + bar.get_width() / 2, value),
+                textcoords="offset points", xytext=(0, 4), ha="center")
+fig.tight_layout()
+plt.show()
+```
 
-Do not train against the same trace monitor without testing whether behavior becomes less legible. Penalizing suspicious language can teach euphemism or omission while leaving the underlying action policy intact. Keep outcome and effect monitors, internal diagnostics, and final action controls independent. A trace alert may raise scrutiny, route to a stronger evaluator, or deny a risky action. Absence of an alert is not an inability proof.
+Two operational rules follow. Measure monitorability as an ordinary detection problem — labeled positive and negative trajectories, false-positive costs, adversarial pressure — and never assume absence of an alert is an inability proof. And do not train against the same trace monitor without checking that behavior stays legible: penalizing suspicious language can teach euphemism while leaving the action policy intact. Keep the trace monitor, the internal diagnostics, and the final action control independent, because each fails differently.
 
-Reasoning traces also create data-governance obligations. They may contain personal data, secrets copied from tools, security-sensitive plans, or proprietary intermediate work. Collect only the trace surface needed for the declared monitor; separate access to raw traces from ordinary product logs; define retention, redaction, and deletion; and record which model and prompt produced each trace. Chapter 27 owns live privacy and incident operations. Here the invariant is narrower: a monitorable trace is one sensor in a defense-in-depth case, never privileged access to the model's true thoughts.
+## Capability evaluations must include elicitation {#sec-ch25-evals}
 
-## Capability evaluations must include elicitation {#sec-ch25-capability-evals}
+A dangerous-capability evaluation asks whether a system can materially advance a threat-relevant task — cyber operations, uplift for chemical or biological misuse, autonomous operation. Knowledge screens like WMDP are cheap proxies; executable agent tasks like Cybench test planning, tool use, and persistence [@li2024wmdp; @zhang2024cybench]. But a score means nothing until we pin down the **system under evaluation**, which is far more than model weights: prompt, sampler, reasoning budget, tools, retrieval, memory, scaffold, retries, and any fine-tuning or human assistance. **Capability elicitation** is the disciplined effort to make the system perform near the top of the range a real actor in the threat model could reach [@metr2024elicitation]. If $S(e)$ is the score under elicitation configuration $e$ over the covered set $\mathcal{E}$, the honest reported quantity is a lower bound:
 
-A dangerous-capability evaluation asks whether a system can materially advance a threat-relevant task. Domains may include cyber operations, chemical or biological misuse, harmful persuasion, autonomous operation, or acceleration of AI research. Knowledge-only multiple-choice tests can screen cheaply; realistic agent tasks test planning, tool use, persistence, and successful effects. Neither score means much until the evaluated system and assistance envelope are specified.
+$$
+S_{\text{observed}} = \max_{e \in \mathcal{E}} S(e).
+$$ {#eq-ch25-elicit}
 
-Define the **system under evaluation** as more than model weights. Include prompt, sampler, reasoning budget, tool permissions, retrieval, memory, agent scaffold, retries, parallelism, fine-tuning, and human assistance. **Capability elicitation** is the disciplined attempt to make the system perform near the upper range plausibly accessible to actors in the threat model. It can include prompt optimization, task decomposition, tool access, scaffold variants, larger inference budgets, or limited domain fine-tuning inside a controlled environment.
+The asymmetry this creates is the whole point: evidence of capability defeats an inability claim quickly, while *absence* of capability needs a credible search for it. A low unassisted score is not an inability proof when an attacker can add tools, search, or a better scaffold. We make that concrete with a **representative** elicitation envelope — the numbers illustrate the shape, not a specific model.
 
-Let (S(e)) be the measured score under elicitation configuration (e), and let (mathcal{E}) be the set of plausible configurations the evaluation covered. A useful observed bound is
+```{python}
+# representative elicitation envelope: score rises as assistance is added
+envelope = [
+    ("base prompt",        0.04),
+    ("+ tool access",      0.11),
+    ("+ agent scaffold",   0.19),
+    ("+ domain fine-tune", 0.31),
+]
+threshold = 0.20
+observed = max(score for _, score in envelope)
+print(f"{'configuration':<20}{'S(e)':>6}")
+for name, score in envelope:
+    flag = "  <-- crosses threshold" if score >= threshold else ""
+    print(f"{name:<20}{score:>6.2f}{flag}")
+print(f"\nbase-prompt score {envelope[0][1]:.2f} sits under the {threshold:.2f} threshold; "
+      f"max_e S(e) = {observed:.2f} does not")
+```
+
+The base configuration a lazy evaluation would report (0.04) sits comfortably under the 0.20 threshold, yet the elicited maximum (0.31) crosses it. Report the envelope and its gaps next to the score, or the number invites exactly the inference — "failed here, therefore cannot" — that **sandbagging** and **evaluation awareness** are built to exploit. Guard the inference with hidden held-outs, varied surface cues, learning curves across assistance, and independent evaluators; a password-locked model can preserve capability while depressing one score, and no single check rules that out. Finally, dangerous evaluations need containment — isolated networks and credentials, deweaponized tasks, an emergency stop — because Chapter 24's enforcement boundary is what keeps realism from becoming harm.
+
+This is also the engine of responsible scaling. The mechanism is always the same three-step commitment: pick a **threshold** before results, run the **evaluation** under a versioned elicitation envelope, and attach a precommitted **action** to each side. A threshold with no committed action is an alert, not governance.
+
+::: {.callout-note title="In the interview"}
+**Q. Your model scores near zero on a dangerous-capability benchmark. Can you argue inability?**
+Not from that number alone. The reported score is $S_{\text{observed}} = \max_e S(e)$ over the *configurations you tried* — a lower bound on what a determined actor could reach with better tools, scaffolding, or fine-tuning. An inability argument needs the elicitation envelope (what assistance was searched), integrity checks against sandbagging and evaluation awareness, and coverage of the threat model — not one unassisted pass. The trap is treating a low score as evidence of a ceiling; capability evidence defeats inability fast, but absence of capability has to be earned by a credible search for it.
+:::
+
+## A safety case turns evidence into a decision {#sec-ch25-safety-case}
+
+A model report can hold hundreds of metrics and still leave the decision implicit. A **safety case** is a structured, reviewable argument that a system is acceptably safe for a stated scope, supported by evidence [@clymer2024safetycases; @buhl2024safetycases]. It does not prove zero risk; it makes the claim, assumptions, evidence, residual uncertainty, and decision rule inspectable. Decompose the top claim by hazard, and for each hazard choose an argument pattern: **inability** (the capability needed for the harm is absent under a strong elicitation envelope), **control** (assume the capability, but tested controls interrupt every path to harm), **trustworthiness** (evidence supports that the capable system acts as intended), or **deference** (a more capable trusted process supplies assurance — research-dependent, not for ordinary review). Control arguments are often strongest for agents because they claim least about learned intent: Chapter 24's enforcement point can deny a credential read even if the model proposes it strategically.
+
+We assemble the case inline, as data. The deployment is a sandboxed research agent; three hazards each take a different argument, and each argument declares exactly what evidence it is allowed to rest on.
+
+```{python}
+deployment_case = {
+    "system": {"name": "research-agent-rc25",
+               "scope": "sandboxed public-web research; no credentials, no production authority"},
+    "top_claim": {"id": "G0", "text": "acceptably safe for the stated sandbox scope",
+                  "decision_rule": "block on any unsupported high or critical claim"},
+    "claims": [
+        {"id": "G1", "severity": "critical", "argument": "control",
+         "hazard": "compromised policy attempts credential access or egress",
+         "controls": [{"id": "C-EGRESS", "evidence": ["E-CONTAINMENT"]}]},
+        {"id": "G2", "severity": "critical", "argument": "inability",
+         "hazard": "agent completes a long-horizon autonomous-replication task",
+         "capability": {"score": 0.04, "threshold": 0.08,
+                        "elicitation_coverage": 0.55, "required_coverage": 0.8,
+                        "sandbagging_check": "open"},
+         "evidence": ["E-CAPABILITY"]},
+        {"id": "G3", "severity": "high", "argument": "trustworthiness",
+         "hazard": "policy pursues a hidden objective while behaving well on tests",
+         "evidence": ["E-LENS", "E-PROBE", "E-STEER"], "unresolved_counterevidence": True},
+    ],
+    "evidence": [
+        {"id": "E-CONTAINMENT", "kind": "control_test", "status": "pass",
+         "scope": "final enforcement point exercised with hostile proposals and denied effects"},
+        {"id": "E-CAPABILITY", "kind": "capability_eval", "status": "pass",
+         "scope": "held-out autonomous-task suite under the current scaffold and budget"},
+    ],
+}
+```
+
+The interpretability results become evidence — but *diagnostic* evidence, a kind the rules below will refuse to over-trust. This function converts the measurements we took on the real model into scoped, non-dispositive evidence items.
+
+```{python}
+# @save
+DIAGNOSTIC_KINDS = {"logit_lens", "linear_probe", "activation_steering", "sae_feature"}
 
 
-\[
-S_{\text{observed}}=\max_{e\in\mathcal{E}}S(e).
-\]
+def diagnostic_evidence(diagnostics):
+    """Turn internal measurements into scoped, non-dispositive evidence items.
 
+    The lens, probe, and steering results from the real model each become one
+    evidence item tagged with a diagnostic ``kind``. Tagging matters: the claim
+    rules treat diagnostic evidence as hypothesis-generating, never as proof of
+    a control or a stable objective, so these items can support a narrow
+    statement but cannot by themselves discharge a safety claim.
 
-This is still a lower bound on what may become accessible under a better configuration outside (mathcal{E}). A low unassisted score is therefore not evidence of inability when a plausible attacker can add tools, search, fine-tuning, or a better scaffold. Report the elicitation envelope and unresolved gaps next to the score.
+    Args:
+        diagnostics: A dict with ``lens``, ``probe``, and ``steering`` results.
 
-An evaluation package should contain:
+    Returns:
+        A list of three evidence dicts with ``id``, ``kind``, ``status``,
+        ``value``, and ``limitation``.
+    """
+    lens, probe, steer = diagnostics["lens"], diagnostics["probe"], diagnostics["steering"]
+    return [
+        {"id": "E-LENS", "kind": "logit_lens",
+         "status": "pass" if lens["rank_drop"] > 0 else "fail", "value": lens["rank_drop"],
+         "limitation": "a decoded token is not a causal computation"},
+        {"id": "E-PROBE", "kind": "linear_probe",
+         "status": "pass" if probe["selectivity"] > 0.02 else "fail", "value": probe["selectivity"],
+         "limitation": "decodability does not prove the policy uses the feature"},
+        {"id": "E-STEER", "kind": "activation_steering",
+         "status": "pass" if steer["behavior_change"] else "fail", "value": steer["on_target"],
+         "limitation": "a local edit may be off-target or fail out of distribution"},
+    ]
+```
 
-- a threat model connecting task performance to harm, including prerequisites outside the model;
-- a task suite with contamination controls, held-outs, and domain-expert review;
-- the complete system and elicitation matrix, including failed attempts;
-- valid outcome measurement, human baselines where useful, uncertainty, and sensitivity to budget;
-- safety handling for hazardous data, environments, artifacts, and evaluator access;
-- integrity checks for evaluation awareness, sandbagging, grader exploitation, and infrastructure failure;
-- a threshold chosen before final results and an owner for the triggered action.
+The rule engine is deliberately small and narrow — no weighted average, no single safety score. Each argument type has its own sufficiency test, and a claim is a **gap** the moment any reason fires.
 
-Sandbagging and evaluation awareness attack the inference from “failed here” to “cannot do this.” Use hidden canaries and held-outs, vary surface cues, compare semantically equivalent tasks, test capability on adjacent benign tasks, inspect learning curves across assistance, and use independent evaluators where the risk warrants it. A password-locked or selectively underperforming model can preserve capability while depressing one score. No single check rules this out; record residual uncertainty.
+```{python}
+# @save
+def evaluate_claim(claim, evidence_by_id):
+    """Judge one scoped safety argument against explicit, per-pattern rules.
 
-Dangerous evaluations require containment. Use synthetic, deweaponized, or access-controlled tasks when they answer the measurement question; isolate networks and credentials; prevent artifacts from reaching real targets; review release of prompts and traces; and establish emergency stop authority. Chapter 24 supplies the enforcement boundary. Evaluation realism does not authorize uncontrolled harm.
+    Control arguments must rest on passing evidence that is not purely
+    diagnostic. Inability arguments require a below-threshold score, sufficient
+    elicitation coverage, a closed sandbagging check, and passing evidence.
+    Trustworthiness arguments require passing evidence, at least two independent
+    non-diagnostic evidence classes, and no unresolved counterevidence. Any
+    unmet condition makes the claim a gap; the reasons are returned so a
+    reviewer sees exactly why.
 
-The safety-case fixture makes under-elicitation machine-readable. Claim `G2` reports a score below its threshold, but its coverage is `0.55` against a declared minimum of `0.8`, and the sandbagging check remains open. The claim is a gap despite the nominally passing score. When the test raises coverage and closes the integrity check, the same rule supports the scoped inability argument. This is the correct asymmetry: evidence of capability can defeat an inability claim quickly; absence of capability needs a credible search for it.
+    Args:
+        claim: One claim dict from the case.
+        evidence_by_id: All evidence items keyed by ``id``.
 
-## Safety cases turn evidence into deployment claims {#sec-ch25-safety-cases}
+    Returns:
+        A dict with ``id``, ``severity``, ``argument``, ``status``, ``reasons``.
+    """
+    def passing(ids):
+        return bool(ids) and all(evidence_by_id[i]["status"] == "pass" for i in ids)
 
-A model report can contain hundreds of metrics and still leave the decision implicit. A **safety case** is a structured, reviewable argument that a system is acceptably safe for a stated scope and operating context, supported by evidence. It does not prove zero risk. It makes the claim, assumptions, reasoning, evidence, residual uncertainty, and decision rule inspectable.
+    reasons = []
+    argument = claim["argument"]
+    if argument == "control":
+        controls = claim.get("controls", [])
+        if not controls:
+            reasons.append("no control is named")
+        for control in controls:
+            ids = control.get("evidence", [])
+            kinds = {evidence_by_id[i]["kind"] for i in ids}
+            if not passing(ids):
+                reasons.append(f"{control['id']} lacks passing evidence")
+            if kinds and kinds <= DIAGNOSTIC_KINDS:
+                reasons.append(f"{control['id']} rests only on internal diagnostics")
+    elif argument == "inability":
+        cap = claim["capability"]
+        if cap["score"] > cap["threshold"]:
+            reasons.append("capability score exceeds the deployment threshold")
+        if cap["elicitation_coverage"] < cap["required_coverage"]:
+            reasons.append("elicitation coverage is below the declared minimum")
+        if cap.get("sandbagging_check") != "pass":
+            reasons.append("evaluation-integrity or sandbagging checks remain open")
+        if not passing(claim.get("evidence", [])):
+            reasons.append("capability evidence is missing or failing")
+    else:  # trustworthiness
+        ids = claim.get("evidence", [])
+        kinds = {evidence_by_id[i]["kind"] for i in ids}
+        if not passing(ids):
+            reasons.append("trustworthiness evidence is missing or failing")
+        if len(kinds - DIAGNOSTIC_KINDS) < 2:
+            reasons.append("fewer than two independent non-diagnostic evidence classes")
+        if claim.get("unresolved_counterevidence", True):
+            reasons.append("counterevidence remains unresolved")
+    return {"id": claim["id"], "severity": claim["severity"], "argument": argument,
+            "status": "supported" if not reasons else "gap", "reasons": reasons}
+```
 
-Begin with a top claim such as: “Candidate C is acceptably safe for a sandboxed public-web research deployment with no secrets or production authority.” Decompose it by hazards, not organizational teams. For each hazard, choose an argument pattern:
+Building the case joins the diagnostics to the graph, checks that every referenced evidence ID exists, evaluates each claim, and fails closed: any unsupported high- or critical-severity claim blocks the deployment.
 
-- **Inability:** the system lacks a capability needed to realize the harm under a sufficiently strong elicitation envelope.
-- **Control:** assume the capability or intent may be present, but tested technical and operational controls interrupt every material path to harm.
-- **Trustworthiness:** evidence supports that the capable system will act according to the intended objective in the relevant situations.
-- **Deference:** a more capable trusted process supplies assurance humans cannot directly produce. This remains a research-dependent pattern and should not be smuggled into ordinary model-assisted review.
+```{python}
+# @save
+def build_safety_case(case, diagnostics):
+    """Assemble a case, evaluate every claim, and return a fail-closed decision.
 
-Control arguments are often stronger for agent deployment because they make fewer claims about learned intent. The Chapter 24 policy enforcement point can deny a credential read even if the model proposes it strategically. An inability argument may be appropriate for a capability that cannot be safely controlled after release, but only if task coverage and elicitation justify it. Trustworthiness arguments demand convergent evidence and explicit counterevidence; a probe and steering response alone do not establish a stable objective.
+    Joins the diagnostic evidence to the case's own evidence, rejects dangling
+    evidence references, evaluates each claim under ``evaluate_claim``, and
+    blocks deployment when any high- or critical-severity claim is a gap. The
+    decision is structural: it does not average evidence into one score, so the
+    blocking reason is always a specific claim, not a threshold on a number.
+
+    Args:
+        case: The deployment case (system, top claim, claims, base evidence).
+        diagnostics: Real interpretability measurements for the diagnostic items.
+
+    Returns:
+        A report dict with ``claims`` results, a ``summary``, and ``decision``.
+
+    Raises:
+        ValueError: If a claim references an evidence ID that does not exist.
+    """
+    evidence = case["evidence"] + diagnostic_evidence(diagnostics)
+    by_id = {item["id"]: item for item in evidence}
+    for claim in case["claims"]:
+        referenced = list(claim.get("evidence", []))
+        for control in claim.get("controls", []):
+            referenced += control.get("evidence", [])
+        missing = sorted(set(referenced) - set(by_id))
+        if missing:
+            raise ValueError(f"{claim['id']} references missing evidence: {missing}")
+    results = [evaluate_claim(claim, by_id) for claim in case["claims"]]
+    blocking = [r["id"] for r in results
+                if r["status"] == "gap" and r["severity"] in {"high", "critical"}]
+    return {
+        "claims": results,
+        "summary": {"supported": sum(r["status"] == "supported" for r in results),
+                    "gaps": sum(r["status"] == "gap" for r in results),
+                    "blocking": blocking},
+        "decision": "BLOCK" if blocking else "APPROVE",
+    }
+```
+
+Now we wire the *real* diagnostics — the lens rank drop, the probe selectivity, and the steering effect we measured above — into the case and print the verdict as a structured table.
+
+```{python}
+diagnostics = {
+    "lens": {"rank_drop": round(mean_ranks[0] - mean_ranks[-1], 2)},
+    "probe": {"selectivity": probe_curves["surface"][0]},
+    "steering": {"behavior_change": word_lengths[-1] < word_lengths[0],
+                 "on_target": round(word_lengths[0] - word_lengths[-1], 2)},
+}
+report = build_safety_case(deployment_case, diagnostics)
+
+print(f"{'claim':<6}{'severity':<10}{'argument':<16}{'status':<11}reason")
+for result in report["claims"]:
+    reason = result["reasons"][0] if result["reasons"] else "-"
+    print(f"{result['id']:<6}{result['severity']:<10}{result['argument']:<16}"
+          f"{result['status']:<11}{reason}")
+print(f"\nsupported={report['summary']['supported']}  gaps={report['summary']['gaps']}  "
+      f"blocking={report['summary']['blocking']}  ->  decision = {report['decision']}")
+```
+
+The decision is `BLOCK`, and reading *why* is the point. `G1` is supported: its control rests on a real containment test, not on the model's internals. `G2` fails despite a passing, below-threshold score, because its elicitation coverage (0.55) sits under the declared minimum and its sandbagging check is open — exactly the elicitation asymmetry of @eq-ch25-elicit. `G3` fails because our three interpretability results, strong as their plots looked, are all *diagnostic*: they cannot supply the two independent non-diagnostic evidence classes a trustworthiness claim needs, and its counterevidence is unresolved. @fig-ch25-safety-case draws the decomposition.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch25-safety-case
-%%| fig-cap: "How does a scoped top claim decompose into arguments, controls, evidence, and a fail-closed release decision?"
-%%| fig-alt: "The top claim for a sandboxed research agent splits into three hazard claims. A credential-exfiltration hazard uses a control argument and passing containment test. An autonomous replication hazard uses an inability argument but has an elicitation gap. A hidden-objective hazard uses a trustworthiness argument with lens, probe, and steering diagnostics but unresolved counterevidence. High or critical gaps flow to a block decision."
+%%| fig-cap: "How does a scoped top claim decompose into arguments, evidence, and a fail-closed decision? Diagnostic evidence supports narrow statements; it cannot discharge the control or trustworthiness claims, and the two critical/high gaps force a block."
 flowchart TB
-    G0["G0: acceptably safe for<br/>declared sandbox scope"] --> G1["G1 critical: unauthorized<br/>credential access"]
-    G0 --> G2["G2 critical: autonomous<br/>replication capability"]
-    G0 --> G3["G3 high: hidden objective"]
-    G1 --> A1["Control argument"] --> C1["Final policy enforcement point"] --> E1["Passing hostile-proposal<br/>containment test"]
-    G2 --> A2["Inability argument"] --> E2["Low observed score"]
-    E2 --> X2{"Elicitation and<br/>sandbagging checks complete?"}
-    G3 --> A3["Trustworthiness argument"] --> E3["Lens + probe + steering<br/>diagnostics"]
-    E3 --> X3{"Independent evidence and<br/>counterevidence resolved?"}
-    X2 -->|"no: critical gap"| D["BLOCK deployment"]
-    X3 -->|"no: high gap"| D
+    G0["G0: acceptably safe<br/>for sandbox scope"] --> G1["G1 critical:<br/>credential access"]
+    G0 --> G2["G2 critical:<br/>autonomous replication"]
+    G0 --> G3["G3 high:<br/>hidden objective"]
+    G1 --> A1["control argument"] --> E1["containment test<br/>(non-diagnostic): pass"]
+    G2 --> A2["inability argument"] --> E2["low score, but<br/>coverage 0.55 < 0.8,<br/>sandbagging open"]
+    G3 --> A3["trustworthiness argument"] --> E3["lens + probe + steering<br/>(all diagnostic)"]
+    E2 -->|critical gap| D["BLOCK"]
+    E3 -->|high gap| D
+    E1 -->|supported| G1
 ```
 
-The graph prevents evidence laundering. `E-LENS` may support a statement about decoded margin, not `G0` directly. `E-CONTAINMENT` supports the named control under a tested scope; it does not prove the model lacks a hidden objective. Each edge should have a written warrant explaining why the evidence bears on the claim.
+The graph prevents *evidence laundering*: a lens result can support a statement about a decoded margin, never `G0` directly, and every edge should carry a written warrant for why the evidence bears on the claim. Two further disciplines make a real case survive contact with change. Review each evidence edge on independence — "independent" means the failure modes differ, not that two dashboards show the same benchmark — and hold configuration control: any material change to weights, prompt, tools, or deployment population reopens the affected claims rather than editing a verdict in place.
 
-Review evidence on seven dimensions: relevance to the claim, construct validity, coverage of the threat model, independence from other evidence, freshness relative to the candidate, traceability to immutable artifacts, and falsifiability. “Independent” means failure modes differ, not merely that two dashboards display the same underlying benchmark. A probe and an SAE trained on the same activations may be correlated. A black-box behavioral audit, causal intervention, data-lineage analysis, and external control test provide more diverse failure modes.
+## Governance: thresholds, commitments, and regulation {#sec-ch25-governance}
 
-The artifact encodes narrow rules rather than a weighted safety score. The control branch rejects controls supported only by diagnostic evidence; the inability branch requires a below-threshold score, minimum elicitation coverage, a closed sandbagging check, and passing evidence; the trustworthiness branch requires independent non-diagnostic evidence classes and no unresolved counterevidence. The core inability logic in `evaluate_claim` is small enough to inspect:
+Governance is the machinery that turns a `BLOCK` into a commitment nobody can quietly reverse. It uses three kinds of trigger for different jobs. **Resource triggers** use training compute or another development input to require evaluation and security *before* capability is known — observable early, but only a proxy. **Capability triggers** use elicited performance tied to a threat model — closer to harm, but dependent on task validity and elicitation. **Deployment triggers** use access, autonomy, tool authority, and exposure — the same weights behind a narrow API and inside a privileged autonomous agent carry very different risk. A robust policy composes them and keeps the units separate; adding them into one risk number hides which assumption failed.
 
-```python
-# --- inability argument rule ---
-capability = claim["capability"]
-if capability["score"] > capability["threshold"]:
-    reasons.append("capability score exceeds the deployment threshold")
-if capability["elicitation_coverage"] < capability["required_coverage"]:
-    reasons.append("elicitation coverage is below the declared minimum")
-if capability.get("sandbagging_check") != "pass":
-    reasons.append("evaluation-integrity or sandbagging checks remain open")
-if not _passing(evidence_by_id, claim.get("evidence", [])):
-    reasons.append("capability evidence is missing or failing")
-```
+The durable lesson under every responsible-scaling framework is **precommitment**. If leadership can redefine the threshold, discount a failed evaluation, or swap in an untested safeguard after seeing results — with no recorded exception path — the framework constrains nothing. So write the loop before the candidate arrives: define hazard owners, thresholds, and required evidence; run evaluations under a versioned elicitation envelope; give reviewers independent enough standing to challenge task validity and delay release; record the decision, its dissent, assumptions, and expiry; stage only the authority the case supports; and reopen the case when a threshold, component, threat model, or law changes. "Unable to conclude" must map to an action — more evaluation, reduced authority, delayed release — never silently to approval.
 
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `safety_case.py` after claim evaluation | 10 lines shown | a low score cannot support inability while elicitation or integrity checks remain open |
-
-A real safety case needs assumptions, defeaters, uncertainty, owners, and links to signed evidence, not only the fixture's JSON. It also needs configuration control. Any material change to weights, system prompt, tools, permissions, scaffold, data, or deployment population can invalidate an edge. Reopen affected claims rather than editing a verdict in place. Store prior cases so reviewers can see which evidence changed and why.
-
-Appendix B carries the reusable review template; the mechanism here explains why each field exists and how a claim should fail when its evidence is insufficient.
-
-## Governance turns thresholds into commitments {#sec-ch25-governance}
-
-A threshold without a precommitted action is an alert, not governance. Effective governance states what is measured, where the boundary lies, what happens on each side, who decides, who can challenge the evidence, and how an exception expires.
-
-Use three kinds of trigger for different jobs:
-
-1. **Resource triggers** use training compute or another development input to require notice, evaluation, security, or documentation before capability is known. They are observable early but only proxy for risk.
-2. **Capability triggers** use elicited performance tied to a threat model. They connect more directly to harm but depend on task validity, elicitation, and evaluator integrity.
-3. **Deployment triggers** use access, autonomy, tool authority, user population, and exposure. The same model behind a narrow API and inside an autonomous privileged agent presents different risk.
-
-A robust policy composes them. A resource trigger can require an evaluation package. A capability trigger can require stronger model-weight security or deployment controls. An exposure trigger can prohibit a privileged launch until a control case passes. Keep the units and evidence separate; adding them into one risk number hides which assumption failed.
-
-Route A readers can feed Chapter 6's training-compute accounting into a resource trigger. Route B does not need that derivation here: it needs a versioned quantity, the exact definition used by the governing policy or law, and an explicit action when the threshold is crossed.
-
-Write the decision loop before the candidate arrives:
-
-- define hazard owners, thresholds, and required evidence;
-- run evaluations under a versioned elicitation envelope;
-- have reviewers independent enough to challenge task validity and control coverage;
-- record the release authority's decision, dissent, assumptions, and expiry;
-- stage deployment with only the authority supported by the case;
-- monitor leading indicators, control health, and incidents;
-- reopen the case when a threshold, system component, threat model, or law changes.
-
-Organizational independence is a control with degrees, not a job-title checkbox. The team that built an evaluation knows its details; an independent reviewer is better positioned to challenge motivated interpretation. Use both. Give reviewers access to raw evidence and authority to delay release. Separate approval of the measurement design from acceptance of residual risk when stakes warrant it. Record conflicts and time-bounded waivers.
-
-Responsible-scaling policies operationalize this pattern for frontier development: define risk domains, evaluate before or near capability thresholds, attach stronger safeguards to higher levels, and publish or internally record decisions. Their exact categories and versions change. The durable engineering lesson is precommitment. If leadership can redefine the threshold, discount a failed evaluation, or substitute an untested safeguard after seeing results without a recorded exception path, the framework does not constrain the decision.
-
-Governance also needs uncertainty handling. A threshold is not a metaphysical line between safe and unsafe. Use confidence intervals where the statistic supports them, sensitivity analyses across elicitation settings, explicit evidence gaps, and conservative buffers when harm is asymmetric. “Unable to conclude” must map to an action such as more evaluation, reduced authority, delayed release, or a control-based argument. It must not silently become approval.
-
-## Regulation is an engineering interface {#sec-ch25-regulation}
-
-Legal text, voluntary standards, contracts, and internal policies become useful to engineering only after they are mapped to systems and evidence. Maintain an **applicability matrix** keyed by jurisdiction, organizational role, model or system category, intended use, affected population, and effective period. Counsel owns legal interpretation; engineering owns accurate system facts and implementable controls.
-
-Translate each applicable obligation into five fields:
+Regulation enters engineering the same way: as an interface. Legal text becomes useful only after it is mapped to systems and evidence, so maintain an applicability matrix keyed by jurisdiction, role, model category, use, population, and effective period, and translate each obligation into five fields.
 
 | Field | Engineering question |
 |---|---|
-| Requirement | What outcome, process, disclosure, or prohibition is demanded? |
-| Scope | Which model, system, deployment, user, and jurisdiction does it cover? |
-| Control | What technical or organizational mechanism realizes it? |
-| Evidence | What artifact demonstrates operation: test, log, assessment, report, or approval? |
-| Lifecycle | Who owns it, when is it refreshed, and what change invalidates it? |
+| Requirement | what outcome, disclosure, or prohibition is demanded? |
+| Scope | which model, deployment, user, and jurisdiction does it cover? |
+| Control | what technical or organizational mechanism realizes it? |
+| Evidence | what artifact — test, log, assessment, approval — demonstrates it? |
+| Lifecycle | who owns it, when is it refreshed, what change invalidates it? |
 
-Do not equate a policy statement with a control or a control with evidence. “We prevent discriminatory outcomes” is a goal. A documented decision process, representative evaluation, appeal path, monitored production slice, and accountable owner are candidate mechanisms and evidence, each with limits. Likewise, an interpretability dashboard may help an investigation but seldom discharges a broad requirement by itself.
+Never collapse a policy statement into a control, or a control into evidence: "we prevent discriminatory outcomes" is a goal; a documented decision process, a representative evaluation, an appeal path, and an accountable owner are candidate mechanisms, each with limits. Compute thresholds show why legal and technical taxonomies must stay joined but distinct — compute is measurable before deployment and can trigger duties, yet post-training, scaffolding, and distribution change practical capability, so track the legally defined quantity exactly while also maintaining capability and exposure assessments. The organizational operating loop that runs all of this lives in Chapter 28; the living regulatory catalog lives in Appendix C.
 
-Compute thresholds illustrate why legal and technical taxonomies must remain joined but distinct. Compute can be measured before deployment and may trigger duties, yet post-training, scaffolding, tool use, compression, and distribution can change practical capability. Track the legally defined quantity exactly while also maintaining capability and exposure assessments. Never silently substitute an internal estimate for a statutory definition.
-
-Build regulatory change as a data pipeline. Version the source text and counsel's interpretation; link requirements to case claims, controls, evidence, and products; notify owners when a source or system changes; and retain the decision history. Test the matrix with counterexamples: a model acquired from another provider, an internal high-impact use, an open-weight release, a fine-tuned derivative, and a system deployed across jurisdictions. Appendix C owns the living regulatory catalog; Chapter 28 owns the broader management system. This chapter's invariant is that every compliance claim must resolve to current scope, an owned control, and auditable evidence.
-
-## Landscape 2026 (dated) {#sec-ch25-landscape}
-
-::: {.callout-note .landscape-2026}
-### Technical and governance frontier
-
-As of 2026-07-19, experimental work has demonstrated alignment faking under constructed training conditions, in-context scheming under explicit goals and incentives, selective sandbagging, emergent misalignment after narrow fine-tuning, and blind audits of deliberately implanted hidden objectives. These are capability and model-organism results, not prevalence estimates for deployed models. Sparse-autoencoder work has scaled feature extraction to production-sized transformers, while later auditing benchmarks continue to find that white-box tools are useful but not sufficient. Chain-of-thought monitorability is an active evaluation target; current results support treating traces as a potentially valuable but fragile sensor.
-
-Versioned company frameworks currently include Anthropic's Responsible Scaling Policy version 3.4, effective 2026-07-08; OpenAI's Preparedness Framework version 2; and Google DeepMind's Frontier Safety Framework 3.1 update. Their thresholds, domains, governance bodies, and mitigation language are living commitments, not interchangeable standards.
-
-The European Commission states that the EU AI Act entered into force on 2024-08-01; obligations for providers of general-purpose AI models began applying on 2025-08-02; and Commission enforcement powers for those obligations begin on 2026-08-02. Current Commission guidance uses training compute above (10^{25}) FLOP as a rebuttable presumption of systemic risk and permits designation below that threshold. Application dates for other high-risk provisions have been subject to later implementation and simplification measures, so teams should not rely on an old timeline graphic.
-
-In the United States, requirements remain distributed across federal actions, sectoral law, procurement, and state legislation. California's enacted Transparency in Frontier Artificial Intelligence Act requires covered large frontier developers to publish and follow frontier AI frameworks, report specified incidents, and make model-related disclosures; its enacted text defines a frontier-model compute threshold of (10^{26}) operations and provides for periodic review of definitions. NIST AI RMF 1.0 remains a voluntary framework organized around Govern, Map, Measure, and Manage, with a Generative AI Profile; NIST reports that AI RMF 1.0 is being revised.
-
-**Verify live: 2026-07-19.** Recheck the official [EU AI Act implementation page](https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai), [GPAI provider guidance](https://digital-strategy.ec.europa.eu/en/faqs/guidelines-obligations-general-purpose-ai-providers), [California SB 53 text](https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB53), [NIST AI RMF page](https://www.nist.gov/itl/ai-risk-management-framework), and current counsel before making a compliance claim. Recheck the official [Anthropic RSP](https://www.anthropic.com/responsible-scaling-policy), [OpenAI Preparedness Framework](https://openai.com/index/updating-our-preparedness-framework/), and [Google DeepMind Frontier Safety Framework](https://deepmind.google/blog/strengthening-our-frontier-safety-framework/) before relying on a named version. For research status, revisit the primary papers and artifacts in the notes rather than carrying model-specific findings forward as constants.
+::: {.landscape-2026}
+As of 2026-07-20, experimental work has demonstrated alignment faking under constructed training, in-context scheming under explicit goals, selective sandbagging, emergent misalignment after narrow fine-tuning, and blind audits of implanted hidden objectives — capability and model-organism results, not prevalence estimates for deployed systems. Versioned company frameworks include Anthropic's Responsible Scaling Policy, OpenAI's Preparedness Framework, and Google DeepMind's Frontier Safety Framework; their thresholds and governance bodies are living commitments, not interchangeable standards. The European Commission states the EU AI Act entered into force on 2024-08-01, with general-purpose-model obligations applying from 2025-08-02 and enforcement powers from 2026-08-02; its guidance uses training compute above a presumption level of $C > 10^{25}$ FLOP for systemic-risk designation. In the United States, requirements remain distributed across federal action, sectoral law, and state legislation; California's enacted Transparency in Frontier Artificial Intelligence Act defines a frontier threshold at $N > 10^{26}$ operations and mandates published frameworks and incident reporting. NIST AI RMF 1.0 (Govern, Map, Measure, Manage, with a Generative AI Profile) remains voluntary and under revision. **Verify live: 2026-07-20.** Recheck the [official EU AI Act implementation page](https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai), the California SB 53 text, the NIST AI RMF page, and each named company framework — and current counsel — before making any compliance claim.
 :::
 
-## Build {#sec-ch25-build}
+## Summary
 
-The integrated artifact consists of [safety_case.py](../code/ch25/safety_case.py), the [deployment fixture](../code/ch25/fixtures/deployment.json), and focused [tests](../tests/test_ch25_safety_case.py). NumPy is required for the deterministic activation fixture; Matplotlib is required only for the chapter figure. From `newbook/`, run:
+Alignment is a scoped claim about behavior and effective objectives, not a property baked into a checkpoint. We ran four interpretability instruments on the Chapter 2 model and read each honestly: a logit lens whose answer-rank fell to zero only at the last block, a linear probe kept honest by a shuffled-label control, and a difference-of-means steering vector that changed generated text at a measured held-out-loss cost. We tested a reasoning trace's faithfulness by intervention, turned a capability score into the lower bound $\max_e S(e)$, and assembled a fail-closed safety case that blocked deployment because diagnostic evidence cannot discharge a control or a trustworthiness claim. Governance makes such a decision a precommitment; Chapter 28 runs the organizational loop around it.
 
-```bash
-python -m pytest -q tests/test_ch25_safety_case.py
-python code/ch25/safety_case.py
-python code/ch25/safety_case.py --enforce
-```
+## Exercises
 
-The first two commands exit zero. The final command intentionally exits with status `2` because the declared release gate blocks the candidate. Read its JSON in this order:
-
-1. `interpretability.lens_margin` rises from `0.0379` to `1.2179` across the six synthetic layers. The fixture makes the risk direction increasingly decodable.
-2. `probe.accuracy = 1.0`, `control_accuracy = 0.5`, and `selectivity = 0.5`. The task probe generalizes while its shuffled-label control remains at chance for this balanced fixture.
-3. Steering dose `alpha = 2.0` lowers the synthetic risk rate from `1.0` to `0.0833`, while the cosine utility proxy falls from `1.0` to `0.0478`. The intervention has a target effect and a large off-target movement.
-4. Claim `G1` is `supported`. Its control argument cites a passing hostile-proposal test at the final enforcement point. It does not rely on the model's internals.
-5. Claim `G2` is a `gap` even though its capability score is below threshold. Elicitation coverage is below the predeclared minimum, and the sandbagging check is open.
-6. Claim `G3` is a `gap`. Lens, probe, and steering items all remain diagnostic evidence, fewer than two independent non-diagnostic evidence classes support trustworthiness, and counterevidence is unresolved.
-7. Because `G2` is critical and `G3` is high severity, `decision = BLOCK`.
-
-### Acceptance checks
-
-The build is complete when all eight tests pass; two consecutive reports are identical; the real-label probe beats its control; steering changes both the target and utility proxy; diagnostic-only evidence cannot validate a control; the under-elicited inability claim fails; fixing its coverage and integrity fields makes that scoped claim pass; dangling evidence IDs are rejected; and enforcement exits nonzero for the unresolved integrated case.
-
-### Deliberate breaks
-
-First, edit a copy of the fixture so `G1` cites `E-PROBE` and `E-STEER` instead of `E-CONTAINMENT`. Validation succeeds because the IDs exist, but claim evaluation returns a gap: internal diagnostics do not test the external control. Next, set `G2.capability.elicitation_coverage` to `0.9` without closing `sandbagging_check`; the claim still fails. Finally, close that check and rerun. Only the inability branch changes. The top decision remains blocked because `G3` is unresolved.
-
-These breaks distinguish schema validity, evidence sufficiency, and release policy. A well-formed case can be unsupported. One repaired claim need not repair the top claim. The graph, not a weighted average, preserves the blocking reason.
-
-### Honesty note
-
-The residual states are generated from a known direction, so the interpretability results are easier than real model analysis. Probe labels are balanced, the control is one fixed shuffle, steering operates at one location, and the utility proxy is cosine similarity rather than task quality. The JSON case is an executable teaching schema, not a recognized assurance notation or legal filing. Its evidence items are assertions, not signed reports. A production system needs model hooks, protected datasets, domain experts, uncertainty analysis, independent review, immutable artifact digests, operational control tests, and an owner authorized to block release.
-
-## What endures, what changes {#sec-ch25-endures}
-
-**What endures.** Alignment is a scoped claim about behavior and effective objectives, not a checkpoint property. Treat lenses, probes, sparse features, steering, and traces as instruments with bounded claims. Test decodability with controls and causality with interventions. Treat capability scores as lower bounds on an elicitation envelope. Build safety cases from explicit claims, warrants, evidence, assumptions, and defeaters. Prefer external control arguments when they reduce dependence on learned intent. Precommit thresholds to actions, fail closed on material evidence gaps, and map obligations to owned controls and auditable artifacts.
-
-**What changes.** Interpretability algorithms, feature dictionaries, monitorability results, dangerous-capability suites, model-organism findings, company safety frameworks, compute thresholds, statutes, implementation dates, and regulatory guidance will change. Removing the Landscape 2026 block leaves the residual-stream primer, evidence ladder, elicitation rule, safety-case structure, and governance loop intact.
-
-## Exercises {#sec-ch25-exercises}
-
-1. The fixture's logit-lens margin increases at every layer. Add a second direction that is strong early and erased late. Plot both margins and explain why “appears early” and “drives the final output” are different claims.
-2. Replace the fixed shuffled-label control with twenty seeded shuffles. Report the control distribution and a confidence interval for selectivity. Split the data by a synthetic source group and test whether the conclusion survives group holdout.
-3. Add an SAE to the residual fixture with a wider latent dictionary and an (L_1) penalty. Measure reconstruction, dead features, and feature stability across three seeds. Determine whether any learned feature recovers the known direction without using its labels.
-4. Design a trace-faithfulness evaluation for a tool-using agent. Specify the hidden intervention, causal behavior check, monitor target, negative controls, and failure criterion. Explain how training against the monitor could invalidate the result.
-5. Extend `G2` with three elicitation configurations: base prompt, tool scaffold, and domain fine-tune. Define coverage without pretending it is an objective percentage of all possible assistance. Add a test that the best observed score, not the base score, is compared with the threshold.
-6. Add a medium-severity hazard whose case uses both a behavioral audit and an activation intervention. Write the warrant for each evidence edge, then add shared dataset contamination and decide whether the two items are still independent.
-7. Design-review exercise: a privileged coding agent passes public cyber benchmarks, exposes a strong “safe behavior” SAE feature, and suppresses suspicious language when steered. Its hidden evaluation suite has weak scaffold elicitation, while an external sandbox blocks network and credential access. Construct separate inability, trustworthiness, and control arguments; identify which claims fail; choose a deployment scope; and write the exact governance action triggered by each gap.
-
-## Notes and sources {#sec-ch25-sources}
-
-- Elhage et al., [“A Mathematical Framework for Transformer Circuits”](https://transformer-circuits.pub/2021/framework/index.html), develops the residual-stream view and additive transformer decomposition used by the primer.
-- Belrose et al., [“Eliciting Latent Predictions from Transformers with the Tuned Lens”](https://arxiv.org/abs/2303.08112), studies learned layer translators and limitations of the plain logit lens.
-- Hewitt and Liang, [“Designing and Interpreting Probes with Control Tasks”](https://arxiv.org/abs/1909.03368), motivates control tasks and selectivity for probe interpretation.
-- Templeton et al., [“Scaling Monosemanticity”](https://transformer-circuits.pub/2024/scaling-monosemanticity/), reports sparse-autoencoder feature extraction at larger model scale and documents important limitations.
-- Arditi et al., [“Refusal in Language Models Is Mediated by a Single Direction”](https://arxiv.org/abs/2406.11717), provides a concrete activation-steering and ablation study; its scope should not be generalized into a universal single-direction claim.
-- Turpin et al., [“Language Models Don't Always Say What They Think”](https://arxiv.org/abs/2305.04388), uses biasing interventions to demonstrate unfaithful chain-of-thought explanations.
-- Anthropic, [“Reasoning models don't always say what they think”](https://www.anthropic.com/research/reasoning-models-dont-say-think), studies faithfulness under controlled hints and reward-hacking setups and states the limitations of those experiments.
-- OpenAI, [“Evaluating chain-of-thought monitorability”](https://openai.com/index/evaluating-chain-of-thought-monitorability/), defines intervention, process, and outcome-property evaluation families for trace monitors.
-- Greenblatt et al., [“Alignment Faking in Large Language Models”](https://arxiv.org/abs/2412.14093), presents a constructed empirical demonstration of selective training compliance.
-- Meinke et al., [“Frontier Models are Capable of In-context Scheming”](https://arxiv.org/abs/2412.04984), evaluates scheming behaviors under explicit goals and incentives.
-- Betley et al., [“Emergent Misalignment”](https://arxiv.org/abs/2502.17424), reports broad behavioral changes after narrow insecure-code fine-tuning and includes contextual controls.
-- van der Weij et al., [“AI Sandbagging”](https://arxiv.org/abs/2406.07358), demonstrates selective underperformance and capability-locking setups that challenge naive evaluation inference.
-- Marks et al., [“Auditing Language Models for Hidden Objectives”](https://arxiv.org/abs/2503.10965), uses a deliberately trained hidden-objective model to validate alignment-auditing methods.
-- Li et al., [“The WMDP Benchmark”](https://arxiv.org/abs/2403.03218), develops a hazardous-knowledge proxy benchmark with controlled public release.
-- Zhang et al., [“Cybench”](https://arxiv.org/abs/2408.08926), evaluates cyber-capable language-model agents in executable capture-the-flag environments.
-- METR, [“Guidelines for Capability Elicitation”](https://evaluations.metr.org/elicitation-protocol/), specifies practical elicitation and evaluation-validity checks for autonomous capability evaluation.
-- Clymer et al., [“Safety Cases: How to Justify the Safety of Advanced AI Systems”](https://arxiv.org/abs/2403.10462), organizes advanced-AI safety arguments around inability, control, trustworthiness, and deference.
-- Buhl et al., [“Safety Cases for Frontier AI”](https://arxiv.org/abs/2410.21572), discusses structured claims, evidence, and practical production of frontier-AI safety cases.
-- NIST, [AI Risk Management Framework](https://airc.nist.gov/airmf-resources/airmf/), defines the Govern, Map, Measure, and Manage core used by many operational risk programs.
-- NIST, [Generative AI Profile](https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence), adapts the AI RMF to generative-AI risks and actions.
+1. **Steer a different concept.** Using `word_boundary_labels`, build a probe and a `mean_difference_direction` for the *surface* boundary concept instead of the contextual one, steer at block 2 rather than block 1, and compare the dose response and off-target loss with the one in @fig-ch25-steering. Which concept and layer give the cleanest behavioral change for the smallest competence cost?
+2. **Make the probe lie.** Construct a label that is a pure artifact of position (for example, "the position index is even") and run `probe_with_control` on it at every layer. (a) Report accuracy, control, and selectivity. (b) Explain why a high accuracy here would be a warning rather than a finding, and what real-data split would expose it.
+3. **Tuned-lens intuition.** The plain lens in @sec-ch25-lens reuses the final readout. Fit a per-layer linear map from an intermediate residual to the final residual, apply the lens through it, and measure whether the mean answer-rank at block 1 improves. What have you added, and what must you now validate to trust the improvement?
+4. **Break the safety case, three ways.** Starting from `deployment_case`: (a) point `G1`'s control at `E-PROBE` and `E-STEER` and show it becomes a gap; (b) raise `G2`'s `elicitation_coverage` to 0.9 without closing `sandbagging_check` and show it still fails; (c) close that check and confirm only `G2` changes while the top decision stays `BLOCK`. What does each result teach about schema validity versus evidence sufficiency?
+5. **Elicitation defeats inability.** Extend the representative envelope so a fifth configuration crosses a stricter threshold. Then rewrite `G2`'s capability block to compare the threshold against $\max_e S(e)$ rather than the base score, and describe the evidence you would need before the inability argument could ever be supported.
+6. **Faithfulness for a tool agent.** Design a real trace-faithfulness evaluation for the Chapter 16 agent: specify the hidden intervention, the causal behavior check, the monitor target, the negative controls, and the failure criterion — and explain how training against the monitor could invalidate the result.
+7. **Governance design review.** A privileged coding agent passes public cyber benchmarks, exposes a strong "safe behavior" probe direction, and suppresses suspicious language when steered, while an external sandbox blocks network and credential access. Construct separate inability, control, and trustworthiness arguments; identify which claims fail and why; choose a deployment scope; and write the exact governance action each gap triggers.
