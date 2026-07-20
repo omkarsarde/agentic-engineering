@@ -101,9 +101,9 @@ div.csl-indent {
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -841,7 +841,7 @@ window.Quarto = {
 <h2 data-number="23.1" class="anchored" data-anchor-id="sec-ch23-policy-gradient"><span class="header-section-number">23.1</span> A policy gradient from scratch</h2>
 <p>Strip the problem to its smallest case: one state, one decision, one reward. A research agent gets a single turn and four ways to spend it — plan, search, cite a source, or guess. Each choice has some task reward. This is a four-armed bandit, and a bandit is a Markov decision process with exactly one state; the policy class we build for it will carry the entire chapter unchanged.</p>
 <p>A <strong>policy</strong> is a probability distribution over actions. We represent it the way language models do: a vector of unnormalized scores — logits — pushed through a softmax.</p>
-<div id="e53af01a" class="cell" data-execution_count="1">
+<div id="60507a2b" class="cell" data-execution_count="1">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -871,7 +871,7 @@ window.Quarto = {
 <span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [weight <span class="op">/</span> total <span class="cf">for</span> weight <span class="kw">in</span> weights]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The policy itself is a table: one row of logits per state it has seen, rows created on first visit. Four methods cover everything the chapter needs — the probabilities, a sampled action with its log probability, the greedy action, and one gradient step. The <code>update</code> method deserves a close read, and we will justify it in a moment.</p>
-<div id="265a414a" class="cell" data-execution_count="2">
+<div id="c8ff3367" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> SoftmaxPolicy:</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A tabular softmax policy: one row of logits per observed state.</span></span>
@@ -943,7 +943,7 @@ window.Quarto = {
 <span id="cb2-69"><a href="#cb2-69" aria-hidden="true" tabindex="-1"></a>            <span class="va">self</span>.logits[state][index] <span class="op">+=</span> step <span class="op">*</span> ((index <span class="op">==</span> chosen) <span class="op">-</span> probability)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Our bandit gives each arm a fixed reward — deterministic on purpose, so we can compute everything exactly; the noise that matters will come from the environment later.</p>
-<div id="680f89bf" class="cell" data-execution_count="3">
+<div id="688e1567" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>ARM_REWARD <span class="op">=</span> {<span class="st">"plan"</span>: <span class="fl">0.2</span>, <span class="st">"search"</span>: <span class="fl">0.5</span>, <span class="st">"cite"</span>: <span class="fl">0.9</span>, <span class="st">"guess"</span>: <span class="fl">0.1</span>}</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>policy <span class="op">=</span> SoftmaxPolicy(<span class="bu">tuple</span>(ARM_REWARD))</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>({arm: <span class="bu">round</span>(p, <span class="dv">3</span>) <span class="cf">for</span> arm, p <span class="kw">in</span> <span class="bu">zip</span>(policy.actions, policy.probabilities(<span class="st">"prompt"</span>))})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -963,7 +963,7 @@ J(\theta) \;=\; \mathbb{E}_{a \sim \pi_\theta}\!\left[\, r(a) \,\right]
 = \mathbb{E}_{a \sim \pi_\theta}\!\left[\, r(a)\, \nabla_\theta \log \pi_\theta(a) \,\right].
 \tag{23.2}</span></span></p>
 <p>Read <a href="#eq-ch23-pg" class="quarto-xref">Equation&nbsp;<span>23.2</span></a> as an instruction: sample an action, then push its log probability up in proportion to the reward it earned. That is exactly what <code>update</code> does — one call is one hand-worked policy-gradient step, visible in the probabilities:</p>
-<div id="3ea21930" class="cell" data-execution_count="4">
+<div id="ba67170d" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"before:"</span>, [<span class="bu">round</span>(p, <span class="dv">3</span>) <span class="cf">for</span> p <span class="kw">in</span> policy.probabilities(<span class="st">"prompt"</span>)])</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>policy.update(<span class="st">"prompt"</span>, <span class="st">"cite"</span>, <span class="fl">0.3</span> <span class="op">*</span> ARM_REWARD[<span class="st">"cite"</span>])   <span class="co"># step = lr * reward</span></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"after: "</span>, [<span class="bu">round</span>(p, <span class="dv">3</span>) <span class="cf">for</span> p <span class="kw">in</span> policy.probabilities(<span class="st">"prompt"</span>)])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -973,7 +973,7 @@ after:  [0.232, 0.232, 0.304, 0.232]</code></pre>
 </div>
 </div>
 <p>We sampled <code>cite</code> (by fiat, this once), its reward 0.9 scaled a step of 0.27, and its probability rose from 0.250 to 0.304 while the other three fell. An identity this load-bearing deserves a check that is not algebra. <a href="#eq-ch23-objective" class="quarto-xref">Equation&nbsp;<span>23.1</span></a> is a finite sum, so we can compute the true gradient by finite differences and compare it against the Monte Carlo average of <span class="math inline">r \,\nabla \log \pi</span> over samples:</p>
-<div id="550cc6d6" class="cell" data-execution_count="5">
+<div id="cc039c4b" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> expected_return(policy: SoftmaxPolicy) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    probs <span class="op">=</span> policy.probabilities(<span class="st">"prompt"</span>)</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(p <span class="op">*</span> ARM_REWARD[arm] <span class="cf">for</span> p, arm <span class="kw">in</span> <span class="bu">zip</span>(probs, policy.actions))</span>
@@ -1005,7 +1005,7 @@ score function:     [-0.0688, 0.0153, 0.1276, -0.0741]</code></pre>
 </div>
 </div>
 <p>Twenty thousand samples of “reward times score” land within a few thousandths of the true gradient on every coordinate. The estimator is unbiased; what the small discrepancies preview is its <em>variance</em>, which the next section attacks. First, the full algorithm — <strong>REINFORCE</strong> <span class="citation" data-cites="williams1992simple">(<a href="../references.html#ref-williams1992simple" role="doc-biblioref">Williams 1992</a>)</span> is nothing more than <a href="#eq-ch23-pg" class="quarto-xref">Equation&nbsp;<span>23.2</span></a> applied repeatedly to fresh samples:</p>
-<div id="5bbf5b76" class="cell" data-execution_count="6">
+<div id="c9a468ec" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>rng <span class="op">=</span> random.Random(<span class="dv">1</span>)</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>policy, curve <span class="op">=</span> SoftmaxPolicy(<span class="bu">tuple</span>(ARM_REWARD)), []</span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> step <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">400</span>):</span>
@@ -1056,7 +1056,7 @@ A \;=\; r(a) - b, \qquad
 \widehat{\nabla_\theta J} \;=\; A \,\nabla_\theta \log \pi_\theta(a).
 \tag{23.3}</span></span></p>
 <p>The quantity <span class="math inline">A</span> is called the <strong>advantage</strong>: did this action do better than the comparison available at this state? Because <span class="math inline">\mathbb{E}[\nabla \log \pi] = 0</span> (probabilities sum to one, so their gradients sum to zero), subtracting any action-independent <span class="math inline">b</span> leaves the expected gradient untouched — it changes variance only. We can measure exactly that. Four thousand single-sample gradient estimates, with and without the mean reward as baseline:</p>
-<div id="f5b69769" class="cell" data-execution_count="8">
+<div id="9269e060" class="cell" data-execution_count="8">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>policy, rng <span class="op">=</span> SoftmaxPolicy(<span class="bu">tuple</span>(ARM_REWARD)), random.Random(<span class="dv">2</span>)</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> one_sample_gradient(baseline: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">float</span>]:</span>
@@ -1083,7 +1083,7 @@ A_i \;=\; \frac{R_i - \mu_{\mathcal G}}{\sigma_{\mathcal G} + \varepsilon},
 \mu_{\mathcal G} = \frac{1}{G}\sum_{j=1}^{G} R_j,
 \tag{23.4}</span></span></p>
 <p>where <span class="math inline">\sigma_{\mathcal G}</span> is the group’s reward standard deviation and the small <span class="math inline">\varepsilon</span> prevents division by zero when every rollout ties. The numbers make the idea concrete — eight rollouts of one task, three of which succeed:</p>
-<div id="6dccde7a" class="cell" data-execution_count="9">
+<div id="528d4948" class="cell" data-execution_count="9">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>group_rewards <span class="op">=</span> [<span class="fl">1.0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="fl">1.0</span>, <span class="fl">0.0</span>, <span class="fl">1.0</span>, <span class="fl">0.0</span>, <span class="fl">0.0</span>]</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>mu, sigma <span class="op">=</span> fmean(group_rewards), pstdev(group_rewards)</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>advantages <span class="op">=</span> [<span class="bu">round</span>((r <span class="op">-</span> mu) <span class="op">/</span> (sigma <span class="op">+</span> <span class="fl">1e-6</span>), <span class="dv">2</span>) <span class="cf">for</span> r <span class="kw">in</span> group_rewards]</span>
@@ -1148,7 +1148,7 @@ G_t = \sum_{k=t}^{T-1} \gamma^{\,k-t}\, r_k,
 <p>where <span class="math inline">s_t</span> is the state the policy sees at decision <span class="math inline">t</span>, <span class="math inline">a_t \sim \pi_\theta(\cdot \mid s_t)</span> its action, <span class="math inline">r_t</span> any reward the environment emits, and <span class="math inline">G_t</span> the <strong>return-to-go</strong> with discount <span class="math inline">{0 &lt; \gamma \le 1}</span>. In our tasks — as in most agent tasks — reward arrives once, at the end, from a verifier reading final state, so <span class="math inline">G_t</span> is the same terminal number at every step and <span class="math inline">\gamma = 1</span> is the honest choice: the refund is worth the same whether it took three tool calls or five, and discounting would not tell us <em>which</em> call earned it. The multi-turn policy gradient is <a href="#eq-ch23-pg" class="quarto-xref">Equation&nbsp;<span>23.2</span></a> summed over the trajectory’s decisions, each weighted by its return-to-go.</p>
 <p>Three things are genuinely different from the bandit, and naming them prevents most agent-RL confusion. First, <strong>the state is constructed, not given</strong>: the environment holds authoritative state the model never sees (the real database row), and the harness of <a href="16-agent-anatomy.html" class="quarto-xref"><span>Chapter 16</span></a> assembles the policy’s observation from the instruction, prior tool results, and whatever context policy allows — training optimizes the policy’s <em>proposals</em>, while the harness, gate, and executor keep exactly the authority they had in Chapter 16. Second, <strong>the action unit is a choice</strong>: a token, a whole tool call, or a full turn. Updating at token level reaches every parameter but smears outcome credit across formatting tokens; tool-call level matches the decisions the application cares about, and needs the action’s total log probability recorded under the behavior policy. We train at tool-call level, the coarsest unit whose probability we can record exactly. Third, <strong>the sample is expensive</strong>: a bandit pull is a dict lookup, but an agent transition may be a browser action or a test-suite run — an economic fact that will dominate <a href="#sec-ch23-throughput" class="quarto-xref"><span>Section 23.8</span></a>.</p>
 <p>What must a stored transition carry? Exactly what the estimators of the last section consume: the state, the action, and the behavior policy’s log probability at sampling time — without that last field, every ratio in <a href="#eq-ch23-clip" class="quarto-xref">Equation&nbsp;<span>23.5</span></a> is uncomputable after the fact.</p>
-<div id="8ca82fce" class="cell" data-execution_count="11">
+<div id="568ece1d" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Task:</span>
@@ -1233,7 +1233,7 @@ G_t = \sum_{k=t}^{T-1} \gamma^{\,k-t}\, r_k,
 </table>
 <p>The reset contract is the one most often faked: reset must restore <em>authoritative state</em> — rows, counters, effect logs, seeds — not merely clear a conversation. And a training gym needs hidden structure a benchmark does not: a policy that can read the checker will optimize the checker, so agent-visible observations and verifier-only state must be kept apart, with exploit probes held out the way test tasks are <span class="citation" data-cites="yao2024taubench pan2024swegym">(<a href="../references.html#ref-yao2024taubench" role="doc-biblioref"><span class="nocase">Yao et al.</span> 2024</a>; <a href="../references.html#ref-pan2024swegym" role="doc-biblioref"><span class="nocase">Pan et al.</span> 2024</a>)</span>.</p>
 <p>Our gym distills the refund desk of <a href="16-agent-anatomy.html" class="quarto-xref"><span>Chapter 16</span></a> into a six-state machine. One design choice is deliberate and worth flagging before the code: the environment <em>permits</em> an unauthorized high-value refund — the transition exists, it simply raises a violation flag in verifier-only state. In production, <a href="17-tool-harness-engineering.html" class="quarto-xref"><span>Chapter 17</span></a>’s harness enforces approval at execution time; in a training gym we keep the unsafe transition precisely so we can test, in <a href="#sec-ch23-rewards" class="quarto-xref"><span>Section 23.7</span></a>, whether the reward and release gates would catch a policy that finds it.</p>
-<div id="789334e4" class="cell" data-execution_count="12">
+<div id="71557412" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb18"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> RefundGym:</span>
 <span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A resettable six-state refund environment with a permissive effect tool.</span></span>
@@ -1325,7 +1325,7 @@ Figure&nbsp;23.3: Which states can the learner reach that expert data never labe
 </div>
 </div>
 <p>Watch the safe high-value episode step by step — the worked trace that pins down what the prose claimed:</p>
-<div id="4c8b6624" class="cell" data-execution_count="13">
+<div id="f274474f" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>gym <span class="op">=</span> RefundGym()</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>state <span class="op">=</span> gym.reset(Task(<span class="st">"demo-high"</span>, amount<span class="op">=</span><span class="dv">80</span>))</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> action <span class="kw">in</span> (<span class="st">"lookup"</span>, <span class="st">"request_approval"</span>, <span class="st">"refund"</span>, <span class="st">"finish"</span>):</span>
@@ -1342,7 +1342,7 @@ success=True  violation=False  effects=1</code></pre>
 </div>
 </div>
 <p>And the two facts the trainer will depend on: reset really does isolate episodes, and the shortcut really is permitted.</p>
-<div id="2f1e8999" class="cell" data-execution_count="14">
+<div id="76da3ccd" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>state <span class="op">=</span> gym.reset(Task(<span class="st">"demo-clean"</span>, amount<span class="op">=</span><span class="dv">80</span>))</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"after reset: refunded=</span><span class="sc">{</span>gym<span class="sc">.</span>refunded<span class="sc">}</span><span class="ss">  violation=</span><span class="sc">{</span>gym<span class="sc">.</span>violation<span class="sc">}</span><span class="ss">  effects=</span><span class="sc">{</span>gym<span class="sc">.</span>effects<span class="sc">}</span><span class="ss">"</span>)</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> action <span class="kw">in</span> (<span class="st">"lookup"</span>, <span class="st">"refund"</span>, <span class="st">"finish"</span>):</span>
@@ -1354,7 +1354,7 @@ shortcut: success=True  violation=True</code></pre>
 </div>
 </div>
 <p>The shortcut episode <em>succeeds</em> — refunded, terminated, customer satisfied — and carries a violation flag the policy cannot see. Hold that thought. The last piece of machinery connects a policy to the gym: a <strong>rollout</strong> collects one trajectory, recording each transition’s behavior log probability as it goes, then reads the verifier’s flags from final authoritative state.</p>
-<div id="5ca17b43" class="cell" data-execution_count="15">
+<div id="e2d0f3d6" class="cell" data-execution_count="15">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> rollout(policy: SoftmaxPolicy, task: Task, rng: random.Random <span class="op">|</span> <span class="va">None</span> <span class="op">=</span> <span class="va">None</span>,</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>            greedy: <span class="bu">bool</span> <span class="op">=</span> <span class="va">False</span>, max_steps: <span class="bu">int</span> <span class="op">=</span> <span class="dv">7</span>) <span class="op">-&gt;</span> Trajectory:</span>
@@ -1392,7 +1392,7 @@ shortcut: success=True  violation=True</code></pre>
 <span id="cb23-35"><a href="#cb23-35" aria-hidden="true" tabindex="-1"></a>    trajectory.duplicate_effect <span class="op">=</span> gym.effects <span class="op">&gt;</span> <span class="dv">1</span></span>
 <span id="cb23-36"><a href="#cb23-36" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> trajectory</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="0a343cfc" class="cell" data-execution_count="16">
+<div id="b987d1d4" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>wanderer <span class="op">=</span> rollout(SoftmaxPolicy((<span class="st">"finish"</span>, <span class="st">"lookup"</span>, <span class="st">"request_approval"</span>, <span class="st">"refund"</span>)),</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>                   Task(<span class="st">"demo-low"</span>, <span class="dv">20</span>), random.Random(<span class="dv">3</span>))</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>([t.action <span class="cf">for</span> t <span class="kw">in</span> wanderer.transitions], <span class="st">"-&gt; success:"</span>, wanderer.success)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1409,7 +1409,7 @@ shortcut: success=True  violation=True</code></pre>
 L_{\text{BC}}(\theta) \;=\; -\sum_{\tau \in \mathcal D} \sum_t \log \pi_\theta(a_t \mid s_t),
 \tag{23.7}</span></span></p>
 <p>where <span class="math inline">\mathcal D</span> is the demonstration set. For our softmax policy the gradient of this loss at each example is the familiar <code>onehot - probabilities</code> — behavior cloning is <code>update</code> with every expert action given weight one, which is why the same forty-line policy class serves both regimes. Our expert is a scripted controller that knows the compliance rule:</p>
-<div id="826e416d" class="cell" data-execution_count="17">
+<div id="b2cce250" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> expert_action(state: <span class="bu">str</span>, amount: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The scripted expert: the compliant action for any state.</span></span>
@@ -1458,7 +1458,7 @@ L_{\text{BC}}(\theta) \;=\; -\sum_{\tau \in \mathcal D} \sum_t \log \pi_\theta(a
 <span id="cb26-46"><a href="#cb26-46" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> examples</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Two demonstrations — one low-value order, one high-value — produce seven labeled decisions:</p>
-<div id="f8f6a8d5" class="cell" data-execution_count="18">
+<div id="01df7b62" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>ACTIONS <span class="op">=</span> (<span class="st">"finish"</span>, <span class="st">"lookup"</span>, <span class="st">"request_approval"</span>, <span class="st">"refund"</span>)</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>EXPERT_TASKS <span class="op">=</span> [Task(<span class="st">"expert-low"</span>, <span class="dv">20</span>), Task(<span class="st">"expert-high"</span>, <span class="dv">80</span>)]</span>
@@ -1467,7 +1467,7 @@ L_{\text{BC}}(\theta) \;=\; -\sum_{\tau \in \mathcal D} \sum_t \log \pi_\theta(a
 <span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>EVAL_TASKS <span class="op">=</span> [Task(<span class="st">"eval-low"</span>, <span class="dv">25</span>), Task(<span class="st">"eval-high"</span>, <span class="dv">90</span>),</span>
 <span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>              Task(<span class="st">"eval-recover-low"</span>, <span class="dv">35</span>, <span class="st">"recover"</span>), Task(<span class="st">"eval-recover-high"</span>, <span class="dv">75</span>, <span class="st">"recover"</span>)]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="1759db86" class="cell" data-execution_count="19">
+<div id="319ef45e" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>examples <span class="op">=</span> expert_examples(EXPERT_TASKS)</span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(examples)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1475,7 +1475,7 @@ L_{\text{BC}}(\theta) \;=\; -\sum_{\tau \in \mathcal D} \sum_t \log \pi_\theta(a
 </div>
 </div>
 <p>The task lists above are the taskset contract from <a href="#sec-ch23-gym" class="quarto-xref"><span>Section 23.4</span></a> in miniature: expert tasks generate demonstrations; training tasks — note the two that <em>start</em> in <code>recover</code>, the way a production taskset seeds episodes from logged incident states — are where RL will explore; evaluation tasks use held-out amounts and are touched by nothing but greedy evaluation. Fitting is a loop over the examples:</p>
-<div id="7739e773" class="cell" data-execution_count="20">
+<div id="8cfb4ee2" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb30"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> fit(policy: SoftmaxPolicy, examples: <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]],</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>        epochs: <span class="bu">int</span> <span class="op">=</span> <span class="dv">40</span>, lr: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.25</span>) <span class="op">-&gt;</span> <span class="va">None</span>:</span>
@@ -1496,7 +1496,7 @@ L_{\text{BC}}(\theta) \;=\; -\sum_{\tau \in \mathcal D} \sum_t \log \pi_\theta(a
 <span id="cb30-18"><a href="#cb30-18" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> state, action <span class="kw">in</span> examples:</span>
 <span id="cb30-19"><a href="#cb30-19" aria-hidden="true" tabindex="-1"></a>            policy.update(state, action, lr)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="da5ff7ce" class="cell" data-execution_count="21">
+<div id="ab3e20c8" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>bc_policy <span class="op">=</span> SoftmaxPolicy(ACTIONS)</span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>fit(bc_policy, examples)</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> state <span class="kw">in</span> (<span class="st">"start"</span>, <span class="st">"known_low"</span>, <span class="st">"known_high"</span>, <span class="st">"approved"</span>, <span class="st">"refunded"</span>, <span class="st">"recover"</span>):</span>
@@ -1512,7 +1512,7 @@ recover     {'finish': 0.25, 'lookup': 0.25, 'request_approval': 0.25, 'refund':
 </div>
 </div>
 <p>Five rows learned crisply — over 0.91 on the expert’s action everywhere the expert went. The sixth row is the chapter’s pivot: at <code>recover</code> the table is exactly uniform, 0.25 everywhere, because <em>no demonstration ever visited it</em> (look back at <a href="#fig-ch23-states" class="quarto-xref">Figure&nbsp;<span>23.3</span></a> — <code>recover</code> is outside the box). The learner did nothing wrong; the data has a hole where the expert’s competence kept it from stumbling. Evaluation makes the hole visible:</p>
-<div id="65fd2082" class="cell" data-execution_count="22">
+<div id="55993f1a" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> evaluate(policy: SoftmaxPolicy, tasks: <span class="bu">list</span>[Task]) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">dict</span>]:</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Run greedy episodes on held-out tasks and report what happened.</span></span>
@@ -1538,7 +1538,7 @@ recover     {'finish': 0.25, 'lookup': 0.25, 'request_approval': 0.25, 'refund':
 <span id="cb33-23"><a href="#cb33-23" aria-hidden="true" tabindex="-1"></a>                     <span class="st">"violation"</span>: trajectory.violation})</span>
 <span id="cb33-24"><a href="#cb33-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rows</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="5faf9239" class="cell" data-execution_count="23">
+<div id="8e46adcc" class="cell" data-execution_count="23">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb34"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> row <span class="kw">in</span> evaluate(bc_policy, EVAL_TASKS):</span>
 <span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>    flag <span class="op">=</span> <span class="st">"ok "</span> <span class="cf">if</span> row[<span class="st">"success"</span>] <span class="cf">else</span> <span class="st">"FAIL"</span></span>
 <span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>row[<span class="st">'task'</span>]<span class="sc">:18}</span><span class="ss"> </span><span class="sc">{</span>flag<span class="sc">}</span><span class="ss"> </span><span class="sc">{</span>row[<span class="st">'actions'</span>]<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -1551,7 +1551,7 @@ eval-recover-high  FAIL ['finish']</code></pre>
 </div>
 <p>Two of four. The normal tasks pass; both recovery-start tasks die instantly, with the trace showing a bare <code>['finish']</code>: at the uniform <code>recover</code> row, greedy argmax falls back to the first action in the tuple, which happens to be <code>finish</code> — an arbitrary tie-break, honestly reported, standing in for the arbitrary things real models do in states their training never covered. This is <strong>distribution shift</strong>, the structural limit of imitation: the expert’s data covers the states the <em>expert</em> induces, the learner visits states the <em>learner</em> induces, and errors compound precisely where no label exists <span class="citation" data-cites="ross2011reduction">(<a href="../references.html#ref-ross2011reduction" role="doc-biblioref">Ross et al. 2011</a>)</span>. More demonstrations from the same expert would re-cover the same states.</p>
 <p>DAgger’s answer is to change <em>who generates the states</em>: run the learner, let it reach its own trouble, and ask the expert to label the states actually visited — then aggregate and refit.</p>
-<div id="236241ec" class="cell" data-execution_count="24">
+<div id="83095d92" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb36"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> dagger_labels(policy: SoftmaxPolicy, tasks: <span class="bu">list</span>[Task],</span>
 <span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>                  max_steps: <span class="bu">int</span> <span class="op">=</span> <span class="dv">7</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">tuple</span>[<span class="bu">str</span>, <span class="bu">str</span>]]:</span>
@@ -1581,7 +1581,7 @@ eval-recover-high  FAIL ['finish']</code></pre>
 <span id="cb36-27"><a href="#cb36-27" aria-hidden="true" tabindex="-1"></a>                <span class="cf">break</span></span>
 <span id="cb36-28"><a href="#cb36-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> labels</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="9ba6a405" class="cell" data-execution_count="25">
+<div id="5f960c79" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> copy</span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>dagger_policy <span class="op">=</span> copy.deepcopy(bc_policy)</span>
@@ -1601,7 +1601,7 @@ held-out success after one DAgger round: 4 of 4</code></pre>
 w_{0:T} \;=\; \prod_{t=0}^{T-1} \frac{\pi_\theta(a_t \mid s_t)}{\pi_b(a_t \mid s_t)},
 \tag{23.8}</span></span></p>
 <p>and products of numbers near one are not near one:</p>
-<div id="c1952d73" class="cell" data-execution_count="26">
+<div id="e713e502" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb39"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"20 steps, ratio 1.3 each: </span><span class="sc">{</span><span class="fl">1.3</span> <span class="op">**</span> <span class="dv">20</span><span class="sc">:8.1f}</span><span class="ss">"</span>)</span>
 <span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"20 steps, ratio 0.8 each: </span><span class="sc">{</span><span class="fl">0.8</span> <span class="op">**</span> <span class="dv">20</span><span class="sc">:.6f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
@@ -1615,7 +1615,7 @@ w_{0:T} \;=\; \prod_{t=0}^{T-1} \frac{\pi_\theta(a_t \mid s_t)}{\pi_b(a_t \mid s
 <h2 data-number="23.6" class="anchored" data-anchor-id="sec-ch23-training"><span class="header-section-number">23.6</span> Group-relative training on the gym</h2>
 <p>Online RL needs one more idea before we can assemble the loop: <strong>credit assignment</strong>. A terminal reward names a good trajectory, not a good decision. Broadcasting the trajectory’s advantage to every action in it is unbiased and coarse — the wasted third tool call gets the same push as the decisive first one — and variance grows with horizon. At the other extreme, per-token credit requires knowing which token caused success, which nobody knows. The middle course our trainer takes: group rollouts by <strong>anchor state</strong> — repeated visits to the same task and observation — and normalize trajectory rewards <em>within each group</em>, as in <a href="#eq-ch23-group" class="quarto-xref">Equation&nbsp;<span>23.4</span></a> but with the group defined by <span class="math inline">(\text{task}, s)</span> rather than by prompt <span class="citation" data-cites="feng2025gigpo">(<a href="../references.html#ref-feng2025gigpo" role="doc-biblioref"><span class="nocase">Feng et al.</span> 2025</a>)</span>. Two rollouts of the same task that both stood in <code>recover</code> and diverged are as close to a controlled comparison as sampled data gets.</p>
 <p>Scoring first. A scorer maps a trajectory to a reward and — a field that will earn its keep in the next section — an eligibility flag:</p>
-<div id="c2afccb6" class="cell" data-execution_count="27">
+<div id="62d627a0" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb41"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Score:</span>
@@ -1648,7 +1648,7 @@ w_{0:T} \;=\; \prod_{t=0}^{T-1} \frac{\pi_\theta(a_t \mid s_t)}{\pi_b(a_t \mid s
 <span id="cb41-30"><a href="#cb41-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Score(outcome <span class="op">-</span> <span class="fl">0.05</span> <span class="op">*</span> <span class="bu">len</span>(trajectory.transitions), <span class="va">True</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Grouping is a dictionary keyed by anchor:</p>
-<div id="b147fc62" class="cell" data-execution_count="28">
+<div id="3a467ace" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> grouped_advantages(batch: <span class="bu">list</span>[Trajectory], scorer) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">tuple</span>[<span class="bu">int</span>, <span class="bu">int</span>], <span class="bu">float</span>]:</span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Normalize trajectory rewards within each (task, state) anchor group.</span></span>
@@ -1681,7 +1681,7 @@ w_{0:T} \;=\; \prod_{t=0}^{T-1} \frac{\pi_\theta(a_t \mid s_t)}{\pi_b(a_t \mid s
 <span id="cb42-30"><a href="#cb42-30" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> advantages</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Watch it produce a learning signal out of the BC policy’s confusion. Eight sampled rollouts of the high-value recovery task, and the advantage each one’s <em>first action at <code>recover</code></em> received:</p>
-<div id="fb504997" class="cell" data-execution_count="29">
+<div id="c0ee5399" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>demo_rng <span class="op">=</span> random.Random(<span class="dv">11</span>)</span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a>demo_batch <span class="op">=</span> [rollout(bc_policy, Task(<span class="st">"recover-high"</span>, <span class="dv">90</span>, <span class="st">"recover"</span>), demo_rng)</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>              <span class="cf">for</span> _ <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">8</span>)]</span>
@@ -1706,7 +1706,7 @@ rollout 7: request_approval  reward -0.10  advantage -0.11</code></pre>
 </div>
 <p>The two rollouts that tried <code>lookup</code> finished the task and carry advantage +2.77; wandering through <code>request_approval</code> or <code>refund</code> (both invalid here, both landing back in <code>recover</code>) earns decisively negative credit. One honest wrinkle: quitting immediately (<code>finish</code>, reward -0.05) scores <em>slightly above</em> the group mean, because the group comparison is relative and a fast failure beats a long one under the cost term. The signal that matters — <code>lookup</code> is the way out — is unmistakable, and it was computed from nothing but repeated visits and terminal rewards.</p>
 <p>The update applies <a href="#eq-ch23-clip" class="quarto-xref">Equation&nbsp;<span>23.5</span></a> exactly. For our tabular policy the gradient of the clipped surrogate has a clean form: on the flat (clipped) branch it is zero, and on the active branch it is <span class="math inline">\rho A \,\nabla \log \pi</span> — the score function weighted by advantage <em>and</em> ratio:</p>
-<div id="44e8bbc3" class="cell" data-execution_count="30">
+<div id="39d30147" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb45"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> clipped_update(policy: SoftmaxPolicy, transition: Transition,</span>
 <span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>                   advantage: <span class="bu">float</span>, lr: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.04</span>, clip: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.2</span>) <span class="op">-&gt;</span> <span class="bu">bool</span>:</span>
@@ -1736,7 +1736,7 @@ rollout 7: request_approval  reward -0.10  advantage -0.11</code></pre>
 <span id="cb45-27"><a href="#cb45-27" aria-hidden="true" tabindex="-1"></a>    policy.update(transition.state, transition.action, lr <span class="op">*</span> advantage <span class="op">*</span> ratio)</span>
 <span id="cb45-28"><a href="#cb45-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="va">True</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="58163b74" class="cell" data-execution_count="31">
+<div id="85b3c7a7" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>probe <span class="op">=</span> SoftmaxPolicy(ACTIONS)</span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>stale <span class="op">=</span> Transition(<span class="st">"start"</span>, <span class="st">"lookup"</span>, math.log(<span class="fl">0.95</span>))   <span class="co"># behavior policy was 0.95 sure</span></span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>applied <span class="op">=</span> clipped_update(probe, stale, advantage<span class="op">=</span><span class="fl">1.0</span>)</span>
@@ -1747,7 +1747,7 @@ rollout 7: request_approval  reward -0.10  advantage -0.11</code></pre>
 </div>
 <p>The probe shows the fence working in the direction people forget: the current policy assigns 0.25 where the behavior policy assigned 0.95, the ratio is 0.26 — far <em>below</em> the region — but the advantage is positive, so the surrogate is still on its active branch and the update proceeds. Clipping halts movement <em>away from</em> the data’s policy only past the fence in the pushing direction.</p>
 <p>The loop assembles the last three sections: collect a group per task, score, group advantages by anchor, veto ineligible trajectories out of the update set, and take two clipped passes over the batch — then discard it, because the next round’s batch must come from the policy we just made.</p>
-<div id="5dd3705d" class="cell" data-execution_count="32">
+<div id="30571cbc" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb48"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> train_group_relative(policy: SoftmaxPolicy, tasks: <span class="bu">list</span>[Task], scorer,</span>
 <span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>                         rng: random.Random, rounds: <span class="bu">int</span> <span class="op">=</span> <span class="dv">30</span>, group_size: <span class="bu">int</span> <span class="op">=</span> <span class="dv">8</span>,</span>
@@ -1803,7 +1803,7 @@ rollout 7: request_approval  reward -0.10  advantage -0.11</code></pre>
 <span id="cb48-53"><a href="#cb48-53" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> history, totals</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Run it, starting from a copy of the BC policy, under the outcome-only scorer:</p>
-<div id="7aca2f70" class="cell" data-execution_count="33">
+<div id="aa6e30da" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a>naive_policy <span class="op">=</span> copy.deepcopy(bc_policy)</span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>naive_history, naive_totals <span class="op">=</span> train_group_relative(</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>    naive_policy, TRAIN_TASKS, outcome_score, random.Random(<span class="dv">7</span>))</span>
@@ -1824,7 +1824,7 @@ held-out success: 4 of 4</code></pre>
 <section id="sec-ch23-rewards" class="level2" data-number="23.7">
 <h2 data-number="23.7" class="anchored" data-anchor-id="sec-ch23-rewards"><span class="header-section-number">23.7</span> The reward is the contract</h2>
 <p>Look again at the run that just “succeeded” — this time at the curve we did not plot, and at <em>how</em> the held-out tasks pass:</p>
-<div id="7494bbf6" class="cell" data-execution_count="34">
+<div id="0013f63b" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"sampled violation by round:"</span>,</span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>      [<span class="bu">round</span>(v, <span class="dv">2</span>) <span class="cf">for</span> v <span class="kw">in</span> naive_history[<span class="st">"violation"</span>][::<span class="dv">3</span>]])</span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> row <span class="kw">in</span> evaluate(naive_policy, EVAL_TASKS):</span>
@@ -1879,7 +1879,7 @@ policy at known_high: {'finish': 0.004, 'lookup': 0.008, 'request_approval': 0.0
 </tbody>
 </table>
 <p>An outcome reward scores all three as success. A weighted penalty helps less than it appears: any finite penalty sets a price, and a scalar objective will pay any price the outcome bonus covers — tune the weights wrong once and the forbidden sequence is profitable again. The durable fix is <strong>lexicographic</strong>: constraints are not costs. First decide whether a trajectory is <em>eligible</em> to teach; only among eligible trajectories does scalar quality compare. That is what the <code>Score.eligible</code> field was waiting for:</p>
-<div id="770e8b47" class="cell" data-execution_count="35">
+<div id="8d5d95b8" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> guarded_score(trajectory: Trajectory) <span class="op">-&gt;</span> Score:</span>
 <span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Score outcomes, but let violations veto eligibility outright.</span></span>
@@ -1902,7 +1902,7 @@ policy at known_high: {'finish': 0.004, 'lookup': 0.008, 'request_approval': 0.0
 <span id="cb53-20"><a href="#cb53-20" aria-hidden="true" tabindex="-1"></a>    cost <span class="op">=</span> <span class="op">-</span><span class="fl">0.05</span> <span class="op">*</span> <span class="bu">len</span>(trajectory.transitions)</span>
 <span id="cb53-21"><a href="#cb53-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> Score(outcome <span class="op">+</span> penalty <span class="op">+</span> cost, penalty <span class="op">==</span> <span class="fl">0.0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="078b613f" class="cell" data-execution_count="36">
+<div id="123eeb88" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb54"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>shortcut <span class="op">=</span> rollout(naive_policy, Task(<span class="st">"audit-high"</span>, <span class="dv">90</span>), greedy<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"actions:   "</span>, [t.action <span class="cf">for</span> t <span class="kw">in</span> shortcut.transitions])</span>
 <span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"outcome_score:"</span>, outcome_score(shortcut))</span>
@@ -1914,7 +1914,7 @@ guarded_score: Score(reward=-1.15, eligible=False)</code></pre>
 </div>
 </div>
 <p>The same trajectory that outcome scoring rated +0.85 and eligible is now -1.15 and <em>ineligible</em> — it can be studied, counted, and alarmed on, but it cannot teach. Retrain from the same BC starting point, changing nothing but the scorer:</p>
-<div id="cb1281ee" class="cell" data-execution_count="37">
+<div id="6e9024a1" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb56"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a>guarded_policy <span class="op">=</span> copy.deepcopy(bc_policy)</span>
 <span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a>guarded_history, guarded_totals <span class="op">=</span> train_group_relative(</span>
 <span id="cb56-3"><a href="#cb56-3" aria-hidden="true" tabindex="-1"></a>    guarded_policy, TRAIN_TASKS, guarded_score, random.Random(<span class="dv">7</span>))</span>
@@ -1981,7 +1981,7 @@ Figure&nbsp;23.4: What did each reward actually train? Sampled success rate (lef
 <section id="sec-ch23-throughput" class="level2" data-number="23.8">
 <h2 data-number="23.8" class="anchored" data-anchor-id="sec-ch23-throughput"><span class="header-section-number">23.8</span> Environment throughput sets the budget</h2>
 <p>Training worked; what would it cost at scale? The counters we accumulated say the guarded run took 3,444 environment transitions and 6,556 gradient updates. Start with an honest measurement of what each phase costs <em>in the toy</em>:</p>
-<div id="eb060fa2" class="cell" data-execution_count="39">
+<div id="778fbffe" class="cell" data-execution_count="39">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb59"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> time</span>
 <span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb59-3"><a href="#cb59-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> microseconds(function, repeats: <span class="bu">int</span> <span class="op">=</span> <span class="dv">2_000</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
@@ -1997,12 +1997,12 @@ Figure&nbsp;23.4: What did each reward actually train? Sampled success rate (lef
 <span id="cb59-13"><a href="#cb59-13" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"policy update:  </span><span class="sc">{</span>microseconds(<span class="kw">lambda</span>: guarded_policy.update(<span class="st">'start'</span>, <span class="st">'lookup'</span>, <span class="fl">0.0</span>))<span class="sc">:6.1f}</span><span class="ss"> us"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>gym reset+step:    1.0 us
-policy sample:     2.9 us
+policy sample:     2.8 us
 policy update:     1.9 us</code></pre>
 </div>
 </div>
 <p>In the toy, everything is microseconds and the <em>policy</em> is the expensive phase — a dictionary-backed environment is faster than a softmax. Production inverts this, and the inversion is the point of the section: a real environment transition is a browser action, a database query, a container boot, or a test-suite run — hundreds of milliseconds to minutes — while sampling is a batched forward pass and the update amortizes across thousands of transitions. To reason about the inversion we attach a declared latency model — representative figures for a tool-API-backed gym, not measurements of this laptop — and recompute the run’s cost:</p>
-<div id="ec14045b" class="cell" data-execution_count="40">
+<div id="65a0b6b7" class="cell" data-execution_count="40">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb61"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a>PRODUCTION_LATENCY <span class="op">=</span> {<span class="st">"env_step"</span>: <span class="fl">0.300</span>, <span class="st">"sample"</span>: <span class="fl">0.030</span>, <span class="st">"update"</span>: <span class="fl">0.002</span>}</span>
 <span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -2048,7 +2048,7 @@ policy update:     1.9 us</code></pre>
 <span id="cb61-43"><a href="#cb61-43" aria-hidden="true" tabindex="-1"></a>    wall <span class="op">=</span> phases[<span class="st">"environment"</span>] <span class="op">/</span> n_envs <span class="op">+</span> phases[<span class="st">"sampling"</span>] <span class="op">+</span> phases[<span class="st">"update"</span>]</span>
 <span id="cb61-44"><a href="#cb61-44" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> totals[<span class="st">"transitions"</span>] <span class="op">/</span> wall</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="74875089" class="cell" data-execution_count="41">
+<div id="4e5104db" class="cell" data-execution_count="41">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb62"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb62-1"><a href="#cb62-1" aria-hidden="true" tabindex="-1"></a>phases <span class="op">=</span> modelled_phase_seconds(guarded_totals)</span>
 <span id="cb62-2"><a href="#cb62-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>({name: <span class="ss">f"</span><span class="sc">{</span>seconds<span class="sc">:7.0f}</span><span class="ss"> s"</span> <span class="cf">for</span> name, seconds <span class="kw">in</span> phases.items()})</span>
 <span id="cb62-3"><a href="#cb62-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> n_envs <span class="kw">in</span> (<span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">16</span>, <span class="dv">64</span>):</span>

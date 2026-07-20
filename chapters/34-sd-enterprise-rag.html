@@ -82,9 +82,9 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -851,7 +851,9 @@ Table&nbsp;34.1: The prompt restated with numbers: functional requirements on to
 <section id="sec-ch34-boe" class="level2" data-number="34.2">
 <h2 data-number="34.2" class="anchored" data-anchor-id="sec-ch34-boe"><span class="header-section-number">34.2</span> The numbers first</h2>
 <p>Numbers before boxes. We import the back-of-envelope toolkit Chapter 33 built and tangled — <code>index_bytes</code>, <code>completion_ms</code>, <code>cost_per_query</code>, <code>context_budget</code> — rather than re-deriving anything, and drive it with this prompt’s shape. The prices, per-stage latencies, the three-chunks-per-document ratio, and the 1024-dimension embedding are illustrative teaching constants carrying the same caveat as Chapter 33’s toolkit (<a href="33-sd-interview-framework.html#sec-ch33-cost" class="quarto-xref"><span>Section 33.3</span></a>); the formulas, not the constants, are the lesson.</p>
-<div id="53ea5a7f" class="cell" data-execution_count="1">
+<div id="8d1d92c7" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -875,6 +877,7 @@ Table&nbsp;34.1: The prompt restated with numbers: functional requirements on to
 <span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>pack <span class="op">=</span> boe.context_budget(<span class="dv">32_000</span>, system<span class="op">=</span><span class="dv">400</span>, history<span class="op">=</span><span class="dv">600</span>, retrieval<span class="op">=</span><span class="dv">2_500</span>, output_reserve<span class="op">=</span><span class="dv">300</span>)</span>
 <span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"packed query context:"</span>, pack)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>fp32:  368.6 GB / 2 replicas  (184 GB per copy)
 int8:   92.2 GB / 2 replicas  (46 GB per copy)
@@ -882,7 +885,9 @@ packed query context: {'system': 400, 'history': 600, 'retrieval': 2500, 'output
 </div>
 </div>
 <p>Two lessons land here. First, the family’s quiet numeric trap: sizing from <em>documents</em> (ten million) instead of <em>chunks</em> (thirty million) understates the index threefold. Thirty million chunks at fp32 is 369 GB — shard it or quantize it; int8 brings one copy to 46 GB, a single memory-heavy node. Second, the packed query is about 3,500 input tokens (system, a little history, five 500-token chunks) inside a comfortable window: for RAG the context window is <em>not</em> the binding constraint, so retrieval width — how many chunks we pack — is the cost lever, not window pressure. Now the latency and the bill:</p>
-<div id="66655c7a" class="cell" data-execution_count="2">
+<div id="53484534" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>stages <span class="op">=</span> {<span class="st">"embed query"</span>: <span class="fl">20.0</span>, <span class="st">"ACL prefilter"</span>: <span class="fl">30.0</span>, <span class="st">"ANN top-100"</span>: <span class="fl">50.0</span>,</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>          <span class="st">"rerank top-5"</span>: <span class="fl">150.0</span>, <span class="st">"queue + prefill"</span>: <span class="fl">400.0</span>}</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>ttft <span class="op">=</span> <span class="bu">sum</span>(stages.values())</span>
@@ -896,6 +901,7 @@ packed query context: {'system': 400, 'history': 600, 'retrieval': 2500, 'output
 <span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>cold <span class="op">=</span> boe.cost_per_query(<span class="dv">3_500</span>, <span class="dv">250</span>, price)</span>
 <span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>warm <span class="op">=</span> boe.cost_per_query(<span class="dv">3_500</span>, <span class="dv">250</span>, price, cached_input_tokens<span class="op">=</span><span class="dv">2_500</span>)</span>
 <span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"cost / query: $</span><span class="sc">{</span>cold<span class="sc">:.4f}</span><span class="ss"> cold cache   $</span><span class="sc">{</span>warm<span class="sc">:.4f}</span><span class="ss"> warm prefix"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>TTFT budget (sum of stages): 650 ms
 completion at a 250-token cap, 20 ms/token: 5.63 s
@@ -997,7 +1003,9 @@ Figure&nbsp;34.3: What are the swappable stages, and which one caps quality? Eac
 <section id="sec-ch34-acl" class="level2" data-number="34.4">
 <h2 data-number="34.4" class="anchored" data-anchor-id="sec-ch34-acl"><span class="header-section-number">34.4</span> Deep dive: permissions before search</h2>
 <p>The fork the interviewer pushes on first is permissions, and the decision is a single sentence with an alternative and a reason: <strong>the ACL filter runs before the vector search, not after.</strong> Post-filtering — search first, then drop what the user cannot see — is simpler and perfectly fine when permissions are coarse. It breaks when they are fine-grained, and the break is arithmetic, not taste:</p>
-<div id="c746bccb" class="cell" data-execution_count="4">
+<div id="ec099abb" class="cell" data-execution_count="4">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>visible <span class="op">=</span> <span class="fl">0.02</span>          <span class="co"># this user can see 2% of the corpus</span></span>
@@ -1005,6 +1013,7 @@ Figure&nbsp;34.3: What are the swappable stages, and which one caps quality? Eac
 <span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"post-filter top-</span><span class="sc">{</span>topk<span class="sc">}</span><span class="ss">: ~</span><span class="sc">{</span>topk <span class="op">*</span> visible<span class="sc">:.0f}</span><span class="ss"> of </span><span class="sc">{</span>topk<span class="sc">}</span><span class="ss"> candidates survive the ACL check"</span>)</span>
 <span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"P(a post-filtered top-10 returns nothing visible) = </span><span class="sc">{</span>(<span class="dv">1</span> <span class="op">-</span> visible) <span class="op">**</span> <span class="dv">10</span><span class="sc">:.0%}</span><span class="ss">"</span>)</span>
 <span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"to expect 5 usable results post-filter, you must fetch top-</span><span class="sc">{</span>math<span class="sc">.</span>ceil(<span class="dv">5</span> <span class="op">/</span> visible)<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>post-filter top-100: ~2 of 100 candidates survive the ACL check
 P(a post-filtered top-10 returns nothing visible) = 82%

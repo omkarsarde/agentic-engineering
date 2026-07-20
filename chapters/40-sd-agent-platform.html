@@ -82,9 +82,9 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -848,7 +848,9 @@ Table&nbsp;40.1: What the platform promises, restated with numbers before any bo
 <section id="sec-ch40-boe" class="level2" data-number="40.2">
 <h2 data-number="40.2" class="anchored" data-anchor-id="sec-ch40-boe"><span class="header-section-number">40.2</span> The numbers first</h2>
 <p>Numbers before boxes. The platform family’s classic numeric trap is a <em>metric</em> trap: reporting “agents deployed” and “cost per call” hides the retry tax, because an agent task that fails still costs money. The number a senior computes live is <strong>cost per successful task</strong> — the per-attempt cost divided by the success rate — and it is the one the vanity dashboard never shows. We compute it with the back-of-envelope toolkit from Chapter 33 (<a href="33-sd-interview-framework.html#sec-ch33-loops" class="quarto-xref"><span>Section 33.5</span></a>), importing its loop-cost calculator rather than rebuilding it.</p>
-<div id="635ff20c" class="cell" data-execution_count="1">
+<div id="9ff4b61f" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -874,6 +876,7 @@ Table&nbsp;40.1: What the platform promises, restated with numbers before any bo
 <span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"cost per task attempt          : $</span><span class="sc">{</span>attempt<span class="sc">:.4f}</span><span class="ss">"</span>)</span>
 <span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"cost per SUCCESSFUL task       : $</span><span class="sc">{</span>per_success<span class="sc">:.4f}</span><span class="ss">   &lt;- the unit that matters"</span>)</span>
 <span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"retry tax the vanity metric hides: </span><span class="sc">{</span>(per_success <span class="op">/</span> attempt <span class="op">-</span> <span class="dv">1</span>) <span class="op">*</span> <span class="dv">100</span><span class="sc">:.0f}</span><span class="ss">%"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>cost per task attempt          : $0.0619
 cost per SUCCESSFUL task       : $0.0884   &lt;- the unit that matters
@@ -881,7 +884,9 @@ retry tax the vanity metric hides: 43%</code></pre>
 </div>
 </div>
 <p>At a 70% success rate the true unit cost is 43% above the per-attempt number — a platform billed and capacity-planned on cost-per-call is undercounting by nearly half, and the fix costs one spoken sentence. That unit scales to a fleet, and two more anchor numbers size the platform’s blast radius and its paved-path health. The prices, volumes, and rates here are illustrative teaching constants chosen for round arithmetic, not quotes.</p>
-<div id="87dd16f0" class="cell" data-execution_count="2">
+<div id="4d313628" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>tasks_per_day <span class="op">=</span> <span class="dv">50</span> <span class="op">*</span> <span class="dv">4_000</span>                 <span class="co"># 50 teams x ~4k successful tasks/team/day</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>cells <span class="op">=</span> <span class="dv">8</span>                                  <span class="co"># capacity partitioned into failure domains</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>releases, on_escape_hatch <span class="op">=</span> <span class="dv">320</span>, <span class="dv">26</span>        <span class="co"># live releases; those on a reviewed exception</span></span>
@@ -890,6 +895,7 @@ retry tax the vanity metric hides: 43%</code></pre>
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"blast radius, one cell of </span><span class="sc">{</span>cells<span class="sc">}</span><span class="ss">              : </span><span class="sc">{</span><span class="dv">1</span> <span class="op">/</span> cells <span class="op">*</span> <span class="dv">100</span><span class="sc">:.0f}</span><span class="ss">% of the fleet"</span>)</span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"runs on the supported (paved) path        : </span><span class="sc">{</span>(<span class="dv">1</span> <span class="op">-</span> on_escape_hatch <span class="op">/</span> releases) <span class="op">*</span> <span class="dv">100</span><span class="sc">:.0f}</span><span class="ss">%"</span>)</span>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"open escape-hatch exceptions              : </span><span class="sc">{</span>on_escape_hatch<span class="sc">}</span><span class="ss">  (each carries an owner + an age)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>fleet spend/day at 200,000 successful tasks : $17,674
 blast radius, one cell of 8              : 12% of the fleet

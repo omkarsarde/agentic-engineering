@@ -101,9 +101,9 @@ div.csl-indent {
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -938,7 +938,7 @@ Figure&nbsp;26.2: Which deployment topology fits which workload? The same organi
 <section id="sec-ch26-gateway" class="level2" data-number="26.2">
 <h2 data-number="26.2" class="anchored" data-anchor-id="sec-ch26-gateway"><span class="header-section-number">26.2</span> One gateway: identity, admission, routing, and cascades</h2>
 <p>We are ready to build the request plane and measure it. A gateway does six things on the way in — authenticate, admit, route, propagate a deadline, meter, and emit evidence — and the first correctness rule is about trust. A client header saying <code>tenant=bank-a</code> is <em>data</em>, not identity. The gateway issues a <strong>virtual key</strong> and maps it server-side to a tenant, its scopes, and its budget; it never forwards its own broad provider credential to an application. We start with the identity a request carries and the price schedule that settles it.</p>
-<div id="f75710a0" class="cell" data-execution_count="2">
+<div id="9ccf8849" class="cell" data-execution_count="2">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> annotations</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1003,7 +1003,7 @@ Figure&nbsp;26.2: Which deployment topology fits which workload? The same organi
 <span id="cb2-62"><a href="#cb2-62" aria-hidden="true" tabindex="-1"></a>        }</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Admission happens before any expensive work, and it must reserve an estimate for the <em>whole</em> journey, not just the first call — a request that can take eight agent steps and fan out to four workers has a very different maximum exposure than a single extraction. The gateway holds a per-tenant budget and rejects a journey whose estimate would exceed it.</p>
-<div id="24180ddc" class="cell" data-execution_count="3">
+<div id="3cfac0cd" class="cell" data-execution_count="3">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> BudgetError(<span class="pp">RuntimeError</span>):</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Raised when a whole journey has no remaining spend authority."""</span></span>
@@ -1103,7 +1103,7 @@ Figure&nbsp;26.2: Which deployment topology fits which workload? The same organi
 <span id="cb3-97"><a href="#cb3-97" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.spend[context.tenant]</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Watch one journey pass through: a virtual key becomes an identity, an estimate is admitted, a capability resolves to the cheaper of two deployments, and metered usage settles against the tenant.</p>
-<div id="34faaaee" class="cell" data-execution_count="4">
+<div id="705703c7" class="cell" data-execution_count="4">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>gateway <span class="op">=</span> Gateway(</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    keys<span class="op">=</span>{<span class="st">"vk-acme"</span>: (<span class="st">"acme"</span>, <span class="bu">frozenset</span>({<span class="st">"chat"</span>}))},</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>    limits<span class="op">=</span>{<span class="st">"acme"</span>: <span class="fl">0.05</span>},</span>
@@ -1124,7 +1124,7 @@ Figure&nbsp;26.2: Which deployment topology fits which workload? The same organi
 </div>
 <p>The identity came from the key, not the payload; the over-budget guard sits before routing; and <code>route</code> picked <code>small</code> because it was the cheapest deployment that could satisfy <code>chat</code>. That last choice — pick the cheapest eligible deployment — is only the simplest of four different operations, and confusing them is a common production bug. <strong>Routing</strong> chooses a deployment <em>before</em> a call. A <strong>cascade</strong> tries a cheap deployment first and escalates <em>after</em> a grader judges the result insufficient. A <strong>fallback</strong> switches provider <em>after</em> an operational failure, to preserve availability. A <strong>hedge</strong> issues a redundant attempt <em>before</em> the first completes, to cut tail latency. They differ in when they fire and what they optimize; here we measure the first two, because their cost-quality tradeoff is the one a cost review always asks about.</p>
 <p>To measure anything we need something to serve. A real model is nondeterministic and needs a GPU, so we use a stub backend whose accuracy is a visible rule: a backend answers a task correctly when its <code>strength</code> meets the task’s <code>difficulty</code>. That is not a model — it is a scriptable stand-in that lets the <em>control</em> logic (route versus cascade) be exercised and priced offline.</p>
-<div id="97391b4e" class="cell" data-execution_count="5">
+<div id="4004952c" class="cell" data-execution_count="5">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Backend:</span>
@@ -1146,7 +1146,7 @@ Figure&nbsp;26.2: Which deployment topology fits which workload? The same organi
 <span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.strength <span class="op">&gt;=</span> difficulty</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Three strategies run over the same workload. <code>run_single</code> sends every task to one backend. <code>run_router</code> asks a cheap classifier to predict difficulty — imperfectly, with noise — and routes hard-looking tasks to the strong backend. <code>run_cascade</code> always tries the cheap backend, then escalates to the strong one whenever a grader judges the cheap answer insufficient; the grader is an oracle here, save for a small false-accept rate that keeps it honest.</p>
-<div id="be0dbed6" class="cell" data-execution_count="6">
+<div id="609529a1" class="cell" data-execution_count="6">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> WorkloadResult:</span>
@@ -1253,7 +1253,7 @@ Figure&nbsp;26.2: Which deployment topology fits which workload? The same organi
 <span id="cb7-104"><a href="#cb7-104" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> WorkloadResult(<span class="st">"cascade"</span>, correct <span class="op">/</span> n, cost, latency <span class="op">/</span> n, escalations)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the measurement. Four hundred tasks with difficulty spread across the range, a weak cheap backend and a strong expensive one, and we print all five strategies side by side.</p>
-<div id="4296d9f3" class="cell" data-execution_count="7">
+<div id="81056122" class="cell" data-execution_count="7">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>small <span class="op">=</span> Backend(<span class="st">"small"</span>, strength<span class="op">=</span><span class="fl">0.55</span>, cost_per_call<span class="op">=</span><span class="fl">1.0</span>, latency_ms<span class="op">=</span><span class="fl">200.0</span>)</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>large <span class="op">=</span> Backend(<span class="st">"large"</span>, strength<span class="op">=</span><span class="fl">0.97</span>, cost_per_call<span class="op">=</span><span class="fl">6.0</span>, latency_ms<span class="op">=</span><span class="fl">900.0</span>)</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>tasks <span class="op">=</span> [i <span class="op">/</span> <span class="dv">400</span> <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(<span class="dv">400</span>)]</span>
@@ -1359,7 +1359,7 @@ Figure&nbsp;26.4: Where does one journey’s cost actually come from? For a shor
 <p><span id="eq-ch26-cache"><span class="math display">
 r \ge \frac{w-1}{1-d}.
 \tag{26.2}</span></span></p>
-<div id="afd242f0" class="cell" data-execution_count="10">
+<div id="b88b4e5c" class="cell" data-execution_count="10">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cache_breakeven(write_multiplier: <span class="bu">float</span>, read_multiplier: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the minimum reuses for a prefix cache to pay for its write.</span></span>
@@ -1401,7 +1401,7 @@ r \ge \frac{w-1}{1-d}.
 <span id="cb12-39"><a href="#cb12-39" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> synchronous_cost <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> discount)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>With a write premium of <code>1.25</code> and a read at a tenth of an uncached call, the break-even is under one reuse — a prefix reused even once already pays for itself.</p>
-<div id="361a9d3c" class="cell" data-execution_count="11">
+<div id="0470aec4" class="cell" data-execution_count="11">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>w, d <span class="op">=</span> <span class="fl">1.25</span>, <span class="fl">0.10</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"break-even reuses = </span><span class="sc">{</span>cache_breakeven(w, d)<span class="sc">:.3f}</span><span class="ss">  -&gt;  one reuse suffices"</span>)</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"uncached 2 calls = 2.000   cached (write + 1 read) = </span><span class="sc">{</span>cached_cost(<span class="dv">1</span>, w, d)<span class="sc">:.3f}</span><span class="ss">"</span>)</span>
@@ -1416,7 +1416,7 @@ nightly eval sweep: sync 4.00  -&gt;  batch (50% off) 2.00</code></pre>
 </div>
 <p>The batch line is the other easy lever: work that tolerates latency — evaluation sweeps, bulk classification, backfills — belongs on a discounted asynchronous tier, halving its cost in this schedule. A <strong>semantic cache</strong> has no such price-only optimum, because lowering its similarity threshold raises the hit rate <em>and</em> the false-reuse rate; tune it against correctness and privacy slices, not savings alone.</p>
 <p>Now the pathology from the Friday incident. Agent loops multiply cost in two compounding ways. First, retries: if an attempt independently needs another attempt with probability <span class="math inline">q &lt; 1</span>, the expected attempt count is <span class="math inline">(1-q)^{-1}</span>, so at <span class="math inline">q = 0.2</span> offered load already grows by a quarter — and independent retry layers <em>multiply</em>, so a client retrying three times, a gateway twice, and an SDK three times can turn one intent into eighteen attempts.</p>
-<div id="1a1a1b37" class="cell" data-execution_count="12">
+<div id="a0895b32" class="cell" data-execution_count="12">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> retry_multiplier(q: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return the expected attempts when each independently retries with prob q.</span></span>
@@ -1435,7 +1435,7 @@ nightly eval sweep: sync 4.00  -&gt;  batch (50% off) 2.00</code></pre>
 <span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> throughput <span class="op">*</span> qualifying_fraction</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The second multiplier is the transcript itself: because every turn resends the whole conversation, a loop that keeps retrying pays a <em>growing</em> per-turn cost. We reproduce the blow-up by simulating many journeys that retry a soft failure until they succeed, each turn costing more than the last, and then we cap it.</p>
-<div id="7a1f3872" class="cell" data-execution_count="13">
+<div id="f0baa53c" class="cell" data-execution_count="13">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> simulate_agent_loop(</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    rng: random.Random, p_success: <span class="bu">float</span>, per_turn_tokens: <span class="bu">int</span>, max_turns: <span class="bu">int</span></span>
@@ -1463,7 +1463,7 @@ nightly eval sweep: sync 4.00  -&gt;  batch (50% off) 2.00</code></pre>
 <span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a>            <span class="cf">return</span> total, turn</span>
 <span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> total, max_turns</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="816e3b6f" class="cell" data-execution_count="14">
+<div id="0953ae75" class="cell" data-execution_count="14">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> spend_distribution(max_turns: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">list</span>[<span class="bu">int</span>]:</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    rng <span class="op">=</span> random.Random(<span class="dv">7</span>)</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sorted</span>(simulate_agent_loop(rng, <span class="fl">0.5</span>, <span class="dv">500</span>, max_turns)[<span class="dv">0</span>]</span>
@@ -1519,7 +1519,7 @@ Figure&nbsp;26.5: The two cost curves every platform reasons about. Left: prefix
 </div>
 </div>
 <p>Capacity is governed by the tightest resource, and the honest capacity metric is <strong>goodput</strong> — the rate of completions that satisfy the task <em>and</em> service contract, <span class="math inline">G = Qs</span> for raw throughput <span class="math inline">Q</span> and qualifying fraction <span class="math inline">s</span> — because a faster deployment that emits more invalid outputs can serve fewer good ones. To bound offered load on the tightest dimension we use a <strong>token bucket</strong> keyed on that dimension, so one enormous prompt cannot hide behind a low request count.</p>
-<div id="56fefa37" class="cell" data-execution_count="16">
+<div id="6a0ae74a" class="cell" data-execution_count="16">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> TokenBucket:</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Rate-limit a resource with an injected clock, so tests need no real time.</span></span>
@@ -1558,7 +1558,7 @@ Figure&nbsp;26.5: The two cost curves every platform reasons about. Left: prefix
 <span id="cb20-36"><a href="#cb20-36" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.tokens <span class="op">-=</span> requested</span>
 <span id="cb20-37"><a href="#cb20-37" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">True</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="0f705f6e" class="cell" data-execution_count="17">
+<div id="18c0a646" class="cell" data-execution_count="17">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb21"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>clock <span class="op">=</span> [<span class="fl">0.0</span>]</span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>bucket <span class="op">=</span> TokenBucket(capacity<span class="op">=</span><span class="dv">100</span>, refill_per_s<span class="op">=</span><span class="dv">10</span>, now<span class="op">=</span><span class="kw">lambda</span>: clock[<span class="dv">0</span>])</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"spend 80:"</span>, bucket.allow(<span class="dv">80</span>), <span class="st">" then 30:"</span>, bucket.allow(<span class="dv">30</span>), <span class="st">"(drained)"</span>)</span>
@@ -1574,7 +1574,7 @@ after 1s refill, 30: True  goodput(Q=120, s=0.9): 108.0</code></pre>
 <section id="sec-ch26-reliability" class="level2" data-number="26.4">
 <h2 data-number="26.4" class="anchored" data-anchor-id="sec-ch26-reliability"><span class="header-section-number">26.4</span> Reliability: deadlines, retry budgets, and hedging</h2>
 <p>A timeout says the caller stopped waiting. It does not say the server stopped working, the model call went unbilled, or the external effect did not occur. So the first reliability rule is to classify a failure before reacting to it: a <em>retryable</em> fault (a connection reset before any response, a declared overload) may be retried within the same journey; a <em>terminal</em> one (invalid schema, failed authentication, policy refusal) must stop; and an <em>ambiguous</em> one — a connection lost <em>after</em> a write was sent — must be reconciled by a stable identity, never retried with a fresh one.</p>
-<div id="955c218c" class="cell" data-execution_count="18">
+<div id="9a283e7a" class="cell" data-execution_count="18">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>TERMINAL <span class="op">=</span> <span class="bu">frozenset</span>({<span class="st">"policy_refusal"</span>, <span class="st">"invalid_request"</span>, <span class="st">"auth"</span>})</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>RETRYABLE <span class="op">=</span> <span class="bu">frozenset</span>({<span class="st">"overloaded"</span>, <span class="st">"connection_reset"</span>, <span class="st">"rate_limited"</span>})</span>
@@ -1614,7 +1614,7 @@ after 1s refill, 30: True  goodput(Q=120, s=0.9): 108.0</code></pre>
 <span id="cb23-37"><a href="#cb23-37" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">max</span>(<span class="fl">0.0</span>, remaining_s <span class="op">-</span> reserved_s)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>A <strong>retry budget</strong> bounds total extra work while a <strong>deadline</strong> bounds elapsed usefulness; the two together stop a retry loop from either running forever or running past the point where its answer still matters. We give the budget an injected clock and watch it consume attempts until one of the two limits bites.</p>
-<div id="d482c73c" class="cell" data-execution_count="19">
+<div id="52a3fe04" class="cell" data-execution_count="19">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb24"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span></span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> RetryBudget:</span>
@@ -1651,7 +1651,7 @@ after 1s refill, 30: True  goodput(Q=120, s=0.9): 108.0</code></pre>
 <span id="cb24-34"><a href="#cb24-34" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.attempts_left <span class="op">-=</span> <span class="dv">1</span></span>
 <span id="cb24-35"><a href="#cb24-35" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> remaining</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="419527df" class="cell" data-execution_count="20">
+<div id="422f86e8" class="cell" data-execution_count="20">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb25"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>elapsed <span class="op">=</span> [<span class="fl">0.0</span>]</span>
 <span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>budget <span class="op">=</span> RetryBudget(attempts_left<span class="op">=</span><span class="dv">5</span>, deadline_s<span class="op">=</span><span class="fl">1.0</span>, now<span class="op">=</span><span class="kw">lambda</span>: elapsed[<span class="dv">0</span>])</span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"downstream budget from 0.8s, reserving 0.2s:"</span>,</span>
@@ -1675,7 +1675,7 @@ t=1.00s  stop: retry budget exhausted</code></pre>
 </div>
 </div>
 <p>The budget stops the loop when the clock crosses the deadline, well before the attempt count would have — exactly the case a naive “retry three times” would get wrong. The last pattern, <strong>hedging</strong>, spends <em>more</em> to buy tail latency: after a threshold, issue a second attempt and take whichever returns first <span class="citation" data-cites="dean2013tail">(<a href="../references.html#ref-dean2013tail" role="doc-biblioref">Dean and Barroso 2013</a>)</span>. It helps when a small fraction of components are slow for uncorrelated reasons, but it costs extra capacity during the busiest period, so the question is always whether the tail win is worth the spend. We measure it on a latency distribution with a heavy tail.</p>
-<div id="68b4f6e6" class="cell" data-execution_count="21">
+<div id="0005334e" class="cell" data-execution_count="21">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> hedge_latency(first_ms: <span class="bu">float</span>, second_ms: <span class="bu">float</span>, threshold_ms: <span class="bu">float</span></span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>                  ) <span class="op">-&gt;</span> <span class="bu">tuple</span>[<span class="bu">float</span>, <span class="bu">bool</span>]:</span>
@@ -1698,7 +1698,7 @@ t=1.00s  stop: retry budget exhausted</code></pre>
 <span id="cb27-20"><a href="#cb27-20" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> first_ms, <span class="va">False</span></span>
 <span id="cb27-21"><a href="#cb27-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">min</span>(first_ms, threshold_ms <span class="op">+</span> second_ms), <span class="va">True</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="e1f31ba3" class="cell" data-execution_count="22">
+<div id="be07b2bf" class="cell" data-execution_count="22">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb28"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> draw_latency(rng: random.Random) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>    <span class="co"># 95% fast, 5% a slow tail — the shape hedging targets.</span></span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> rng.random() <span class="op">&lt;</span> <span class="fl">0.05</span>:</span>
@@ -1817,7 +1817,7 @@ Figure&nbsp;26.8: What must recovery determine for each durable effect state? Re
 </div>
 </div>
 <p>The ledger’s core is small. A <code>reserve</code> binds a stable key to a payload digest and refuses to let the same key be reused for a <em>different</em> payload — so a changed amount under an old key is rejected, not silently applied.</p>
-<div id="4343aca9" class="cell" data-execution_count="24">
+<div id="cdc0ad58" class="cell" data-execution_count="24">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb31"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> EffectState(<span class="bu">str</span>, Enum):</span>
 <span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""The durable states of one external effect, in recovery order."""</span></span>
@@ -1882,7 +1882,7 @@ Figure&nbsp;26.8: What must recovery determine for each durable effect state? Re
 <span id="cb31-62"><a href="#cb31-62" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> record</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The provider is idempotent on the stable key — it returns the same receipt for a repeated key and commits at most one effect — and <code>execute_once</code> drives the whole sequence, including the <code>FAILED</code> branch a terminal provider error takes. The injected crash models process death precisely in the dangerous window: after the provider commits, before the receipt is recorded.</p>
-<div id="20758d59" class="cell" data-execution_count="25">
+<div id="e8d738a5" class="cell" data-execution_count="25">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb32"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> InjectedCrash(<span class="pp">RuntimeError</span>):</span>
 <span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Simulate worker death after the provider committed, before recording."""</span></span>
@@ -1957,7 +1957,7 @@ Figure&nbsp;26.8: What must recovery determine for each durable effect state? Re
 <span id="cb32-72"><a href="#cb32-72" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now the demonstration the old chapter only asserted in a test: crash three times in the window, then recover, and print the whole trace. The provider must commit exactly one effect no matter how many deaths occurred.</p>
-<div id="30efbd39" class="cell" data-execution_count="26">
+<div id="4586b18a" class="cell" data-execution_count="26">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb33"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>ledger, provider <span class="op">=</span> EffectLedger(), IdempotentProvider()</span>
 <span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>payload <span class="op">=</span> {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>, <span class="st">"amount_cents"</span>: <span class="dv">4999</span>}</span>
 <span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>key <span class="op">=</span> <span class="st">"refund:A-17:v1"</span></span>
@@ -1980,7 +1980,7 @@ recovery:  receipt=receipt-1   ledger=RECORDED   provider_effects=1</code></pre>
 </div>
 </div>
 <p>Three deaths, one effect. Each crash left the record <code>RESERVED</code> — durable proof that an attempt was in flight — and recovery re-asked the provider with <code>refund:A-17:v1</code>, which returned the original <code>receipt-1</code> rather than moving money again. Try to reuse that key with a changed amount and the ledger refuses:</p>
-<div id="02c4bea6" class="cell" data-execution_count="27">
+<div id="f1f4a1a8" class="cell" data-execution_count="27">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb35"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
 <span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>    execute_once(ledger, provider, key, {<span class="st">"order_id"</span>: <span class="st">"A-17"</span>, <span class="st">"amount_cents"</span>: <span class="dv">9999</span>})</span>
 <span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> <span class="pp">ValueError</span> <span class="im">as</span> exc:</span>
@@ -2009,7 +2009,7 @@ provider effects still: 1</code></pre>
 <section id="sec-ch26-durable" class="level2" data-number="26.6">
 <h2 data-number="26.6" class="anchored" data-anchor-id="sec-ch26-durable"><span class="header-section-number">26.6</span> Durable execution: replay and compensation</h2>
 <p>A framework <strong>checkpointer</strong> stores agent state so a loop can resume; a <strong>durable-execution engine</strong> records enough workflow <em>history</em> to reconstruct decisions, schedule retries and timers, and move work to another worker after a failure. The engine’s central trick is <strong>deterministic replay</strong>: on recovery it re-runs the workflow code but returns each past step’s <em>recorded</em> result instead of re-executing it. This matters most for a model call, because re-executing one changes its output, its cost, and possibly the next branch the workflow takes. We build a tiny engine that makes the point concrete.</p>
-<div id="aa9d6c88" class="cell" data-execution_count="28">
+<div id="adfd14b3" class="cell" data-execution_count="28">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb37"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span></span>
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> WorkflowEngine:</span>
@@ -2045,7 +2045,7 @@ provider effects still: 1</code></pre>
 <span id="cb37-33"><a href="#cb37-33" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> result</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>First, why the model call must not re-run. A workflow summarizes a document with a call whose token count differs every time — as a real model’s would. We record it once, then show what a naive re-execution would return versus what replay returns.</p>
-<div id="0ab6b036" class="cell" data-execution_count="29">
+<div id="e93cae21" class="cell" data-execution_count="29">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb38"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>calls <span class="op">=</span> {<span class="st">"n"</span>: <span class="dv">0</span>}</span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> flaky_summarize() <span class="op">-&gt;</span> <span class="bu">int</span>:</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    calls[<span class="st">"n"</span>] <span class="op">+=</span> <span class="dv">1</span></span>
@@ -2093,7 +2093,7 @@ Figure&nbsp;26.9: Why must a model call be recorded, not re-run, on replay? The 
 </div>
 </div>
 <p>Now a crash <em>inside</em> a workflow. A booking charges a card — an effect — then sends a receipt. We inject a death during the receipt send, after the charge is journaled, and then resume with the same engine. The charge must replay from the journal without a second call.</p>
-<div id="b261e28e" class="cell" data-execution_count="30">
+<div id="5ca797f3" class="cell" data-execution_count="30">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb40"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>sends <span class="op">=</span> {<span class="st">"n"</span>: <span class="dv">0</span>}</span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> send_receipt() <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>    sends[<span class="st">"n"</span>] <span class="op">+=</span> <span class="dv">1</span></span>
@@ -2162,7 +2162,7 @@ resumed: journal ['charge', 'send_receipt']   provider_effects=1</code></pre>
 </tbody>
 </table>
 <p>Against a real engine, the model call is wrapped as a recorded activity — shown here, not executed, because it needs the engine’s runtime:</p>
-<div id="809237de" class="cell" data-execution_count="31">
+<div id="5d7b42de" class="cell" data-execution_count="31">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb42"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> durable_engine <span class="im">import</span> workflow, activity  <span class="co"># a Temporal-class engine</span></span>
 <span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a><span class="at">@activity</span></span>
@@ -2177,7 +2177,7 @@ resumed: journal ['charge', 'send_receipt']   provider_effects=1</code></pre>
 </div>
 <p>The long human wait becomes a durable timer and signal: the workflow suspends without holding a process and resumes when a validated signal arrives or the timer expires. Chapter 17 defined approval mechanics and Chapter 24 the authorization binding; the platform guarantee here is only that a restart, a deploy, or a two-week wait neither loses nor duplicates the suspended intent.</p>
 <p>The last durable pattern is <strong>compensation</strong>, and it is not time travel. When a multi-step booking fails partway, a saga runs a compensating action for each committed step — but a compensation is a <em>new forward effect</em> with its own stable identity, not an undo. Our saga books a flight and a hotel, fails on the event, and compensates the two bookings in reverse.</p>
-<div id="6d3d64b5" class="cell" data-execution_count="32">
+<div id="66e88ffc" class="cell" data-execution_count="32">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb43"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> EffectRejected(<span class="pp">RuntimeError</span>):</span>
 <span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""A provider declined an effect (e.g. an event is sold out)."""</span></span>
@@ -2219,7 +2219,7 @@ resumed: journal ['charge', 'send_receipt']   provider_effects=1</code></pre>
 <span id="cb43-39"><a href="#cb43-39" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span></span>
 <span id="cb43-40"><a href="#cb43-40" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">list</span>(provider.receipts.values())</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div id="3432ef1b" class="cell" data-execution_count="33">
+<div id="7b84f18c" class="cell" data-execution_count="33">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb44"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>provider <span class="op">=</span> IdempotentProvider()</span>
 <span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>engine <span class="op">=</span> WorkflowEngine()</span>
 <span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span>:</span>
@@ -2243,7 +2243,7 @@ total forward effects (2 bookings + 2 compensations): 4</code></pre>
 <section id="sec-ch26-versioning" class="level2" data-number="26.7">
 <h2 data-number="26.7" class="anchored" data-anchor-id="sec-ch26-versioning"><span class="header-section-number">26.7</span> Version the full artifact surface</h2>
 <p>“Model version” does not identify an agent release. The output can change when the tokenizer, the system prompt, a tool schema, the retrieval corpus snapshot, the embedder, the reranker, a decoding setting, or the judge rubric changes — a dozen surfaces, any of which silently alters behavior. A <strong>release bundle</strong> maps every material surface to an immutable identifier and is addressed by the content hash of that map, so two releases are the same release exactly when their bundles hash equal. Because the map is order-independent, the hash must be too.</p>
-<div id="0d50c6ab" class="cell" data-execution_count="34">
+<div id="efeb6d43" class="cell" data-execution_count="34">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb46"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bundle_digest(surface: <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">str</span>]) <span class="op">-&gt;</span> <span class="bu">str</span>:</span>
 <span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return a canonical content hash of a complete release bundle.</span></span>
@@ -2268,7 +2268,7 @@ total forward effects (2 bookings + 2 compensations): 4</code></pre>
 <span id="cb46-22"><a href="#cb46-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {k <span class="cf">for</span> k <span class="kw">in</span> old.keys() <span class="op">|</span> new.keys() <span class="cf">if</span> old.get(k) <span class="op">!=</span> new.get(k)}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>We hash a manifest, confirm that reordering its keys leaves the digest unchanged, then change exactly one surface and watch the digest flip while <code>manifest_diff</code> names precisely what moved.</p>
-<div id="1ad4d717" class="cell" data-execution_count="35">
+<div id="b4abb2ea" class="cell" data-execution_count="35">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb47"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>v42 <span class="op">=</span> {<span class="st">"model"</span>: <span class="st">"m-1"</span>, <span class="st">"tokenizer"</span>: <span class="st">"tok-3"</span>, <span class="st">"prompt"</span>: <span class="st">"sys-7"</span>,</span>
 <span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a>       <span class="st">"corpus"</span>: <span class="st">"docs-2026-07-01"</span>, <span class="st">"judge"</span>: <span class="st">"rubric-4"</span>}</span>
 <span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>reordered <span class="op">=</span> <span class="bu">dict</span>(<span class="bu">reversed</span>(<span class="bu">list</span>(v42.items())))</span>
@@ -2291,7 +2291,7 @@ changed surfaces: {'corpus'}</code></pre>
 <section id="sec-ch26-testing" class="level2" data-number="26.8">
 <h2 data-number="26.8" class="anchored" data-anchor-id="sec-ch26-testing"><span class="header-section-number">26.8</span> Test the deterministic shell</h2>
 <p>An evaluation asks whether a probabilistic system performs a task; a <strong>test</strong> asks whether deterministic code obeys an invariant. A release needs both, and a ninety-two-percent task pass rate says nothing about whether concurrent budget checks overspend, a retry changes an effect key, or yesterday’s checkpoint still loads. The most valuable test family for the machinery in this chapter is the <strong>property-based</strong> test: rather than pinning one example, it generates many inputs and asserts an invariant across all of them. The invariant we most want is the one <a href="#sec-ch26-ledger" class="quarto-xref"><span>Section 26.5</span></a> claimed — that no number of crashes produces more than one effect — so we assert it over hundreds of random crash schedules.</p>
-<div id="3536f14b" class="cell" data-execution_count="36">
+<div id="518641ed" class="cell" data-execution_count="36">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> effect_count_is_one(crashes: <span class="bu">int</span>, cents: <span class="bu">int</span>, seed: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">bool</span>:</span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>    ledger, provider <span class="op">=</span> EffectLedger(), IdempotentProvider()</span>
 <span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>    key <span class="op">=</span> <span class="ss">f"refund:</span><span class="sc">{</span>seed<span class="sc">}</span><span class="ss">:v1"</span></span>
@@ -2317,7 +2317,7 @@ changed surfaces: {'corpus'}</code></pre>
 <section id="sec-ch26-delivery" class="level2" data-number="26.9">
 <h2 data-number="26.9" class="anchored" data-anchor-id="sec-ch26-delivery"><span class="header-section-number">26.9</span> Deliver through gates, shadow, and canary</h2>
 <p>The last piece is getting a new bundle into production without exposing every user to its mistakes. Progressive delivery is a funnel that widens exposure only as evidence accumulates: an <em>offline gate</em> runs tests and evaluations against the exact bundle; a <em>shadow</em> stage sends the candidate a copy of traffic but lets it create no effects; a <em>canary</em> routes a small real-effect slice with strong abort rules; a <em>ramp</em> widens it in stages; and <em>converge</em> retires the old version only after its journeys drain. The reason the canary slice can be small is statistical: if a candidate independently fails an extra fraction <span class="math inline">p</span> of cases, the chance of catching at least one failure in <span class="math inline">n</span> independent cases is <span class="math inline">P = 1 - (1-p)^n</span>, so a target detection probability <span class="math inline">\gamma</span> needs <span class="math inline">n \ge \log(1-\gamma)/\log(1-p)</span> cases.</p>
-<div id="8552a513" class="cell" data-execution_count="37">
+<div id="262b89c6" class="cell" data-execution_count="37">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb51"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> wilson_lower(successes: <span class="bu">int</span>, trials: <span class="bu">int</span>, z: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.96</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return a Wilson lower confidence bound for a success rate.</span></span>
@@ -2365,7 +2365,7 @@ changed surfaces: {'corpus'}</code></pre>
 <span id="cb51-45"><a href="#cb51-45" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> math.ceil(math.log(<span class="dv">1</span> <span class="op">-</span> target_prob) <span class="op">/</span> math.log(<span class="dv">1</span> <span class="op">-</span> regression_rate))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>The gate itself combines two rules of different kinds. Quality uses the Wilson lower bound against a release floor — uncertainty-aware, so few trials cannot promote on luck — while safety is zero-tolerance: any critical failure holds the release outright.</p>
-<div id="b76e4752" class="cell" data-execution_count="38">
+<div id="8b0a4935" class="cell" data-execution_count="38">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb52"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a><span class="at">@dataclass</span>(frozen<span class="op">=</span><span class="va">True</span>)</span>
 <span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> CanaryDecision:</span>
@@ -2405,7 +2405,7 @@ changed surfaces: {'corpus'}</code></pre>
 <span id="cb52-37"><a href="#cb52-37" aria-hidden="true" tabindex="-1"></a>                          successes <span class="op">/</span> trials, lower, <span class="bu">tuple</span>(reasons))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p>Now watch the gate flip across three scenarios that a naive point-estimate gate would get wrong. A strong result on a hundred cases promotes; the <em>same</em> observed rate on twenty-five cases holds, because the lower bound has not cleared the floor; and a perfect run with one critical failure holds regardless of the rate.</p>
-<div id="bac29d0d" class="cell" data-execution_count="39">
+<div id="89473deb" class="cell" data-execution_count="39">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb53"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a>floor <span class="op">=</span> <span class="fl">0.90</span></span>
 <span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>scenarios <span class="op">=</span> [</span>
 <span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"98 of 100"</span>, canary_gate(<span class="dv">98</span>, <span class="dv">100</span>, floor)),</span>

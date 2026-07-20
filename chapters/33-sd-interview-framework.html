@@ -101,9 +101,9 @@ div.csl-indent {
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -993,7 +993,9 @@ Figure&nbsp;33.2: Which family is this prompt? One identifying question routes a
 C \;=\; \frac{n_{\text{fresh}}\,P_{\text{in}} \;+\; n_{\text{cached}}\,P_{\text{cached}} \;+\; n_{\text{out}}\,P_{\text{out}}}{10^{6}},
 \tag{33.1}</span></span></p>
 <p>where <span class="math inline">n_{\text{fresh}}</span>, <span class="math inline">n_{\text{cached}}</span>, and <span class="math inline">n_{\text{out}}</span> are token counts and each <span class="math inline">P</span> is a price in dollars per million tokens — the unit vendors quote, which is why the formula divides once at the end rather than trusting us to convert each price by hand.</p>
-<div id="d100abf1" class="cell" data-execution_count="2">
+<div id="797230f1" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> dataclasses <span class="im">import</span> dataclass</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1053,9 +1055,12 @@ C \;=\; \frac{n_{\text{fresh}}\,P_{\text{in}} \;+\; n_{\text{cached}}\,P_{\text{
 <span id="cb2-57"><a href="#cb2-57" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"cached_input_tokens must lie within input_tokens"</span>)</span>
 <span id="cb2-58"><a href="#cb2-58" aria-hidden="true" tabindex="-1"></a>    fresh <span class="op">=</span> input_tokens <span class="op">-</span> cached_input_tokens</span>
 <span id="cb2-59"><a href="#cb2-59" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> price.dollars(fresh, output_tokens, cached_input_tokens)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 </div>
 <p>Now the running prompt’s query, priced. A representative shape: a 400-token system prompt plus a 100-token question plus five retrieved 500-token chunks and some history is roughly 3,500 input tokens, with a 250-token cited answer. The prices below are illustrative frontier-class numbers chosen for round arithmetic, not quotes.</p>
-<div id="d424f877" class="cell" data-execution_count="3">
+<div id="02a9c4f2" class="cell" data-execution_count="3">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>price <span class="op">=</span> TokenPrice(input_per_million<span class="op">=</span><span class="fl">3.00</span>, output_per_million<span class="op">=</span><span class="fl">15.00</span>,</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>                   cached_input_per_million<span class="op">=</span><span class="fl">0.30</span>)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>plain <span class="op">=</span> cost_per_query(<span class="dv">3_500</span>, <span class="dv">250</span>, price)</span>
@@ -1063,6 +1068,7 @@ C \;=\; \frac{n_{\text{fresh}}\,P_{\text{in}} \;+\; n_{\text{cached}}\,P_{\text{
 <span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"per query, cold cache          : $</span><span class="sc">{</span>plain<span class="sc">:.4f}</span><span class="ss">"</span>)</span>
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"per query, 2.5k-token prefix hot: $</span><span class="sc">{</span>warm<span class="sc">:.4f}</span><span class="ss">"</span>)</span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"if peak 50 QPS held for a day  : $</span><span class="sc">{</span>plain <span class="op">*</span> <span class="dv">50</span> <span class="op">*</span> <span class="dv">86_400</span><span class="sc">:&gt;9,.0f}</span><span class="ss">  vs  $</span><span class="sc">{</span>warm <span class="op">*</span> <span class="dv">50</span> <span class="op">*</span> <span class="dv">86_400</span><span class="sc">:,.0f}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>per query, cold cache          : $0.0143
 per query, 2.5k-token prefix hot: $0.0075
@@ -1074,7 +1080,9 @@ if peak 50 QPS held for a day  : $   61,560  vs  $32,400</code></pre>
 <p><span id="eq-ch33-completion"><span class="math display">
 T_{\text{complete}} \;=\; T_{\text{TTFT}} \;+\; \left(n_{\text{out}} - 1\right) T_{\text{TPOT}}.
 \tag{33.2}</span></span></p>
-<div id="539806f5" class="cell" data-execution_count="4">
+<div id="9d5f2572" class="cell" data-execution_count="4">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> completion_ms(ttft_ms: <span class="bu">float</span>, output_tokens: <span class="bu">int</span>, tpot_ms: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Return end-to-end latency for one streamed response (@eq-ch33-completion).</span></span>
@@ -1095,9 +1103,12 @@ T_{\text{complete}} \;=\; T_{\text{TTFT}} \;+\; \left(n_{\text{out}} - 1\right) 
 <span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> output_tokens <span class="op">&lt;</span> <span class="dv">1</span>:</span>
 <span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="fl">0.0</span></span>
 <span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ttft_ms <span class="op">+</span> (output_tokens <span class="op">-</span> <span class="dv">1</span>) <span class="op">*</span> tpot_ms</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 </div>
 <p>Chapter 1’s decode simulator gives us a stream to check the composition against — one sentence of recall: <code>simulate_decode</code> produces deterministic token-arrival times for a given prompt and output length, and <code>tpot_ms</code> reads the mean gap off them.</p>
-<div id="a55fe167" class="cell" data-execution_count="5">
+<div id="8370626d" class="cell" data-execution_count="5">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -1118,6 +1129,7 @@ T_{\text{complete}} \;=\; T_{\text{TTFT}} \;+\; \left(n_{\text{out}} - 1\right) 
 <span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"simulated stream : TTFT </span><span class="sc">{</span>times[<span class="dv">0</span>]<span class="sc">:.0f}</span><span class="ss"> ms, TPOT </span><span class="sc">{</span>measured_tpot<span class="sc">:.2f}</span><span class="ss"> ms"</span>)</span>
 <span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"composed estimate: </span><span class="sc">{</span>completion_ms(times[<span class="dv">0</span>], <span class="dv">250</span>, measured_tpot)<span class="sc">:,.0f}</span><span class="ss"> ms"</span>)</span>
 <span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"last token really arrived at </span><span class="sc">{</span>times[<span class="op">-</span><span class="dv">1</span>]<span class="sc">:,.0f}</span><span class="ss"> ms"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>simulated stream : TTFT 328 ms, TPOT 18.05 ms
 composed estimate: 4,823 ms
@@ -1125,7 +1137,9 @@ last token really arrived at 4,823 ms</code></pre>
 </div>
 </div>
 <p>The composition reproduces the simulated stream exactly, which is the algebra doing its job. Now aim it at the running prompt’s “feel instant.” A representative latency budget for the query path — each stage a number we defend in Chapter 34 — and the completion times it implies:</p>
-<div id="c16c6ba5" class="cell" data-execution_count="6">
+<div id="9bd9b2fb" class="cell" data-execution_count="6">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>stages <span class="op">=</span> {<span class="st">"embed query"</span>: <span class="fl">20.0</span>, <span class="st">"ANN search"</span>: <span class="fl">50.0</span>,</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>          <span class="st">"rerank top-100"</span>: <span class="fl">150.0</span>, <span class="st">"queue + prefill"</span>: <span class="fl">400.0</span>}</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>ttft_budget <span class="op">=</span> <span class="bu">sum</span>(stages.values())</span>
@@ -1133,6 +1147,7 @@ last token really arrived at 4,823 ms</code></pre>
 <span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> cap <span class="kw">in</span> (<span class="dv">250</span>, <span class="dv">60</span>):</span>
 <span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"completion at a </span><span class="sc">{</span>cap<span class="sc">:3d}</span><span class="ss">-token cap, 20 ms/token: "</span></span>
 <span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>          <span class="ss">f"</span><span class="sc">{</span>completion_ms(ttft_budget, cap, <span class="fl">20.0</span>)<span class="sc">:&gt;5,.0f}</span><span class="ss"> ms"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>TTFT budget: 620 ms
 completion at a 250-token cap, 20 ms/token: 5,600 ms
@@ -1191,7 +1206,9 @@ Figure&nbsp;33.3: Can this design promise ‘sub-2-seconds’? As TTFT, yes, wit
 <section id="sec-ch33-capacity" class="level2" data-number="33.4">
 <h2 data-number="33.4" class="anchored" data-anchor-id="sec-ch33-capacity"><span class="header-section-number">33.4</span> The toolkit: memory, throughput, and storage</h2>
 <p>Three more calculators cover the capacity half of move 2: KV memory, request throughput, and index storage. The first is a recall, not a rebuild — Chapter 3 owns the KV-cache equation and its calculator (<a href="03-attention-position-long-context.html#sec-ch03-kv-equation" class="quarto-xref"><span>Section 3.1</span></a>, <a href="03-attention-position-long-context.html#eq-ch03-kvbytes" class="quarto-xref">Equation&nbsp;<span>3.1</span></a>), and one sentence recaps it: a request’s cache is <span class="math inline">{2\,L\,H_{kv}\,d_h\,T\,s}</span> bytes — layers times <em>KV heads</em> (not query heads) times head dimension times retained tokens times bytes per scalar, doubled for keys and values. We import it and work the classic 7B-class example, trap included.</p>
-<div id="9354b16e" class="cell" data-execution_count="8">
+<div id="cfb1391d" class="cell" data-execution_count="8">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>ch03 <span class="op">=</span> load_chapter(<span class="st">"ch03"</span>, <span class="st">"ch03_generated"</span>)</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>gqa <span class="op">=</span> ch03.KVConfig(<span class="st">"7B-class GQA-8"</span>, layers<span class="op">=</span><span class="dv">32</span>, query_heads<span class="op">=</span><span class="dv">32</span>, kv_heads<span class="op">=</span><span class="dv">8</span>,</span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>                    head_dim<span class="op">=</span><span class="dv">128</span>, bytes_per_scalar<span class="op">=</span><span class="dv">2</span>)</span>
@@ -1201,6 +1218,7 @@ Figure&nbsp;33.3: Can this design promise ‘sub-2-seconds’? As TTFT, yes, wit
 <span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"KV, one 4K request      : </span><span class="sc">{</span>per_request <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB  (</span><span class="sc">{</span>per_request <span class="op">/</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span><span class="sc">:.1f}</span><span class="ss"> GiB)"</span>)</span>
 <span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"KV, 16 concurrent       : </span><span class="sc">{</span>sixteen <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB  (</span><span class="sc">{</span>sixteen <span class="op">/</span> <span class="dv">2</span><span class="op">**</span><span class="dv">30</span><span class="sc">:.0f}</span><span class="ss"> GiB)"</span>)</span>
 <span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"the trap (query heads)  : </span><span class="sc">{</span>trap <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB  -- 4x too high"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>KV, one 4K request      : 0.54 GB  (0.5 GiB)
 KV, 16 concurrent       : 8.59 GB  (8 GiB)
@@ -1208,7 +1226,9 @@ the trap (query heads)  : 34.36 GB  -- 4x too high</code></pre>
 </div>
 </div>
 <p>Sixteen concurrent 4K-token requests on a GQA-8 model hold 8.6 GB of cache; compute it from the thirty-two <em>query</em> heads and you get 34 GB and a design sized four times too large. This is the single most reliable numeric trap in serving interviews, and the fix is one audible clause: “GQA caches KV heads, so…”. What the interview then needs is the next step — how many such requests fit on one device — which is a division we make explicit:</p>
-<div id="60e04f5c" class="cell" data-execution_count="9">
+<div id="a5faaac5" class="cell" data-execution_count="9">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> kv_concurrency_per_device(hbm_bytes: <span class="bu">float</span>, weights_bytes: <span class="bu">float</span>,</span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>                              kv_bytes_per_request: <span class="bu">float</span>,</span>
@@ -1240,11 +1260,15 @@ the trap (query heads)  : 34.36 GB  -- 4x too high</code></pre>
 <span id="cb13-29"><a href="#cb13-29" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"kv_bytes_per_request must be positive"</span>)</span>
 <span id="cb13-30"><a href="#cb13-30" aria-hidden="true" tabindex="-1"></a>    free <span class="op">=</span> hbm_bytes <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> workspace_fraction) <span class="op">-</span> weights_bytes</span>
 <span id="cb13-31"><a href="#cb13-31" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">max</span>(<span class="bu">int</span>(free <span class="op">//</span> kv_bytes_per_request), <span class="dv">0</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 </div>
-<div id="db8de418" class="cell" data-execution_count="10">
+<div id="fd2f02a3" class="cell" data-execution_count="10">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>per_device <span class="op">=</span> kv_concurrency_per_device(hbm_bytes<span class="op">=</span><span class="fl">80e9</span>, weights_bytes<span class="op">=</span><span class="fl">16e9</span>,</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>                                       kv_bytes_per_request<span class="op">=</span>per_request)</span>
 <span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"80 GB device, 16 GB fp16 weights, 10% workspace: </span><span class="sc">{</span>per_device<span class="sc">}</span><span class="ss"> concurrent requests"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>80 GB device, 16 GB fp16 weights, 10% workspace: 104 concurrent requests</code></pre>
 </div>
@@ -1254,7 +1278,9 @@ the trap (query heads)  : 34.36 GB  -- 4x too high</code></pre>
 L \;=\; \lambda\,W,
 \tag{33.3}</span></span></p>
 <p>where <span class="math inline">\lambda</span> is arrival rate in requests per second, <span class="math inline">W</span> is the mean seconds one request stays resident, and <span class="math inline">L</span> is the mean number of requests in flight. It assumes only a stable system — no distributional fine print — which is what makes it safe to use aloud under pressure.</p>
-<div id="421a55bb" class="cell" data-execution_count="11">
+<div id="96808659" class="cell" data-execution_count="11">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb16"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> math</span>
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -1307,13 +1333,17 @@ L \;=\; \lambda\,W,
 <span id="cb16-50"><a href="#cb16-50" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"per_device_concurrency must be positive"</span>)</span>
 <span id="cb16-51"><a href="#cb16-51" aria-hidden="true" tabindex="-1"></a>    in_flight <span class="op">=</span> concurrent_requests(qps, residence_seconds) <span class="op">*</span> (<span class="dv">1</span> <span class="op">+</span> headroom)</span>
 <span id="cb16-52"><a href="#cb16-52" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">max</span>(math.ceil(in_flight <span class="op">/</span> per_device_concurrency), <span class="dv">1</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 </div>
-<div id="0169ed70" class="cell" data-execution_count="12">
+<div id="f836dc37" class="cell" data-execution_count="12">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>in_flight <span class="op">=</span> concurrent_requests(qps<span class="op">=</span><span class="dv">50</span>, residence_seconds<span class="op">=</span><span class="fl">5.6</span>)</span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"50 QPS x 5.6 s residence          = </span><span class="sc">{</span>in_flight<span class="sc">:.0f}</span><span class="ss"> requests in flight"</span>)</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"devices at </span><span class="sc">{</span>per_device<span class="sc">}</span><span class="ss">/device, 30% headroom: "</span></span>
 <span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>devices_for_load(<span class="dv">50</span>, <span class="fl">5.6</span>, per_device)<span class="sc">}</span><span class="ss">"</span>)</span>
 <span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"same, if a 3x burst must be served : </span><span class="sc">{</span>devices_for_load(<span class="dv">150</span>, <span class="fl">5.6</span>, per_device)<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>50 QPS x 5.6 s residence          = 280 requests in flight
 devices at 104/device, 30% headroom: 4
@@ -1325,7 +1355,9 @@ same, if a 3x burst must be served : 11</code></pre>
 M_{\text{index}} \;=\; n\,d\,b\,i\,r,
 \tag{33.4}</span></span></p>
 <p>with <span class="math inline">n</span> vectors of dimension <span class="math inline">d</span> at <span class="math inline">b</span> bytes per element, an index-structure overhead multiplier <span class="math inline">i</span>, and <span class="math inline">r</span> replicas. Appendix B’s sizing worksheet carries the same formula in fillable form; here it runs.</p>
-<div id="0b6f4c24" class="cell" data-execution_count="13">
+<div id="1164b898" class="cell" data-execution_count="13">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> index_bytes(vectors: <span class="bu">int</span>, dim: <span class="bu">int</span>, bytes_per_dim: <span class="bu">float</span>,</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>                overhead: <span class="bu">float</span> <span class="op">=</span> <span class="fl">1.5</span>, replicas: <span class="bu">int</span> <span class="op">=</span> <span class="dv">1</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
@@ -1354,13 +1386,17 @@ M_{\text{index}} \;=\; n\,d\,b\,i\,r,
 <span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="bu">min</span>(vectors, dim, replicas) <span class="op">&lt;</span> <span class="dv">1</span> <span class="kw">or</span> bytes_per_dim <span class="op">&lt;=</span> <span class="dv">0</span> <span class="kw">or</span> overhead <span class="op">&lt;</span> <span class="dv">1</span>:</span>
 <span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="st">"all sizing factors must be positive (overhead &gt;= 1)"</span>)</span>
 <span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> vectors <span class="op">*</span> dim <span class="op">*</span> bytes_per_dim <span class="op">*</span> overhead <span class="op">*</span> replicas</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 </div>
-<div id="77069c67" class="cell" data-execution_count="14">
+<div id="3f521cc8" class="cell" data-execution_count="14">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb20"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>chunks <span class="op">=</span> <span class="dv">30_000_000</span>                      <span class="co"># 10M documents x ~3 chunks each</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> label, width <span class="kw">in</span> ((<span class="st">"fp32"</span>, <span class="dv">4</span>), (<span class="st">"int8"</span>, <span class="dv">1</span>)):</span>
 <span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    total <span class="op">=</span> index_bytes(chunks, dim<span class="op">=</span><span class="dv">1024</span>, bytes_per_dim<span class="op">=</span>width, overhead<span class="op">=</span><span class="fl">1.5</span>, replicas<span class="op">=</span><span class="dv">2</span>)</span>
 <span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>label<span class="sc">}</span><span class="ss">: </span><span class="sc">{</span>total <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:6.1f}</span><span class="ss"> GB across 2 replicas "</span></span>
 <span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>          <span class="ss">f"(</span><span class="sc">{</span>total <span class="op">/</span> <span class="dv">2</span> <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.1f}</span><span class="ss"> GB per copy)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>fp32:  368.6 GB across 2 replicas (184.3 GB per copy)
 int8:   92.2 GB across 2 replicas (46.1 GB per copy)</code></pre>
@@ -1376,7 +1412,9 @@ int8:   92.2 GB across 2 replicas (46.1 GB per copy)</code></pre>
 N_{\text{in}}(k) \;=\; k\,c_0 \;+\; g\,\frac{k\,(k-1)}{2},
 \tag{33.5}</span></span></p>
 <p>which is quadratic in <span class="math inline">k</span>: each step looks cheap, and the sum does not. The calculator prices the loop under <a href="#eq-ch33-cost" class="quarto-xref">Equation&nbsp;<span>33.1</span></a>, with and without a prompt cache over the resent prefix.</p>
-<div id="477e948d" class="cell" data-execution_count="15">
+<div id="7ddc7c9a" class="cell" data-execution_count="15">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb22"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> loop_cost(steps: <span class="bu">int</span>, base_context_tokens: <span class="bu">int</span>, growth_tokens_per_step: <span class="bu">int</span>,</span>
 <span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>              output_tokens_per_step: <span class="bu">int</span>, price: TokenPrice,</span>
@@ -1449,9 +1487,12 @@ N_{\text{in}}(k) \;=\; k\,c_0 \;+\; g\,\frac{k\,(k-1)}{2},
 <span id="cb22-70"><a href="#cb22-70" aria-hidden="true" tabindex="-1"></a>            <span class="cf">break</span></span>
 <span id="cb22-71"><a href="#cb22-71" aria-hidden="true" tabindex="-1"></a>        affordable <span class="op">=</span> k</span>
 <span id="cb22-72"><a href="#cb22-72" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> affordable</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 </div>
 <p>A representative acting-agent shape: 2,000 tokens of system prompt and tool schemas, 800 tokens added per step, 300 generated per step.</p>
-<div id="fff1f528" class="cell" data-execution_count="16">
+<div id="5f259740" class="cell" data-execution_count="16">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb23"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> k <span class="kw">in</span> (<span class="dv">5</span>, <span class="dv">10</span>, <span class="dv">20</span>):</span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>    cold <span class="op">=</span> loop_cost(k, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price)</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    hot <span class="op">=</span> loop_cost(k, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price, cached_resend<span class="op">=</span><span class="va">True</span>)</span>
@@ -1460,6 +1501,7 @@ N_{\text{in}}(k) \;=\; k\,c_0 \;+\; g\,\frac{k\,(k-1)}{2},
 <span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="ch">\n</span><span class="ss">steps a $</span><span class="sc">{</span>budget<span class="sc">:.2f}</span><span class="ss"> budget buys: "</span></span>
 <span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>max_affordable_steps(budget, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price)<span class="sc">}</span><span class="ss"> cold, "</span></span>
 <span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>max_affordable_steps(budget, <span class="dv">2_000</span>, <span class="dv">800</span>, <span class="dv">300</span>, price, cached_resend<span class="op">=</span><span class="va">True</span>)<span class="sc">}</span><span class="ss"> hot"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code> 5 steps: $0.076 cold cache   $0.042 hot cache
 10 steps: $0.213 cold cache   $0.087 hot cache
@@ -1505,7 +1547,9 @@ W_{\text{ctx}} \;=\; n_{\text{sys}} + n_{\text{hist}} + n_{\text{ret}} + n_{\tex
 \qquad n_{\text{free}} \ge 0,
 \tag{33.6}</span></span></p>
 <p>where <span class="math inline">W_{\text{ctx}}</span> is the window and the components are the token allocations just named. The reserve matters because generation that runs out of window is truncated output, a user-visible failure; the free term matters because a plan that lands at exactly zero has no room for the next tool result.</p>
-<div id="8fb024f2" class="cell" data-execution_count="18">
+<div id="dad24f6c" class="cell" data-execution_count="18">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb26"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># @save</span></span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> context_budget(window_tokens: <span class="bu">int</span>, <span class="op">*</span>, system: <span class="bu">int</span>, history: <span class="bu">int</span>,</span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>                   retrieval: <span class="bu">int</span>, output_reserve: <span class="bu">int</span>) <span class="op">-&gt;</span> <span class="bu">dict</span>[<span class="bu">str</span>, <span class="bu">int</span>]:</span>
@@ -1541,8 +1585,11 @@ W_{\text{ctx}} \;=\; n_{\text{sys}} + n_{\text{hist}} + n_{\text{ret}} + n_{\tex
 <span id="cb26-33"><a href="#cb26-33" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> used <span class="op">&gt;</span> window_tokens:</span>
 <span id="cb26-34"><a href="#cb26-34" aria-hidden="true" tabindex="-1"></a>        <span class="cf">raise</span> <span class="pp">ValueError</span>(<span class="ss">f"overcommitted by </span><span class="sc">{</span>used <span class="op">-</span> window_tokens<span class="sc">:,}</span><span class="ss"> tokens"</span>)</span>
 <span id="cb26-35"><a href="#cb26-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {<span class="op">**</span>parts, <span class="st">"free"</span>: window_tokens <span class="op">-</span> used}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 </div>
-<div id="5901982c" class="cell" data-execution_count="19">
+<div id="55e0a911" class="cell" data-execution_count="19">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>plan <span class="op">=</span> context_budget(<span class="dv">128_000</span>, system<span class="op">=</span><span class="dv">3_000</span>, history<span class="op">=</span><span class="dv">45_000</span>,</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>                      retrieval<span class="op">=</span><span class="dv">12_000</span>, output_reserve<span class="op">=</span><span class="dv">4_000</span>)</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"128k plan:"</span>, plan)</span>
@@ -1551,6 +1598,7 @@ W_{\text{ctx}} \;=\; n_{\text{sys}} + n_{\text{hist}} + n_{\text{ret}} + n_{\tex
 <span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>                   retrieval<span class="op">=</span><span class="dv">40_000</span>, output_reserve<span class="op">=</span><span class="dv">2_000</span>)</span>
 <span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a><span class="cf">except</span> <span class="pp">ValueError</span> <span class="im">as</span> err:</span>
 <span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">"32k plan :"</span>, err)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>128k plan: {'system': 3000, 'history': 45000, 'retrieval': 12000, 'output_reserve': 4000, 'free': 64000}
 32k plan : overcommitted by 31,000 tokens</code></pre>
@@ -1611,7 +1659,9 @@ Table&nbsp;33.2: Signals per level: the same topics, heard differently.
 <p>We close by running the whole procedure once, compressed, on the running prompt — <em>question answering over ten million internal documents; cited, permissioned, instant-feeling, pennies</em> — as a preview of the shape every following chapter works in full. Chapter 34 runs this same prompt at interview depth; here each move gets a paragraph, so the choreography is visible end to end.</p>
 <p><strong>Minutes 0–5, scope.</strong> Two fork questions: documents change <em>nightly</em> (a rebuild is legal), and the assistant is <em>read-only</em> (no effect machinery). Requirements restated with numbers: ten million documents, peak 50 QPS, p99 TTFT under 900 ms, completion under 6 s at a 250-token cap, roughly two cents a query, per-user ACLs enforced strictly, every claim cited. Out of scope, said aloud: cross-tenant search, write-back, freshness under a day.</p>
 <p><strong>Minutes 5–10, back-of-envelope.</strong> The anchor numbers, straight from the toolkit — this cell is the interview’s whiteboard arithmetic, executed:</p>
-<div id="33172de9" class="cell" data-execution_count="20">
+<div id="e795772b" class="cell" data-execution_count="20">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb29"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>anchors <span class="op">=</span> [</span>
 <span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    (<span class="st">"index: 30M chunks, int8, x1.5, x2 replicas"</span>,</span>
 <span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>     <span class="ss">f"</span><span class="sc">{</span>index_bytes(<span class="dv">30_000_000</span>, <span class="dv">1024</span>, <span class="dv">1</span>, <span class="fl">1.5</span>, <span class="dv">2</span>) <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:,.0f}</span><span class="ss"> GB"</span>),</span>
@@ -1626,6 +1676,7 @@ Table&nbsp;33.2: Signals per level: the same topics, heard differently.
 <span id="cb29-12"><a href="#cb29-12" aria-hidden="true" tabindex="-1"></a>]</span>
 <span id="cb29-13"><a href="#cb29-13" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, value <span class="kw">in</span> anchors:</span>
 <span id="cb29-14"><a href="#cb29-14" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"</span><span class="sc">{</span>name<span class="sc">:44}</span><span class="ss"> </span><span class="sc">{</span>value<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>index: 30M chunks, int8, x1.5, x2 replicas   92 GB
 TTFT budget (embed+ANN+rerank+prefill)       620 ms

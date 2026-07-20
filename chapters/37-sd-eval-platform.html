@@ -82,9 +82,9 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -879,7 +879,9 @@ Table&nbsp;37.1: The eval platform restated with numbers, each row naming the de
 <section id="sec-ch37-numbers" class="level2" data-number="37.2">
 <h2 data-number="37.2" class="anchored" data-anchor-id="sec-ch37-numbers"><span class="header-section-number">37.2</span> The numbers first</h2>
 <p>Numbers before boxes. The measurement family has one classic numeric trap, and it is the analogue of the KV-heads trap in serving: <strong>gate on Cohen’s <span class="math inline">{\kappa}</span>, not raw agreement.</strong> A judge that agrees with humans 90 percent of the time sounds calibrated until you notice the set is 90 percent pass — a judge that says “pass” to everything scores the same and has measured nothing. We import the calculator that says so, reusing Chapter 22’s <code>cohen_kappa</code> (the owner of judge calibration, <a href="22-evaluation.html#sec-ch22-judge" class="quarto-xref"><span>Section 22.3</span></a>) rather than rebuilding it, alongside the back-of-envelope toolkit from Chapter 33.</p>
-<div id="9190ee2d" class="cell" data-execution_count="1">
+<div id="0be9dd89" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -903,6 +905,7 @@ Table&nbsp;37.1: The eval platform restated with numbers, each row naming the de
 <span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"always-pass judge on an 85%-pass set:"</span>)</span>
 <span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"  raw agreement = </span><span class="sc">{</span>raw<span class="sc">:.2f}</span><span class="ss">   Cohen's kappa = </span><span class="sc">{</span>ev<span class="sc">.</span>cohen_kappa(human, lazy)<span class="sc">:+.2f}</span><span class="ss">"</span>)</span>
 <span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"  a trustworthy judge must clear kappa &gt;= 0.60"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>always-pass judge on an 85%-pass set:
   raw agreement = 0.85   Cohen's kappa = +0.00
@@ -910,7 +913,9 @@ Table&nbsp;37.1: The eval platform restated with numbers, each row naming the de
 </div>
 </div>
 <p>Eighty-five percent agreement, kappa exactly zero: the raw number was lying and kappa says so in one figure. That is the sentence to say aloud in move 2 — the same way a serving candidate says “GQA caches KV heads, not query heads.” Next, the money. A judge grade is one cheap model call; we price the tiers with the toolkit’s <code>cost_per_query</code>.</p>
-<div id="1b3128d9" class="cell" data-execution_count="2">
+<div id="3d0cc263" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>judge <span class="op">=</span> sd.TokenPrice(input_per_million<span class="op">=</span><span class="fl">3.00</span>, output_per_million<span class="op">=</span><span class="fl">15.00</span>)</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>per_grade <span class="op">=</span> sd.cost_per_query(<span class="dv">1_500</span>, <span class="dv">120</span>, judge)     <span class="co"># grade one (prompt, answer) pair</span></span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>ci_items, nightly_items, online_per_day, merges <span class="op">=</span> <span class="dv">300</span>, <span class="dv">5_000</span>, <span class="dv">20_000</span>, <span class="dv">20</span></span>
@@ -927,6 +932,7 @@ Table&nbsp;37.1: The eval platform restated with numbers, each row naming the de
 <span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"online sampling / day      : $</span><span class="sc">{</span>online<span class="sc">:6.2f}</span><span class="ss">"</span>)</span>
 <span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"all compute / day          : $</span><span class="sc">{</span>compute_day<span class="sc">:6.2f}</span><span class="ss">"</span>)</span>
 <span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"human calibration / day    : $</span><span class="sc">{</span>human_day<span class="sc">:6.2f}</span><span class="ss">   (</span><span class="sc">{</span>human_day <span class="op">/</span> compute_day<span class="sc">:.1f}</span><span class="ss">x all compute)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>one judge grade            : $0.0063
 per-merge CI run (300)     : $  1.89

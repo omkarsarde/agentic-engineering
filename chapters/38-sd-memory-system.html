@@ -82,9 +82,9 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -834,7 +834,9 @@ Table&nbsp;38.1: The memory contract restated with numbers, and the design conse
 <section id="sec-ch38-numbers" class="level2" data-number="38.2">
 <h2 data-number="38.2" class="anchored" data-anchor-id="sec-ch38-numbers"><span class="header-section-number">38.2</span> The numbers first</h2>
 <p>Numbers before boxes. Four anchors settle this design, and each imports the back-of-envelope toolkit from Chapter 33 rather than re-deriving it. We start by loading it and pricing the read path.</p>
-<div id="2ac05edc" class="cell" data-execution_count="1">
+<div id="1eaf002f" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -857,13 +859,16 @@ Table&nbsp;38.1: The memory contract restated with numbers, and the design conse
 <span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>ttft_budget <span class="op">=</span> <span class="fl">900.0</span></span>
 <span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"memory read path: </span><span class="sc">{</span>read_ms<span class="sc">:.0f}</span><span class="ss"> ms  (</span><span class="sc">{</span>read_ms <span class="op">/</span> ttft_budget<span class="sc">:.1%}</span><span class="ss"> of a </span><span class="sc">{</span>ttft_budget<span class="sc">:.0f}</span><span class="ss"> ms TTFT budget)"</span>)</span>
 <span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"async write path adds 0 ms to the turn (off the hot path)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>memory read path: 28 ms  (3.1% of a 900 ms TTFT budget)
 async write path adds 0 ms to the turn (off the hot path)</code></pre>
 </div>
 </div>
 <p>Twenty-eight milliseconds is three percent of a 900 ms TTFT budget — affordable, but it is <em>serial before generation</em> and competes with retrieval for the same budget, so it is not free. The write path adds nothing to the turn because it is asynchronous. Now the number that justifies the whole system: memory replaces replaying a growing history with injecting a compact, ranked, scoped digest. We price both against <a href="33-sd-interview-framework.html#eq-ch33-cost" class="quarto-xref">Equation&nbsp;<span>33.1</span></a>.</p>
-<div id="1cf7db42" class="cell" data-execution_count="2">
+<div id="365dd456" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>price <span class="op">=</span> boe.TokenPrice(input_per_million<span class="op">=</span><span class="fl">3.00</span>, output_per_million<span class="op">=</span><span class="fl">15.00</span>,</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>                       cached_input_per_million<span class="op">=</span><span class="fl">0.30</span>)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>replay_in, replay_cached <span class="op">=</span> <span class="dv">10_000</span>, <span class="dv">30_000</span>     <span class="co"># continuity by resending ~40k of prior transcript</span></span>
@@ -876,6 +881,7 @@ async write path adds 0 ms to the turn (off the hot path)</code></pre>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"per turn, inject top-k memory: $</span><span class="sc">{</span>memory<span class="sc">:.4f}</span><span class="ss">   (</span><span class="sc">{</span><span class="dv">1</span> <span class="op">-</span> memory <span class="op">/</span> replay<span class="sc">:.0%}</span><span class="ss"> cheaper)"</span>)</span>
 <span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"input tokens cut </span><span class="sc">{</span>input_saving<span class="sc">:.0%}</span><span class="ss">; fixed output cost $</span><span class="sc">{</span>out <span class="op">*</span> <span class="dv">15</span> <span class="op">/</span> <span class="fl">1e6</span><span class="sc">:.4f}</span><span class="ss">/turn is a floor caching cannot touch"</span>)</span>
 <span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"at 5M users x 8 turns/day: $</span><span class="sc">{</span>(replay <span class="op">-</span> memory) <span class="op">*</span> <span class="fl">5e6</span> <span class="op">*</span> <span class="dv">8</span><span class="sc">:,.0f}</span><span class="ss">/day saved"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>per turn, replay 40k history : $0.0428
 per turn, inject top-k memory: $0.0063   (85% cheaper)
@@ -884,7 +890,9 @@ at 5M users x 8 turns/day: $1,458,000/day saved</code></pre>
 </div>
 </div>
 <p>The commonly quoted “over ninety percent token savings” is about <em>input</em> tokens — here 94% — and the honest interview move is to separate that from total cost: the fixed output charge is a floor caching cannot move, so per-turn dollars fall 85%, not 94%. At fleet scale the delta is over a million dollars a day, which is what makes memory an economics decision, not a feature. The last anchor is where the family’s numeric trap hides: sizing and latency of the read.</p>
-<div id="02f2451e" class="cell" data-execution_count="3">
+<div id="3e90899d" class="cell" data-execution_count="3">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>users, per_user <span class="op">=</span> <span class="dv">5_000_000</span>, <span class="dv">200</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>global_vecs <span class="op">=</span> users <span class="op">*</span> per_user</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>global_gb <span class="op">=</span> boe.index_bytes(global_vecs, dim<span class="op">=</span><span class="dv">1024</span>, bytes_per_dim<span class="op">=</span><span class="dv">1</span>, overhead<span class="op">=</span><span class="fl">1.5</span>) <span class="op">/</span> <span class="fl">1e9</span></span>
@@ -892,6 +900,7 @@ at 5M users x 8 turns/day: $1,458,000/day saved</code></pre>
 <span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"global memory index: </span><span class="sc">{</span>global_vecs <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.1f}</span><span class="ss">B vectors, </span><span class="sc">{</span>global_gb<span class="sc">:,.0f}</span><span class="ss"> GB int8 -- never scanned per read"</span>)</span>
 <span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"one user's shard   : </span><span class="sc">{</span>per_user<span class="sc">}</span><span class="ss"> records, </span><span class="sc">{</span>shard_mb<span class="sc">:.2f}</span><span class="ss"> MB -- the only thing a read touches"</span>)</span>
 <span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"scope-first is why the read is tens of ms: the ANN runs over ~200 vectors, not a billion"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>global memory index: 1.0B vectors, 1,536 GB int8 -- never scanned per read
 one user's shard   : 200 records, 0.31 MB -- the only thing a read touches

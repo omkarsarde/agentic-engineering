@@ -82,9 +82,9 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -847,7 +847,9 @@ Table&nbsp;35.1: The contract restated with numbers. The two latency rows are th
 <section id="sec-ch35-numbers" class="level2" data-number="35.2">
 <h2 data-number="35.2" class="anchored" data-anchor-id="sec-ch35-numbers"><span class="header-section-number">35.2</span> The numbers first</h2>
 <p>Numbers before boxes. We recall Chapter 33’s toolkit — the executed calculators for loop cost, completion latency, and in-flight concurrency — and aim them at this prompt. The illustrative frontier-class prices ($3 and $15 per million input and output tokens, cached input at a tenth) are the framework’s teaching constants.</p>
-<div id="14749d4f" class="cell" data-execution_count="1">
+<div id="215b638b" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -880,6 +882,7 @@ Table&nbsp;35.1: The contract restated with numbers. The two latency rows are th
 <span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"worst case at cap, cache defeated      : $</span><span class="sc">{</span>worst_cold<span class="sc">:.3f}</span><span class="ss">  &lt;- denial-of-wallet bound"</span>)</span>
 <span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"steps a $0.30 budget buys (hot cache)  : "</span></span>
 <span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"</span><span class="sc">{</span>boe<span class="sc">.</span>max_affordable_steps(<span class="fl">0.30</span>, base, growth, out, price, cached_resend<span class="op">=</span><span class="va">True</span>)<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>typical 6-step resolution (hot cache) : $0.037
 worst case at a 12-step cap (hot)      : $0.077
@@ -889,7 +892,9 @@ steps a $0.30 budget buys (hot cache)  : 35</code></pre>
 </div>
 <p>Three anchors and the family’s first lesson. A typical resolution costs under four cents; the interesting number is the last one: at the twelve-step cap, an adversary who <em>defeats the prompt cache</em> (novel tokens every turn, so nothing bills at the cached rate) can drive one session to about twenty-two cents. That is the denial-of-wallet bound — the most a single hijacked session can spend — and it exists only because the step cap exists. A $0.30 budget would buy far more than twelve hot-cache steps, which is the point: the cap here is set by <em>safety and latency</em>, not by the budget, and it bounds cost as a side effect. Loop cost is quadratic in steps without a cache (<a href="33-sd-interview-framework.html#sec-ch33-loops" class="quarto-xref"><span>Section 33.5</span></a>); the hard cap with escalate-on-cap is the control.</p>
 <p>Latency next, and this is where the SLO split lives. A conversational turn is a tool round-trip (one account lookup) plus a short streamed reply — support answers are terse, so the output cap is small.</p>
-<div id="a861c126" class="cell" data-execution_count="2">
+<div id="d8d59391" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>tool_round_trip_ms <span class="op">=</span> <span class="fl">300.0</span>        <span class="co"># one account lookup before the model replies</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>reply_ms <span class="op">=</span> boe.completion_ms(ttft_ms<span class="op">=</span><span class="fl">450.0</span>, output_tokens<span class="op">=</span><span class="dv">80</span>, tpot_ms<span class="op">=</span><span class="fl">15.0</span>)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>turn_ms <span class="op">=</span> tool_round_trip_ms <span class="op">+</span> reply_ms</span>
@@ -897,6 +902,7 @@ steps a $0.30 budget buys (hot cache)  : 35</code></pre>
 <span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"first token at ~</span><span class="sc">{</span>tool_round_trip_ms <span class="op">+</span> <span class="fl">450.0</span><span class="sc">:.0f}</span><span class="ss"> ms  (what the user feels)"</span>)</span>
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"conversational reply completes: </span><span class="sc">{</span>turn_ms<span class="sc">:,.0f}</span><span class="ss"> ms   (target &lt; 2000)"</span>)</span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"chats in flight at 20 turns/s : </span><span class="sc">{</span>in_flight<span class="sc">:.0f}</span><span class="ss">  -- not a throughput-bound design"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>first token at ~750 ms  (what the user feels)
 conversational reply completes: 1,935 ms   (target &lt; 2000)
@@ -905,7 +911,9 @@ chats in flight at 20 turns/s : 39  -- not a throughput-bound design</code></pre
 </div>
 <p>The reply completes in about two seconds and the first token streams under a second, so the conversational turn keeps its SLO. The gated path <em>cannot</em>: a refund above the auto-approve threshold waits on a human, and no amount of tuning makes a human synchronous. That is why <a href="#tbl-ch35-req" class="quarto-xref">Table&nbsp;<span>35.1</span></a> states two latency rows — a conversational-turn SLO and an effect-completion SLO — and why the gated action returns “we’re processing your refund” inside the turn while the effect resolves asynchronously. Thirty-nine chats in flight confirms the design is not infra-bound; the serving fleet is a rounding error next to the authority machinery.</p>
 <p>The last anchor is the family’s numeric trap, and it is a trap about <em>metrics</em>, not tokens. The temptation is to treat “unauthorized-action rate” as an SLO you buy down with a better model.</p>
-<div id="0e4a92bd" class="cell" data-execution_count="3">
+<div id="7ae281b3" class="cell" data-execution_count="3">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>actions_per_day <span class="op">=</span> <span class="dv">50_000</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">"if we trust model quality alone, unauthorized effects per day "</span></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>      <span class="st">"(zero-tolerance target = 0):"</span>)</span>
@@ -916,6 +924,7 @@ chats in flight at 20 turns/s : 39  -- not a throughput-bound design</code></pre
 <span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>reviewer_hours <span class="op">=</span> reviews <span class="op">*</span> <span class="dv">90</span> <span class="op">/</span> <span class="dv">3600</span></span>
 <span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"</span><span class="ch">\n</span><span class="ss">escalation load at </span><span class="sc">{</span>gated_fraction<span class="sc">:.0%}</span><span class="ss"> gated: </span><span class="sc">{</span>reviews<span class="sc">:,.0f}</span><span class="ss"> reviews/day "</span></span>
 <span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f"= </span><span class="sc">{</span>reviewer_hours<span class="sc">:.0f}</span><span class="ss"> reviewer-hours/day (~</span><span class="sc">{</span>reviewer_hours <span class="op">/</span> <span class="dv">24</span><span class="sc">:.0f}</span><span class="ss"> concurrent)"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>if we trust model quality alone, unauthorized effects per day (zero-tolerance target = 0):
   model at 2 nines:    500 / day

@@ -101,9 +101,9 @@ div.csl-indent {
 <link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-b9ce1e79266fe95fb70b9acb8b1f4a3a.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-e94989928d39e61d43d880557c51d124.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -897,7 +897,9 @@ Table&nbsp;36.1: Requirements for the serving platform. Out of scope, stated alo
 <section id="sec-ch36-numbers" class="level2" data-number="36.2">
 <h2 data-number="36.2" class="anchored" data-anchor-id="sec-ch36-numbers"><span class="header-section-number">36.2</span> The numbers first</h2>
 <p>Numbers before boxes. The model-infra anchors are KV memory per request, concurrency per device, the fleet a load implies, and the cost per token — and the first of these carries the trap. We recall Chapter 3’s KV equation (<a href="03-attention-position-long-context.html#eq-ch03-kvbytes" class="quarto-xref">Equation&nbsp;<span>3.1</span></a>) in one sentence — a request’s cache is layers times <em>KV heads</em> (not query heads) times head dimension times retained tokens times bytes, doubled for keys and values — and import its calculator rather than rebuild it.</p>
-<div id="b00de9dc" class="cell" data-execution_count="1">
+<div id="38e83078" class="cell" data-execution_count="1">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
@@ -923,6 +925,7 @@ Table&nbsp;36.1: Requirements for the serving platform. Out of scope, stated alo
 <span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"KV, one 4K interactive request : </span><span class="sc">{</span>per_req <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB"</span>)</span>
 <span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"KV, 16 concurrent              : </span><span class="sc">{</span>concurrent16 <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.2f}</span><span class="ss"> GB"</span>)</span>
 <span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"the trap (32 query heads)      : </span><span class="sc">{</span>trap <span class="op">/</span> <span class="fl">1e9</span><span class="sc">:.1f}</span><span class="ss"> GB  -- 4x too high"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>KV, one 4K interactive request : 0.54 GB
 KV, 16 concurrent              : 8.59 GB
@@ -930,7 +933,9 @@ the trap (32 query heads)      : 34.4 GB  -- 4x too high</code></pre>
 </div>
 </div>
 <p>Sixteen concurrent 4K requests hold 8.6 GB of cache; compute it from the thirty-two <em>query</em> heads and you get 34 GB and a fleet sized four times too large. The audible fix is one clause — “GQA caches eight KV heads, not thirty-two query heads” (<a href="03-attention-position-long-context.html#sec-ch03-gqa" class="quarto-xref"><span>Section 3.2</span></a>) — and it is the single most reliable way to fail this round if you skip it. With the per-request number correct, capacity is a division: how many caches fit on a device, how long a request stays resident, and therefore how many devices a QPS number needs.</p>
-<div id="82e5380f" class="cell" data-execution_count="2">
+<div id="5a182469" class="cell" data-execution_count="2">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>per_device_mem <span class="op">=</span> sd.kv_concurrency_per_device(hbm_bytes<span class="op">=</span><span class="fl">80e9</span>, weights_bytes<span class="op">=</span><span class="fl">16e9</span>,</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>                                              kv_bytes_per_request<span class="op">=</span>per_req)</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>batch_cap <span class="op">=</span> <span class="dv">32</span>          <span class="co"># interactive running-batch cap that holds TTFT (see the batching dive)</span></span>
@@ -943,6 +948,7 @@ the trap (32 query heads)      : 34.4 GB  -- 4x too high</code></pre>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"devices, memory-bound    : </span><span class="sc">{</span>sd<span class="sc">.</span>devices_for_load(<span class="dv">50</span>, residence_s, per_device_mem)<span class="sc">}</span><span class="ss">"</span>)</span>
 <span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"devices, batch-cap-bound : </span><span class="sc">{</span>sd<span class="sc">.</span>devices_for_load(<span class="dv">50</span>, residence_s, batch_cap)<span class="sc">}</span><span class="ss">"</span>)</span>
 <span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"same under a 3x burst    : </span><span class="sc">{</span>sd<span class="sc">.</span>devices_for_load(<span class="dv">150</span>, residence_s, batch_cap)<span class="sc">}</span><span class="ss">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>memory allows            : 104 requests/device (upper bound)
 interactive residence    : 5.8 s  (350 ms TTFT + 250 tok x 22 ms)
@@ -953,7 +959,9 @@ same under a 3x burst    : 36</code></pre>
 </div>
 </div>
 <p>Two device numbers, and the gap between them is the design. Memory alone would fit about a hundred requests per card, which says four devices carry 50 QPS. But interactive TTFT will not survive a batch of a hundred — every request in the batch waits for the slowest — so we cap the running batch near 32 to hold the latency SLO, and <em>that</em> cap, not memory, binds: twelve devices at peak, thirty-six under a threefold burst. Which bound is active is the answer; the senior sentence is “memory says four, the TTFT batch cap says twelve, so I provision for twelve and the burst is a buy-or-shed decision, not a given.” The last anchor turns throughput into money, because self-hosting only pays if the arithmetic clears the vendor’s price.</p>
-<div id="175e7125" class="cell" data-execution_count="3">
+<div id="5ba00a68" class="cell" data-execution_count="3">
+<details class="code-fold">
+<summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cost_per_million(gpu_hour_price: <span class="bu">float</span>, throughput_tok_s: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    <span class="co">"""Dollars per million tokens = GPU-hour price over tokens served that hour."""</span></span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> gpu_hour_price <span class="op">/</span> (throughput_tok_s <span class="op">*</span> <span class="dv">3600</span>) <span class="op">*</span> <span class="fl">1e6</span></span>
@@ -964,6 +972,7 @@ same under a 3x burst    : 36</code></pre>
 <span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> b, thru <span class="kw">in</span> [(<span class="dv">1</span>, <span class="dv">45</span>), (<span class="dv">4</span>, <span class="dv">165</span>), (<span class="dv">8</span>, <span class="dv">300</span>), (<span class="dv">32</span>, <span class="dv">900</span>), (<span class="dv">64</span>, <span class="dv">1300</span>)]:</span>
 <span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="ss">f"batch </span><span class="sc">{</span>b<span class="sc">:2d}</span><span class="ss">: </span><span class="sc">{</span>thru<span class="sc">:4d}</span><span class="ss"> tok/s  -&gt;  $</span><span class="sc">{</span>cost_per_million(gpu_hour, thru)<span class="sc">:5.2f}</span><span class="ss"> / 1M tokens"</span>)</span>
 <span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f"vendor reference          : $</span><span class="sc">{</span>vendor<span class="sc">:.2f}</span><span class="ss"> / 1M output tokens"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
 <div class="cell-output cell-output-stdout">
 <pre><code>batch  1:   45 tok/s  -&gt;  $15.43 / 1M tokens
 batch  4:  165 tok/s  -&gt;  $ 4.21 / 1M tokens
