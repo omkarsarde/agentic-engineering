@@ -1,31 +1,10 @@
 ---
-description: "A just-in-time bridge from neural-network knowledge to the classical ideas used throughout the agent-engineering spine."
+description: "A just-in-time bridge from neural-network knowledge to the classical ideas the agent spine consumes: probability and decisions, causal inference, optimization, search, RL vocabulary, control, distributed systems, and threat modeling — each with one calculation you can run."
 ---
 
 # The Bridge: Math, Decisions, Planning, RL, Control, and Systems {#app-a}
 
-This appendix is a bridge, not a compressed degree program. Each section gives you the vocabulary, one calculation, and the engineering question needed by later chapters. Read it when a chapter points here. Stop when the consuming chapter becomes readable again.
-
-## Contents
-
-- [The bridge contract and consumption map](#app-a-map)
-- [Probability and information theory](#app-a-probability)
-- [Statistical decision theory](#app-a-decisions)
-- [Causal inference for evaluation](#app-a-causal)
-- [Constrained and multi-objective optimization](#app-a-optimization)
-- [Classical search, planning, and symbolic reasoning](#app-a-planning)
-- [Sequential decisions and reinforcement-learning vocabulary](#app-a-sequential)
-- [A control-theory lens on agent loops](#app-a-control)
-- [Distributed systems: partial failure, idempotency, and backpressure](#app-a-distributed)
-- [Threat modeling: assets, boundaries, and attack trees](#app-a-threats)
-- [Build: break the worker twice](#app-a-build)
-- [What endures, what changes](#app-a-endures)
-- [Exercises](#app-a-exercises)
-- [Notes and sources](#app-a-sources)
-
-## The bridge contract and consumption map {#app-a-map}
-
-The main book assumes neural-network fundamentals. Agent engineering also borrows ideas from probability, decision theory, causal inference, optimization, planning, reinforcement learning, control, distributed systems, and security. Re-teaching each field inside every chapter would make the spine repetitive; omitting them would turn ordinary terms into hidden prerequisites.
+This appendix is a bridge, not a compressed degree program. The spine assumes neural-network fundamentals; agent engineering also borrows from probability, decision theory, causal inference, optimization, planning, reinforcement learning, control, distributed systems, and security. Rather than re-teach each field, we carry across exactly what the chapters consume: for every topic, one worked calculation you can run, one picture, and the design-review question it lets you ask. Read a section when a chapter points here, and stop when that chapter reads again. Every number below is produced by the code on the page, not asserted.
 
 Use this map to find only the bridge you need.
 
@@ -35,287 +14,759 @@ Use this map to find only the bridge you need.
 | decision theory | Chapters 9, 16, 22, 28 | abstention, clarifying questions, asymmetric harm |
 | causal inference | Chapters 22, 27 | logged-policy evaluation, canaries, confounding |
 | constrained optimization | Chapters 1, 22, 26, 28 | safety constraints, Pareto choices, agency budgets |
-| search and symbolic planning | Chapters 8, 16, 21, 31 | A*, MCTS, verifiers, explicit plans |
+| search and symbolic planning | Chapters 8, 16, 21, 31 | A\*, MCTS, verifiers, explicit plans |
 | sequential decisions / RL | Chapters 16, 23, 28, 31 | MDP, POMDP, belief, regret, exploration |
 | control theory | Chapters 16, 17, 26, 27 | feedback, lag, instability, deadbands |
 | distributed systems | Chapters 17, 26, 27 | partial failure, idempotency, queues, retries |
 | threat modeling | Chapters 17, 24, 26 | assets, trust boundaries, attack paths |
 
-The target depth is “can perform one worked calculation and ask the right design-review question.” The canonical chapter owns deeper application. For example, this appendix defines an MDP; Chapter 23 teaches agent training. It does not derive policy gradients: Chapter 7 owns the Route A derivation, and Chapter 23 carries the Route B primer.
+The target depth is one worked calculation and the right design-review question. Where a chapter owns the deeper application, this bridge points to it: it defines an MDP, for instance, but Chapter 23 trains the agent; it prices a clarifying question, but Chapter 9 owns abstention.
 
 ## Probability and information theory {#app-a-probability}
 
-Probability represents uncertainty about events. For event $A$, $P(A)$ lies between zero and one. Conditional probability
+Probability represents uncertainty about events. For event $A$, $P(A)$ lies between zero and one, and conditional probability $P(A \mid B) = P(A \cap B)/P(B)$ asks how belief about $A$ changes after observing $B$. Bayes' rule reverses the conditional:
 
 $$
-P(A\mid B)=\frac{P(A\cap B)}{P(B)}
+P(A \mid B) = \frac{P(B \mid A)\,P(A)}{P(B)}.
 $$
 
-asks how belief about $A$ changes after observing $B$, assuming $P(B)>0$. Bayes' rule reverses a conditional:
+The single most useful consequence is that a positive test result rarely means the tested-for thing is present, because base rates dominate. Suppose two percent of requests contain abuse, and a detector has ninety percent sensitivity with a five percent false-positive rate. We compute the posterior directly rather than trusting intuition.
 
-$$
-P(A\mid B)=\frac{P(B\mid A)P(A)}{P(B)}.
-$$
+```{python}
+# @save
+from __future__ import annotations
 
-Suppose 2 percent of requests contain abuse and a detector has 90 percent sensitivity with a 5 percent false-positive rate. For detector positive $+$,
+import hashlib
+import json
+import math
+import random
+import sqlite3
+from dataclasses import dataclass
+from heapq import heappop, heappush
+from itertools import count
 
-$$
-P(\text{abuse}\mid +)
-=\frac{0.90(0.02)}{0.90(0.02)+0.05(0.98)}
-\approx0.269.
-$$
 
-A positive raises risk from 2 percent to about 27 percent, but it is not proof. Base rates matter. This same pattern appears in anomaly detection, guardrails, and alert triage.
+def posterior(prior: float, sensitivity: float, false_positive: float) -> float:
+    """Return the posterior probability of a condition given a positive test.
 
-For a discrete distribution $p$, **entropy** measures expected surprise:
+    Applies Bayes' rule to a binary detector. The point of the exercise is that
+    a rare condition stays rare even after a positive result, because the flood
+    of false positives from the large negative population swamps the true ones.
 
-$$
-H(p)=-\sum_x p(x)\log p(x).
-$$
+    Args:
+        prior: Base rate of the condition before any test.
+        sensitivity: P(test positive | condition present).
+        false_positive: P(test positive | condition absent).
 
-Entropy is highest when mass is spread evenly and lower when one outcome dominates. In language-model sampling, the model supplies a next-token distribution; temperature reshapes it, but entropy remains a distribution property, not a factuality score.
+    Returns:
+        P(condition present | test positive), between zero and one.
+    """
 
-**Cross-entropy** scores predictions $q$ under data distribution $p$:
+    hit = sensitivity * prior
+    return hit / (hit + false_positive * (1 - prior))
+```
 
-$$
-H(p,q)=-\sum_x p(x)\log q(x).
-$$
+Running it on the abuse detector:
 
-For one observed target token, this becomes negative log probability. Averaging it over training tokens produces the familiar language-model loss from Chapter 2.
+```{python}
+print(f"P(abuse | +) = {posterior(0.02, 0.90, 0.05):.3f}")
+```
 
-**Kullback–Leibler divergence** measures the extra coding cost of using $q$ when data follow $p$:
+A positive raises risk from two percent to about twenty-seven percent — real evidence, but not proof. @fig-appa-base-rate shows why: out of a thousand requests, the eighteen true positives are outnumbered by forty-nine false positives, so most alarms are false even with a good detector. The same arithmetic governs anomaly detection, guardrail classifiers, and alert triage; a chapter that quotes "ninety-five percent accuracy" without a base rate has not yet said anything about how many alarms will be real.
 
-$$
-D_{\mathrm{KL}}(p\lVert q)=\sum_x p(x)\log\frac{p(x)}{q(x)}.
-$$
+```{python}
+#| label: fig-appa-base-rate
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Why doesn't a positive abuse detector mean abuse? A thousand requests at a two-percent base rate: the eighteen true positives (the condition is genuinely present) sit beside forty-nine false positives, so only about twenty-seven percent of alarms are real. Counts are computed, rounded to whole requests."
+import matplotlib.pyplot as plt
 
-KL is nonnegative, but it is not symmetric and does not satisfy all distance axioms. $D_{\mathrm{KL}}(p\lVert q)$ heavily penalizes assigning tiny $q$ probability where $p$ has mass; reversing arguments changes the behavior. Chapter 7 uses KL as a leash between a post-trained policy and a reference policy.
+n = 1000
+abuse = round(n * 0.02)
+tp = round(abuse * 0.90)
+fp = round((n - abuse) * 0.05)
+fig, ax = plt.subplots(figsize=(6.2, 1.9))
+ax.barh(0, tp, color="#c0392b", label=f"true positive ({tp})")
+ax.barh(0, fp, left=tp, color="#e59866", label=f"false positive ({fp})")
+ax.barh(1, abuse - tp, color="#7f8c8d", label=f"missed abuse ({abuse - tp})")
+ax.set_yticks([0, 1])
+ax.set_yticklabels(["alarms", "missed"])
+ax.set_xlabel("requests (of 1000)")
+ax.legend(loc="lower right", fontsize=8)
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
 
-**Mutual information** measures how much observing one variable reduces uncertainty about another:
+Information theory measures uncertainty itself. For a discrete distribution $p$, **entropy** $H(p) = -\sum_x p(x)\log p(x)$ is expected surprise: highest when mass is spread evenly, lowest when one outcome dominates. **Cross-entropy** $H(p, q) = -\sum_x p(x)\log q(x)$ scores a prediction $q$ against data $p$, and **Kullback–Leibler divergence** $D_{\mathrm{KL}}(p \Vert q) = \sum_x p(x)\log\frac{p(x)}{q(x)}$ is the extra cost of using $q$ when the data follow $p$. KL is nonnegative but not symmetric, which is why it is a divergence and not a distance.
 
-$$
-I(X;Y)=D_{\mathrm{KL}}(p(x,y)\lVert p(x)p(y)).
-$$
+```{python}
+# @save
+def entropy(dist: list[float]) -> float:
+    """Return the Shannon entropy of a distribution, in bits.
 
-It is zero when $X$ and $Y$ are independent. In representation learning it can describe dependence; in a product decision, it does not by itself say whether collecting $Y$ is worth its cost or privacy risk. Decision theory supplies that step.
+    Args:
+        dist: Probabilities that sum to one.
 
-A probabilistic predictor is **calibrated** when events assigned probability $p$ occur about fraction $p$ over a defined population. Calibration is population- and slice-dependent. A predictor can be calibrated and inaccurate if its probabilities stay near the base rate; it can be accurate and overconfident. Chapters 9 and 22 turn this distinction into abstention and evaluation practice.
+    Returns:
+        Expected surprise in bits; larger means less predictable.
+    """
+
+    return -sum(p * math.log2(p) for p in dist if p > 0)
+
+
+def kl_divergence(p: list[float], q: list[float]) -> float:
+    """Return KL(p || q) in bits, the coding penalty for modelling p as q.
+
+    The two orderings differ because KL punishes putting little q-mass where p
+    has mass far more than the reverse; swapping the arguments is not a rounding
+    detail but a different question.
+
+    Args:
+        p: The true distribution (the expectation is taken under it).
+        q: The model distribution being charged for.
+
+    Returns:
+        A nonnegative divergence in bits, zero only when p equals q.
+    """
+
+    return sum(pi * math.log2(pi / qi) for pi, qi in zip(p, q) if pi > 0)
+```
+
+We show all three on a peaked and a uniform three-way distribution:
+
+```{python}
+peaked, uniform = [0.90, 0.05, 0.05], [1 / 3, 1 / 3, 1 / 3]
+print(f"H(peaked)  = {entropy(peaked):.3f} bits")
+print(f"H(uniform) = {entropy(uniform):.3f} bits")
+print(f"D(peaked || uniform) = {kl_divergence(peaked, uniform):.3f} bits")
+print(f"D(uniform || peaked) = {kl_divergence(uniform, peaked):.3f} bits")
+```
+
+The uniform distribution carries the full 1.585 bits a three-way choice can hold; the peaked one carries about a third of that. And the two KL values, 1.016 and 1.347, are genuinely different — the asymmetry is real, which matters in Chapter 7, where KL is a leash between a post-trained policy and its reference and the direction of the leash is a design choice. Cross-entropy is also the language-model loss: for one observed target token it reduces to the negative log probability the model assigned that token, and averaging that over training tokens is exactly the objective Chapter 2 minimizes.
 
 ## Statistical decision theory {#app-a-decisions}
 
-A probability describes belief; a decision combines belief with consequences. Let state $s$, action $a$, and loss $L(a,s)$. The Bayes action minimizes expected loss:
+A probability describes belief; a decision combines belief with consequences. Given state $s$, action $a$, and loss $L(a, s)$, the Bayes action minimizes expected loss, $a^* = \arg\min_a \mathbb{E}_{s}[L(a, s)]$. This is why one confidence threshold cannot serve every action: the loss, not the probability, decides. Chapter 1 makes the same move when it turns an uncertain answer into an abstention; here we price it.
 
-$$
-a^*=\arg\min_a\mathbb{E}_{s\sim P(s\mid x)}[L(a,s)].
-$$
+Take the support-ticket example. An urgent ticket has probability 0.2 of being urgent; escalating an ordinary ticket costs one unit of operator time, and failing to escalate an urgent one costs ten.
 
-This is why one confidence threshold cannot serve every action. A false negative in an urgent medical triage task may cost much more than a false positive escalation. In a low-stakes suggestion, interruption cost may dominate.
+```{python}
+# @save
+def best_expected_loss(p_urgent: float, false_negative: float, false_positive: float) -> float:
+    """Return the loss of the better of two actions under asymmetric costs.
 
-Consider an urgent-ticket probability of 0.2. Escalating an ordinary ticket costs 1 unit; failing to escalate an urgent ticket costs 10. Expected loss is
+    Compares *escalate* (which risks a false positive) against *do not escalate*
+    (which risks a false negative) and returns whichever expected loss is
+    smaller. Asymmetric costs, not the raw probability, choose the action.
 
-$$
-\begin{aligned}
-R(\text{escalate}) &= (1-0.2)(1)=0.8,\\
-R(\text{do not}) &= 0.2(10)=2.0.
-\end{aligned}
-$$
+    Args:
+        p_urgent: Probability the ticket is genuinely urgent.
+        false_negative: Cost of failing to escalate an urgent ticket.
+        false_positive: Cost of escalating an ordinary ticket.
 
-Escalation is rational despite the lower urgent probability because loss is asymmetric.
+    Returns:
+        The minimum expected loss across the two actions.
+    """
 
-An observation has **value of information** (VOI) when it can change the action and reduce expected loss. In utility form,
+    escalate = (1 - p_urgent) * false_positive
+    do_not = p_urgent * false_negative
+    return min(escalate, do_not)
+```
 
-$$
-\operatorname{VOI}(Y)
-=\mathbb{E}_Y\left[\max_a\mathbb{E}[U(a,S)\mid Y]\right]
--\max_a\mathbb{E}[U(a,S)].
-$$
+```{python}
+print(f"R(escalate) = {(1 - 0.2) * 1:.2f}")
+print(f"R(do not)   = {0.2 * 10:.2f}")
+print(f"best loss   = {best_expected_loss(0.2, 10, 1):.2f}  (escalate)")
+```
 
-The value before observation cost is nonnegative because the decision-maker can ignore $Y$. Collect the observation only when VOI exceeds money, latency, privacy, and user-friction cost.
+Escalation wins despite the low urgent probability, because the loss is asymmetric. @fig-appa-threshold turns the two numbers into a threshold: the escalate and do-not-escalate lines cross at the urgency probability where $(1 - p) = 10p$, that is at about 0.091. Below it, ignore; above it, escalate. The design question is not "how confident is the model?" but "where is the crossover, given our costs?"
 
-[`voi_triage.py`](../code/appa/voi_triage.py) evaluates one binary signal with sensitivity and specificity. For prior urgent probability 0.2, sensitivity 0.85, specificity 0.9, false-negative loss 10, and false-positive loss 1, the signal avoids 0.42 expected loss units. Asking or testing is negative-value if its total cost exceeds 0.42.
+```{python}
+#| label: fig-appa-threshold
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "At what urgency probability should the agent escalate? Expected loss of each action as the urgency probability sweeps from zero to one, with false-negative cost ten and false-positive cost one. The lines cross at p about 0.091 (dashed): the optimal policy escalates above it, and the crossover moves as the costs move."
+import matplotlib.pyplot as plt
 
-VOI gives clarifying questions a precise role. An agent should ask when the answer can alter a consequential decision enough to justify interruption. It should not ask because “more context is always good.”
+ps = [i / 100 for i in range(101)]
+fig, ax = plt.subplots(figsize=(6.2, 3.0))
+ax.plot(ps, [(1 - p) * 1 for p in ps], label="escalate (risk false positive)")
+ax.plot(ps, [p * 10 for p in ps], label="do not escalate (risk false negative)")
+ax.axvline(1 / 11, ls=":", color="0.5")
+ax.set_xlabel("P(urgent)")
+ax.set_ylabel("expected loss")
+ax.set_ylim(0, 2.2)
+ax.legend(fontsize=8)
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
 
-A **proper scoring rule** rewards honest probabilities in expectation. For binary outcome $y\in\{0,1\}$ and predicted probability $p$, the Brier loss is
+An observation has **value of information** (VOI) when it can change the action and lower expected loss. The value before paying for the observation is never negative, because the decision-maker can always ignore what it learns. We evaluate one binary signal — a classifier with a sensitivity and a specificity — and print not just the final VOI but the two posteriors that produce it, so the mechanism is visible rather than trusted.
 
-$$
-(p-y)^2,
-$$
+```{python}
+# @save
+def value_of_signal(
+    prior_urgent: float,
+    sensitivity: float,
+    specificity: float,
+    false_negative: float,
+    false_positive: float,
+) -> dict[str, float]:
+    """Return the expected loss a single binary observation avoids.
 
-and log loss is
+    Splits the world into signal-positive and signal-negative, updates the
+    urgency belief in each branch by Bayes' rule, takes the best action within
+    each branch, and reports the reduction in expected loss versus deciding now.
+    The result is nonnegative: information cannot hurt a decision-maker free to
+    ignore it. Compare it against the money, latency, and friction of asking.
 
-$$
--\big[y\log p+(1-y)\log(1-p)\big].
-$$
+    Args:
+        prior_urgent: Belief the ticket is urgent before the signal.
+        sensitivity: P(signal positive | urgent).
+        specificity: P(signal negative | not urgent).
+        false_negative: Cost of missing an urgent ticket.
+        false_positive: Cost of escalating an ordinary one.
 
-Both are strictly proper under their assumptions: reporting the true belief minimizes expected score. Accuracy after thresholding is not proper; it can reward a forecaster for hiding useful uncertainty. Chapter 22 uses proper scores to evaluate judges and risk estimates.
+    Returns:
+        A dict with the prior loss, P(positive), the two branch posteriors, and
+        the value of information itself.
+    """
 
-**Aleatoric uncertainty** comes from irreducible outcome variability under available variables. **Epistemic uncertainty** comes from limited knowledge or model/data coverage and may shrink with evidence. The boundary depends on representation: collecting a missing feature can turn apparent randomness into explainable variation. For engineering, ask whether another observation can change the decision; VOI answers its practical worth.
+    prior_loss = best_expected_loss(prior_urgent, false_negative, false_positive)
+    p_pos = prior_urgent * sensitivity + (1 - prior_urgent) * (1 - specificity)
+    post_pos = prior_urgent * sensitivity / p_pos
+    post_neg = prior_urgent * (1 - sensitivity) / (1 - p_pos)
+    observed = p_pos * best_expected_loss(post_pos, false_negative, false_positive) + (
+        1 - p_pos
+    ) * best_expected_loss(post_neg, false_negative, false_positive)
+    return {
+        "prior_loss": prior_loss,
+        "p_positive": p_pos,
+        "posterior_positive": post_pos,
+        "posterior_negative": post_neg,
+        "voi": prior_loss - observed,
+    }
+```
+
+```{python}
+for name, value in value_of_signal(0.2, 0.85, 0.9, 10.0, 1.0).items():
+    print(f"{name:20s} {value:.3f}")
+```
+
+A positive signal lifts the urgency belief to 0.68 and a negative one drops it to 0.04, and averaging the best action in each branch avoids 0.42 loss units versus deciding now. That number is the price ceiling: ask the clarifying question, or run the extra classifier, only when its total cost — money, latency, privacy, user friction — is below 0.42. VOI is what gives an agent's clarifying questions a principled trigger, and Chapter 9 turns it into abstention policy.
+
+Finally, we need to score probabilistic forecasts honestly. A **proper scoring rule** is minimized in expectation by reporting your true belief. The Brier loss $(p - y)^2$ and the log loss $-[y\log p + (1-y)\log(1-p)]$ are both proper; thresholded accuracy is not.
+
+```{python}
+# @save
+def brier(p: float, y: int) -> float:
+    """Return the Brier score (p - y)^2 for probability p and outcome y."""
+
+    return (p - y) ** 2
+
+
+def log_loss(p: float, y: int) -> float:
+    """Return the log loss for probability p and binary outcome y."""
+
+    return -(y * math.log(p) + (1 - y) * math.log(1 - p))
+```
+
+We confirm properness by holding the true probability at 0.3 and varying the report:
+
+```{python}
+true_p = 0.3
+for report in (0.3, 0.5, 0.1):
+    e_brier = true_p * brier(report, 1) + (1 - true_p) * brier(report, 0)
+    e_log = true_p * log_loss(report, 1) + (1 - true_p) * log_loss(report, 0)
+    print(f"report={report}: E[Brier]={e_brier:.4f}  E[log]={e_log:.4f}")
+```
+
+The honest report, 0.3, minimizes both expected scores; the overconfident 0.1 and the hedged 0.5 are strictly worse. That is what "proper" buys, and it is why Chapter 22 grades judges and risk estimates with proper scores rather than accuracy, which can reward a forecaster for hiding uncertainty. The distinction between **aleatoric** uncertainty (irreducible outcome noise) and **epistemic** uncertainty (reducible by evidence) rides on the same machinery: only epistemic uncertainty can be bought down, and VOI is how you decide whether the purchase is worth it.
 
 ## Causal inference for evaluation {#app-a-causal}
 
-Prediction asks what co-occurs. Causal inference asks what would change under an intervention. The distinction matters whenever deployed policy affects which data are observed.
+Prediction asks what co-occurs; causal inference asks what would change under an intervention. The distinction bites whenever the deployed policy affects which data you observe — which is every canary, every A/B test on a routed system, every evaluation of a policy from its own logs. @fig-appa-dag draws the trap: task difficulty $D$ raises both the chance a ticket is routed to a new agent $A$ and the chance it fails to resolve $Y$, so difficulty is a **confounder** — a common cause opening a backdoor path $A \leftarrow D \rightarrow Y$ that a naive comparison mistakes for the agent's effect.
 
-A directed acyclic graph (DAG) represents assumed causal direction. Suppose traffic difficulty $D$ affects both routing to a new agent $A$ and resolution $Y$. Observed success $P(Y\mid A)$ mixes the agent effect with difficulty. $D$ is a **confounder**: a common cause of treatment and outcome.
+```{mermaid}
+%%| echo: false
+%%| label: fig-appa-dag
+%%| fig-cap: "Why does the new agent's observed success rate misstate its effect? Difficulty D is a common cause of both routing A and resolution Y, opening the backdoor path A <- D -> Y. Conditioning on D blocks that path and identifies the causal effect."
+flowchart LR
+    D["Difficulty D<br/>(confounder)"] --> A["Routed to new agent A"]
+    D --> Y["Resolved Y"]
+    A -->|"effect we want"| Y
+```
 
-Pearl's intervention notation $P(Y\mid do(A=a))$ means set $A$ to $a$, breaking its usual causes. It differs from merely observing $A=a$. Randomization makes treatment independent of prior confounders in expectation; without it, adjustment requires explicit assumptions.
+We make the trap numeric. Generate synthetic logs where hard tickets are preferentially routed to the new agent, and where the agent's *true* causal effect is a constant plus-ten points of resolution regardless of difficulty. A naive difference of outcome rates should be badly wrong; a difficulty-adjusted estimate should recover the truth.
 
-The **backdoor criterion** asks for a set of observed variables that blocks every noncausal path entering treatment. Adjusting for such a set can identify an effect. Do not adjust mechanically for every available variable: conditioning on a collider or a variable caused by treatment can introduce bias. Draw the assumed graph first.
+```{python}
+# @save
+def simulate_routing(n: int, seed: int) -> list[tuple[str, int, int]]:
+    """Return synthetic (difficulty, action, outcome) logs with confounding.
 
-Logged agent traces create an off-policy problem. A behavior policy $\mu(a\mid x)$ chose action $a$ in context $x$; we want value under target policy $\pi(a\mid x)$. **Inverse propensity scoring** reweights rewards:
+    Hard tickets are routed to the new agent far more often than easy ones, so
+    difficulty is a common cause of treatment and outcome. The new agent's true
+    causal effect is a constant +0.10 on resolution probability at every
+    difficulty; the confounding is what a naive comparison will get wrong.
 
-$$
-\hat V_{\mathrm{IPS}}(\pi)
-=\frac{1}{n}\sum_{i=1}^n
-\frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}r_i.
-$$
+    Args:
+        n: Number of logged tickets to generate.
+        seed: Seed for the deterministic pseudo-random stream.
 
-Here $n$ is logged samples and $r_i$ is observed reward. The estimator requires **overlap**: if $\mu$ never chose an action that $\pi$ would choose, logged data cannot reveal its outcome. Large weights create high variance.
+    Returns:
+        A list of (difficulty, action, outcome) triples.
+    """
 
-A **doubly robust** estimator combines importance weighting with a learned outcome estimate $\hat q(x,a)$:
+    rng = random.Random(seed)
+    route = {"easy": 0.2, "hard": 0.8}
+    resolve = {("easy", 0): 0.8, ("easy", 1): 0.9, ("hard", 0): 0.3, ("hard", 1): 0.4}
+    rows = []
+    for _ in range(n):
+        d = "hard" if rng.random() < 0.5 else "easy"
+        a = 1 if rng.random() < route[d] else 0
+        y = 1 if rng.random() < resolve[(d, a)] else 0
+        rows.append((d, a, y))
+    return rows
 
-$$
-\hat V_{\mathrm{DR}}
-=\frac{1}{n}\sum_i
-\left[
-\sum_a\pi(a\mid x_i)\hat q(x_i,a)
-+\frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}
-\big(r_i-\hat q(x_i,a_i)\big)
-\right].
-$$
 
-Under standard conditions it remains consistent if either the propensity or outcome model is correct, not necessarily both. It does not rescue unmeasured confounding or missing overlap.
+def _rate(rows: list[tuple[str, int, int]]) -> float:
+    return sum(y for *_, y in rows) / len(rows)
 
-For canaries, compare randomized contemporaneous cohorts when possible. If capacity, region, tenant, or risk routing changes exposure, record propensities and check balance. Chapter 27 owns operational rollout; this bridge supplies the reason naive before/after comparisons can lie.
+
+def naive_effect(rows: list[tuple[str, int, int]]) -> float:
+    """Return P(Y|A=1) - P(Y|A=0), the confounded difference of outcome rates."""
+
+    return _rate([r for r in rows if r[1] == 1]) - _rate([r for r in rows if r[1] == 0])
+
+
+def backdoor_effect(rows: list[tuple[str, int, int]]) -> float:
+    """Return the difficulty-adjusted effect, averaging within each stratum.
+
+    Implements backdoor adjustment: estimate the treatment effect separately
+    within each level of the confounder D, then average by the prevalence of D.
+    Because D no longer varies within a stratum, it can no longer masquerade as
+    the agent's effect.
+
+    Args:
+        rows: Logged (difficulty, action, outcome) triples.
+
+    Returns:
+        The confounding-adjusted estimate of the causal effect.
+    """
+
+    effect = 0.0
+    for d in ("easy", "hard"):
+        stratum = [r for r in rows if r[0] == d]
+        weight = len(stratum) / len(rows)
+        treated = [r for r in stratum if r[1] == 1]
+        control = [r for r in stratum if r[1] == 0]
+        effect += weight * (_rate(treated) - _rate(control))
+    return effect
+```
+
+```{python}
+logs = simulate_routing(20_000, seed=0)
+print(f"naive difference   = {naive_effect(logs):+.3f}   (looks like the agent is worse)")
+print(f"backdoor-adjusted  = {backdoor_effect(logs):+.3f}   (true effect is +0.100)")
+```
+
+The naive difference says the new agent is *twenty points worse*; the adjusted estimate says it is ten points *better*. The confounder did not merely add noise — it flipped the sign. That is the whole reason Chapter 27 refuses to trust a raw before-and-after comparison when routing, region, or risk changed exposure. The **backdoor criterion** names the rule: adjust for a set of observed variables that blocks every noncausal path into treatment, and do not adjust mechanically for everything, because conditioning on a collider or a post-treatment variable opens bias rather than closing it. Draw the graph first.
+
+Backdoor adjustment needs the confounder measured. The **frontdoor criterion** is its escape hatch: when an unmeasured confounder blocks the backdoor, but the treatment acts only through a fully observed mediator $M$ (so $A \rightarrow M \rightarrow Y$) that the confounder does not touch, the effect is still identified by chaining $A \rightarrow M$ and $M \rightarrow Y$. It is rare in practice because a clean, complete mediator is a strong assumption, but it is the reason "we can't randomize" is not automatically "we can't identify."
+
+When we cannot adjust because the logs came from a different policy, we reweight. **Inverse propensity scoring** estimates the value of a target policy $\pi$ from logs drawn by a behavior policy $\mu$ by weighting each reward by $\pi(a\mid x)/\mu(a\mid x)$.
+
+```{python}
+# @save
+def ips_value(logged: list[tuple[int, float, float]]) -> float:
+    """Return the inverse-propensity estimate of an always-treat policy.
+
+    Each logged row is (action, reward, behavior-probability). The target policy
+    always takes action 1, so rows where it disagrees drop out and surviving
+    rows are up-weighted by the inverse of how likely the logging policy was to
+    take that action. Rare actions get large weights, which is exactly why the
+    estimator has high variance and can exceed the reward range on small logs.
+
+    Args:
+        logged: (action, reward, mu) triples from the behavior policy.
+
+    Returns:
+        The IPS estimate of the target policy's mean reward.
+    """
+
+    return sum((1.0 if a == 1 else 0.0) / mu * r for a, r, mu in logged) / len(logged)
+```
+
+```{python}
+logged = [(1, 1.0, 0.2), (0, 1.0, 0.8), (1, 0.0, 0.8), (0, 0.0, 0.2), (1, 1.0, 0.8)]
+print(f"V_IPS(always-treat) = {ips_value(logged):.3f}")
+```
+
+The estimate, 1.25, sits above the reward range of the data — a signal, not a bug: one rare treated action carried a large weight, and IPS is unbiased only when the behavior policy had **overlap** (nonzero probability of every action the target takes) and only useful when the weights stay small. The **doubly robust** estimator combines this reweighting with a learned outcome model and stays consistent if *either* the propensities or the outcome model is right; neither trick rescues unmeasured confounding or missing overlap. Chapter 22 owns off-policy evaluation; this bridge supplies the reason a naive log replay can lie.
 
 ## Constrained and multi-objective optimization {#app-a-optimization}
 
-Agent systems optimize several objectives: task quality, policy compliance, latency, cost, energy, and operator load. Reducing them immediately to one blended score hides important structure.
+Agent systems optimize several objectives at once: task quality, policy compliance, latency, cost, and operator load. Collapsing them to one blended score too early hides structure. A **constrained** problem keeps some objectives as inequalities — $\min_\theta f(\theta)$ subject to $g_j(\theta) \le 0$ — and a hard constraint declares an infeasible region rather than a price. A penalty $f(\theta) + \lambda \max(0, g(\theta))$ softens the wall, useful during optimization but no substitute for a launch invariant: an excellent average score cannot buy back one cross-tenant disclosure.
 
-A constrained problem has objective $f(\theta)$ and constraints $g_j(\theta)\le0$:
+With multiple objectives and no constraint to collapse them, configuration $a$ **dominates** $b$ when it is no worse on every objective and strictly better on at least one. The non-dominated set is the **Pareto frontier**, and everything behind it should leave consideration before anyone argues about preference weights. We compute the frontier over six illustrative model configurations rather than eyeballing a plot.
 
-$$
-\min_\theta f(\theta)
-\quad\text{subject to}\quad
-g_j(\theta)\le0\quad\forall j.
-$$
+```{python}
+# @save
+POINTS = {
+    "small/direct": (1.0, 0.72),
+    "small/RAG": (1.8, 0.83),
+    "medium/direct": (2.8, 0.82),
+    "medium/RAG": (3.6, 0.91),
+    "large/agent": (7.2, 0.93),
+    "large/ensemble": (11.0, 0.935),
+}
 
-A **hard constraint** declares an infeasible region. A penalty such as
 
-$$
-f(\theta)+\lambda\max(0,g(\theta))
-$$
+def pareto_names(points: dict[str, tuple[float, float]]) -> set[str]:
+    """Return the configurations no cheaper, no-worse point dominates.
 
-allows violation at a price governed by $\lambda$. Penalties are useful during optimization but do not automatically enforce a launch invariant. If cross-tenant disclosure is forbidden, an excellent average score cannot compensate for one leak.
+    A point is dominated when some other point costs no more and scores no less,
+    strictly beating it on at least one axis. The survivors form the Pareto
+    frontier — the only candidates worth weighing preferences over, since a
+    dominated point is beaten outright.
 
-With multiple objectives, configuration $a$ **dominates** $b$ if $a$ is no worse on every objective and strictly better on at least one. The **Pareto frontier** contains non-dominated candidates. Points behind it should leave consideration before subjective preference enters.
+    Args:
+        points: Name to (cost, quality); lower cost and higher quality are better.
 
-![Cost and task-policy success for six illustrative configurations. The medium direct model is dominated by a cheaper, higher-quality RAG configuration; five non-dominated points form the frontier.](../assets/figures/appa-pareto.svg){#fig-appa-pareto fig-cap="Which configurations are candidates before preference weights are applied? Values are illustrative and generated by code."}
+    Returns:
+        The set of non-dominated configuration names.
+    """
 
-[`render_pareto.py`](../code/appa/render_pareto.py) computes dominance rather than drawing a preferred curve by hand. `medium/direct` is excluded because `small/RAG` costs less and succeeds more often.
+    frontier = set()
+    for name, (cost, quality) in points.items():
+        dominated = any(
+            oc <= cost and oq >= quality and (oc < cost or oq > quality)
+            for other, (oc, oq) in points.items()
+            if other != name
+        )
+        if not dominated:
+            frontier.add(name)
+    return frontier
+```
 
-A weighted sum $\sum_jw_jf_j(\theta)$ is convenient but has two limits. Weights hide units and stakeholder judgments, and weighted sums may miss points on a non-convex frontier. Use explicit constraints for non-negotiable limits, Pareto analysis for genuine tradeoffs, and **lexicographic ordering** when one objective has priority: first discard every configuration that violates safety; among the rest meet quality; then minimize cost.
+```{python}
+print("frontier :", sorted(pareto_names(POINTS)))
+print("dominated:", sorted(set(POINTS) - pareto_names(POINTS)))
+```
 
-The design-review question is not “what is our AI score?” It is “which constraints define feasibility, which points are dominated, and who owns preference among the remaining tradeoffs?”
+Exactly one configuration falls out: `medium/direct` is dominated because `small/RAG` costs less and scores higher, so it never deserves a preference discussion. @fig-appa-pareto plots the survivors. A weighted sum $\sum_j w_j f_j(\theta)$ is convenient but hides the units and stakeholder judgments inside the weights, and it can skip points on a non-convex frontier entirely. Use explicit constraints for non-negotiable limits, Pareto analysis for genuine tradeoffs, and **lexicographic ordering** when one objective truly dominates — discard everything that violates safety, then meet quality, then minimize cost. The design-review question is not "what is our score?" but "which constraints define feasibility, which points are dominated, and who owns preference among the rest?"
+
+```{python}
+#| label: fig-appa-pareto
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Which configurations are candidates before preference weights apply? Cost against task-and-policy success for six illustrative configurations. Filled points and the line are the computed Pareto frontier; medium/direct (hollow) is dominated by small/RAG, which costs less and scores higher. Values are illustrative."
+import matplotlib.pyplot as plt
+
+frontier = pareto_names(POINTS)
+fig, ax = plt.subplots(figsize=(6.6, 3.6))
+for name, (cost, quality) in POINTS.items():
+    on = name in frontier
+    ax.scatter(cost, quality, s=70, marker="o" if on else "x",
+               color="#2f855a" if on else "#a0a0a0")
+    ax.annotate(name, (cost, quality), xytext=(5, 5), textcoords="offset points", fontsize=8)
+line = sorted(POINTS[n] for n in frontier)
+ax.plot([c for c, _ in line], [q for _, q in line], color="#2f855a", lw=1.4)
+ax.set_xlabel("illustrative cost per task (cents)")
+ax.set_ylabel("task-and-policy success")
+ax.set_ylim(0.65, 0.97)
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
 
 ## Classical search, planning, and symbolic reasoning {#app-a-planning}
 
-Language models can propose plans, but classical methods still provide useful representations and guarantees.
+Language models propose plans; classical methods still supply the representations and the guarantees. **A\*** searches a graph by expanding the node with the smallest $f(n) = g(n) + h(n)$, where $g(n)$ is the cost paid to reach $n$ and $h(n)$ estimates the cost remaining. When $h$ never overestimates the true remaining cost — an **admissible** heuristic — A\* returns an optimal path, and the more accurate $h$ is, the fewer nodes it expands. We run it on a small grid with walls, using Manhattan distance as the heuristic, and count expansions against uninformed search.
 
-**A\*** searches a graph using
+```{python}
+# @save
+GRID = ["S....", ".###.", ".#...", ".#.#.", "...#G"]
 
-$$
-f(n)=g(n)+h(n),
-$$
 
-where $g(n)$ is cost from start to node $n$ and $h(n)$ estimates remaining cost. If $h$ never overestimates the true remaining cost—an **admissible heuristic**—A* tree search finds an optimal path under standard assumptions. Models can propose heuristics or successors, while deterministic code preserves legality and cost accounting.
+def _cell(mark: str) -> tuple[int, int]:
+    return next((r, c) for r, row in enumerate(GRID) for c, ch in enumerate(row) if ch == mark)
 
-**Monte Carlo tree search** (MCTS) repeats four phases:
 
-1. select a promising child from the current tree;
-2. expand one or more unexplored actions;
-3. estimate value by rollout or learned evaluator;
-4. backpropagate the result to visited nodes.
+def _neighbors(cell: tuple[int, int]):
+    r, c = cell
+    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        nr, nc = r + dr, c + dc
+        if 0 <= nr < len(GRID) and 0 <= nc < len(GRID[0]) and GRID[nr][nc] != "#":
+            yield (nr, nc)
 
-A UCB-style selection score balances estimated value and exploration:
 
-$$
-\operatorname{UCB}(i)=\bar X_i+c\sqrt{\frac{\ln N}{n_i}},
-$$
+def manhattan(a: tuple[int, int], b: tuple[int, int]) -> int:
+    """Return the grid (L1) distance, an admissible heuristic for 4-connected moves."""
 
-where $\bar X_i$ is child mean value, $n_i$ its visits, $N$ parent visits, and $c$ an exploration coefficient. Chapter 31 uses planning with learned world models. Chapter 8 connects search to test-time computation.
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
-**SAT** solvers decide whether Boolean constraints have a satisfying assignment. **SMT** solvers extend satisfiability with theories such as integer arithmetic, arrays, and bit vectors. An agent can propose a schedule or configuration, while a solver verifies hard constraints or returns a counterexample. The model supplies flexibility; the solver supplies a crisp contract within its formalized domain.
 
-**PDDL** represents actions with preconditions and effects for domain-independent planning. **Hierarchical task networks** decompose abstract tasks through explicit methods. **Behavior trees** compose selectors, sequences, and conditions into reactive control. These representations are more inspectable than free-text plans and can encode which transitions are legal.
+def astar(heuristic) -> tuple[list, list]:
+    """Return the optimal grid path and the cells expanded to find it.
 
-| Technique | Useful guarantee or property | Agent-system role |
+    Expands the frontier node of least f = g + h until the goal is reached, then
+    reconstructs the path from the recorded predecessors. The heuristic argument
+    lets us compare an informed search (Manhattan distance) against uninformed
+    search (a zero heuristic, which is Dijkstra) by counting expansions.
+
+    Args:
+        heuristic: A function from (cell, goal) to an optimistic cost estimate.
+
+    Returns:
+        A (path, expanded) pair: the start-to-goal cells and the expansion order.
+    """
+
+    start, goal = _cell("S"), _cell("G")
+    tie = count()
+    frontier = [(heuristic(start, goal), next(tie), start)]
+    g_cost = {start: 0}
+    came: dict[tuple[int, int], tuple[int, int]] = {}
+    expanded: list[tuple[int, int]] = []
+    while frontier:
+        _, _, cell = heappop(frontier)
+        if cell in expanded:
+            continue
+        expanded.append(cell)
+        if cell == goal:
+            break
+        for nb in _neighbors(cell):
+            step = g_cost[cell] + 1
+            if step < g_cost.get(nb, math.inf):
+                g_cost[nb] = step
+                came[nb] = cell
+                heappush(frontier, (step + heuristic(nb, goal), next(tie), nb))
+    path = [goal]
+    while path[-1] != start:
+        path.append(came[path[-1]])
+    return path[::-1], expanded
+```
+
+```{python}
+informed_path, informed_seen = astar(manhattan)
+_, blind_seen = astar(lambda a, b: 0)
+print(f"path length       = {len(informed_path) - 1} steps")
+print(f"A* expanded       = {len(informed_seen)} cells")
+print(f"Dijkstra expanded = {len(blind_seen)} cells (h = 0)")
+```
+
+Both searches find an eight-step optimal path, but the heuristic lets A\* skip three of the eighteen cells Dijkstra opens by pulling the frontier toward the goal. @fig-appa-astar shows the route threading the walls. The lesson the agent spine consumes is division of labor: a model can propose successors or a heuristic, while deterministic code preserves legality and cost accounting — the guarantee lives in the search, not the suggestion.
+
+```{python}
+#| label: fig-appa-astar
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does f = g + h thread the maze? The computed A* path (dark cells) from S to G on a five-by-five grid; black cells are walls. The Manhattan heuristic keeps the search pressed toward the goal, expanding fifteen cells where uninformed search opens eighteen."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(3.4, 3.4))
+path_set = set(informed_path)
+for r, row in enumerate(GRID):
+    for c, ch in enumerate(row):
+        if ch == "#":
+            color = "#222222"
+        elif (r, c) in path_set:
+            color = "#2f855a"
+        else:
+            color = "#eeeeee"
+        ax.add_patch(plt.Rectangle((c, -r), 1, 1, color=color, ec="white"))
+        if ch in "SG":
+            ax.text(c + 0.5, -r + 0.5, ch, ha="center", va="center", color="white", fontsize=11)
+ax.set_xlim(0, len(GRID[0]))
+ax.set_ylim(-len(GRID) + 1, 1)
+ax.set_aspect("equal")
+ax.axis("off")
+fig.tight_layout()
+plt.show()
+```
+
+When the branching factor explodes and no cheap admissible heuristic exists, **Monte Carlo tree search** (MCTS) replaces exhaustive expansion with sampling: it selects a promising child by a score that balances value and exploration, $\mathrm{UCB}(i) = \bar X_i + c\sqrt{\ln N / n_i}$, expands one action, estimates value by rollout or a learned evaluator, and backpropagates. Chapter 31 runs MCTS inside planning over a learned world model, where this bridge's A\* would be too rigid; Chapter 8 connects the same budgeted-search idea to test-time compute. Other formalisms trade flexibility for crisper guarantees, and the value of each is what it can actually promise:
+
+| Technique | Guarantee or property | Agent-system role |
 |---|---|---|
-| A* | optimality with admissible heuristic under stated assumptions | route or tool-sequence search |
-| MCTS | budgeted exploration guided by value estimates | test-time planning in large branching spaces |
-| SAT/SMT | satisfying assignment or proof of unsatisfiability in encoded theory | verify schedules, permissions, resource constraints |
-| PDDL/HTN | explicit preconditions, effects, and decompositions | auditable workflow planning |
-| behavior tree | reactive priority and fallback structure | robotics and bounded runtime control |
+| A\* | optimal path with an admissible heuristic | route or tool-sequence search |
+| MCTS | budgeted exploration guided by value estimates | planning in large branching spaces |
+| SAT/SMT | a satisfying assignment or a proof of its absence | verify schedules, permissions, resource limits |
+| PDDL/HTN | explicit preconditions, effects, decompositions | auditable workflow planning |
+| behavior tree | reactive priority and fallback structure | bounded runtime control |
 
-The 2026 pattern is hybrid, not replacement: models interpret and propose; search allocates computation; formal or deterministic components check what they can actually guarantee.
+The 2026 pattern is hybrid, not replacement: models interpret and propose, search allocates computation, and formal or deterministic components check what they can genuinely guarantee.
 
 ## Sequential decisions and reinforcement-learning vocabulary {#app-a-sequential}
 
-A **Markov decision process** (MDP) is a tuple $(\mathcal S,\mathcal A,P,R,\gamma)$: states, actions, transition distribution, reward, and discount factor. At time $t$, the agent observes state $s_t$, chooses $a_t$, receives reward $r_t$, and transitions to $s_{t+1}\sim P(\cdot\mid s_t,a_t)$. The return is
+A **Markov decision process** (MDP) is a tuple $(\mathcal S, \mathcal A, P, R, \gamma)$: states, actions, a transition distribution, a reward, and a discount $\gamma \in [0, 1)$. The agent observes $s_t$, acts, is rewarded, and transitions; it seeks a policy maximizing the discounted return $G_t = \sum_{k\ge 0} \gamma^k r_{t+k+1}$. The **Markov assumption** — that the current state holds everything from history needed to predict what comes next — is what makes the problem tractable, and @fig-appa-pomdp shows what happens when it fails: a **partially observable** MDP (POMDP) separates latent state $s_t$ from observation $o_t$, and the agent must act on a **belief**, a distribution over latent states given history.
 
-$$
-G_t=\sum_{k=0}^{\infty}\gamma^k r_{t+k+1},
-$$
+```{mermaid}
+%%| echo: false
+%%| label: fig-appa-pomdp
+%%| fig-cap: "What does the Markov assumption buy, and how does an agent context break it? In an MDP the agent acts on the true state. In a POMDP a latent state emits a partial observation, and the agent acts on a belief; an LLM agent's context — selected messages, summaries, tool results — is exactly such a lossy belief, not the environment."
+flowchart LR
+    subgraph MDP
+      S1["state s_t"] --> ACT1["action"]
+      ACT1 --> S2["state s_t+1"]
+    end
+    subgraph POMDP
+      L["latent state s_t"] -->|emits| O["observation o_t"]
+      O --> B["belief / context"]
+      B --> ACT2["action"]
+    end
+```
 
-For an infinite discounted horizon, the discount factor is at least zero and less than one.
+This picture is the RL section's real payload for the book: an LLM agent's context is a belief proxy, not a state. It holds selected messages, tool results, summaries, and retrieved memory — never the environment itself — so "the model saw it earlier" is not a state invariant, and compaction, retrieval, and observation freshness decide what the controller actually believes. To make "MDP" more than a tuple, we run value iteration on a three-state chain where only the goal pays.
 
-The Markov assumption says the current state contains everything from history needed to predict the next transition and reward. Real agent contexts rarely satisfy it exactly. A **partially observable MDP** (POMDP) distinguishes latent state $s_t$ from observation $o_t$. A **belief state** is a probability distribution over latent states conditioned on history.
+```{python}
+# @save
+def value_iteration(sweeps: int, gamma: float = 0.9) -> list[list[float]]:
+    """Return the value estimate after each sweep on a three-state reward chain.
 
-An LLM agent's context is a lossy belief proxy. It contains selected messages, tool results, summaries, and memory—not the environment itself. Compaction, retrieval, and observation freshness decide what the controller believes. This is why “the model saw it earlier” is not a state invariant.
+    A minimal MDP: states 0 and 1 move deterministically toward an absorbing
+    goal state 2 that pays one unit. Each Bellman backup sets a state's value to
+    its reward plus the discounted value of its successor, so the goal's reward
+    propagates one step backward per sweep — the mechanism behind every dynamic
+    program in RL, shown at a scale you can check by hand.
 
-A **bandit** removes state transition: choose an arm, observe reward, and learn. Cumulative **regret** compares reward with the best action in hindsight or under the model:
+    Args:
+        sweeps: Number of full backups to perform.
+        gamma: Discount factor in [0, 1).
 
-$$
-\mathcal R_T=T\mu^*-\sum_{t=1}^{T}\mathbb{E}[r_t],
-$$
+    Returns:
+        The list of value vectors, one per sweep.
+    """
 
-where $T$ is rounds and $\mu^*$ is best arm mean. Exploration collects information; exploitation uses current knowledge. Online prompt or model selection can resemble a contextual bandit, but only when interference, delayed effects, and policy constraints are handled.
+    reward = {0: 0.0, 1: 0.0, 2: 1.0}
+    values = {0: 0.0, 1: 0.0, 2: 0.0}
+    history = []
+    for _ in range(sweeps):
+        updated = dict(values)
+        for s in (0, 1, 2):
+            updated[s] = reward[s] + (0.0 if s == 2 else gamma * values[s + 1])
+        values = updated
+        history.append([round(values[s], 3) for s in (0, 1, 2)])
+    return history
+```
 
-A clarifying question is a one-step information action. It consumes time and user attention but may improve the next task action. Decision theory prices it by VOI; a sequential model accounts for future consequences.
+```{python}
+for i, row in enumerate(value_iteration(3), start=1):
+    print(f"sweep {i}: V = {row}")
+```
 
-Vocabulary you will meet later:
+The reward at the goal walks backward one state per sweep — 1.0, then 0.9 at its neighbor, then 0.81 two steps out — which is discounting made visible. Now the clarifying question, priced this time in *bits* rather than utility. An agent is unsure whether a user wants a refund or a replacement (a fifty-fifty prior, one bit of uncertainty). It can ask "do you want your money back?", which a refund-seeker answers yes to ninety percent of the time and a replacement-seeker only twenty percent. The **information gain** is the prior entropy minus the expected posterior entropy — the mutual information between the answer and the hidden intent.
 
-- **offline RL:** learn from fixed logged behavior without new environment interaction;
-- **inverse RL:** infer a reward or preference model from behavior;
-- **constrained RL:** optimize return while satisfying expected or hard safety/cost limits;
-- **hierarchical RL:** choose temporally extended skills or subgoals at multiple levels;
-- **model-based RL:** learn or use a transition model for planning;
-- **policy evaluation:** estimate value of a fixed policy;
-- **policy improvement:** change the policy to obtain higher value.
+```{python}
+# @save
+def clarifying_info_gain(prior_a: float, p_yes_given_a: float, p_yes_given_b: float) -> dict[str, float]:
+    """Return the expected information gain, in bits, of a clarifying question.
 
-RL is the study of sequential decisions under feedback, not a synonym for one gradient estimator. Chapter 23 supplies the route-appropriate training machinery.
+    Models a binary latent intent and a binary answer. Computes the prior
+    entropy, the belief after each possible answer, and the entropy remaining on
+    average; the reduction is the mutual information between question and intent
+    — the information-theoretic value of asking, complementary to the utility
+    VOI of the decision-theory section.
+
+    Args:
+        prior_a: Prior probability of the first intent.
+        p_yes_given_a: P(answer yes | first intent).
+        p_yes_given_b: P(answer yes | second intent).
+
+    Returns:
+        A dict with P(yes), the two posteriors on the first intent, and the gain.
+    """
+
+    def h(p: float) -> float:
+        return 0.0 if p in (0.0, 1.0) else -(p * math.log2(p) + (1 - p) * math.log2(1 - p))
+
+    p_yes = prior_a * p_yes_given_a + (1 - prior_a) * p_yes_given_b
+    post_yes = prior_a * p_yes_given_a / p_yes
+    post_no = prior_a * (1 - p_yes_given_a) / (1 - p_yes)
+    expected_post = p_yes * h(post_yes) + (1 - p_yes) * h(post_no)
+    return {
+        "p_yes": p_yes,
+        "posterior_if_yes": post_yes,
+        "posterior_if_no": post_no,
+        "info_gain_bits": h(prior_a) - expected_post,
+    }
+```
+
+```{python}
+for name, value in clarifying_info_gain(0.5, 0.9, 0.2).items():
+    print(f"{name:18s} {value:.3f}")
+```
+
+The question buys about 0.40 bits — it does not fully resolve the intent (a "yes" leaves an eighteen-percent chance of replacement) but it moves the belief enough to change the next action, which is the sequential version of the VOI test. The last piece of vocabulary is exploration. A **bandit** is an MDP with one state: pull an arm, see a reward, learn. Cumulative **regret** measures the gap to always pulling the best arm, and the point of a bandit demo is that greedily exploiting your current estimate can lock onto the wrong arm forever.
+
+```{python}
+# @save
+def bandit_regret(strategy: str, seed: int, rounds: int = 300) -> float:
+    """Return cumulative regret for a two-armed bandit under a given strategy.
+
+    Two arms pay off with fixed probabilities; the better arm is unknown. The
+    ``ucb`` strategy adds an exploration bonus that shrinks as an arm is pulled,
+    so it keeps sampling the uncertain arm; the ``greedy`` strategy commits to
+    whichever arm looked best after one pull each and can lock onto the loser.
+    Regret is the reward given up versus always pulling the best arm.
+
+    Args:
+        strategy: Either ``"ucb"`` or ``"greedy"``.
+        seed: Seed for the deterministic reward stream.
+        rounds: Number of pulls.
+
+    Returns:
+        Total regret accumulated over all rounds.
+    """
+
+    rng = random.Random(seed)
+    means = [0.3, 0.6]
+    counts, sums, regret = [0, 0], [0.0, 0.0], 0.0
+    for t in range(1, rounds + 1):
+        if min(counts) == 0:
+            arm = counts.index(0)
+        elif strategy == "ucb":
+            scores = [sums[i] / counts[i] + math.sqrt(2 * math.log(t) / counts[i]) for i in (0, 1)]
+            arm = scores.index(max(scores))
+        else:
+            arm = 0 if sums[0] / counts[0] >= sums[1] / counts[1] else 1
+        reward = 1.0 if rng.random() < means[arm] else 0.0
+        counts[arm] += 1
+        sums[arm] += reward
+        regret += max(means) - means[arm]
+    return regret
+```
+
+```{python}
+print(f"UCB regret    = {bandit_regret('ucb', 1):.1f}")
+print(f"greedy regret = {bandit_regret('greedy', 1):.1f}")
+```
+
+The greedy strategy accumulates roughly ten times the regret, because an unlucky early sample on the good arm sends it to the bad arm and it never looks back. Online prompt or model selection can resemble a contextual bandit, but only once interference, delayed effects, and policy constraints are handled. RL is the study of sequential decisions under feedback, not a synonym for one gradient estimator; its variants — offline, inverse, constrained, and hierarchical RL — are named in Chapter 23, which supplies the route-appropriate training machinery this bridge deliberately does not derive.
 
 ## A control-theory lens on agent loops {#app-a-control}
 
-Control theory asks how a controller drives a dynamic system toward a desired state using observations and actions.
+Control theory asks how a controller drives a system toward a target using observations and actions, and it maps onto an agent loop term for term.
 
 | Control term | Agent-system counterpart |
 |---|---|
-| setpoint/reference | goal, target state, or SLO |
+| setpoint / reference | goal, target state, or SLO |
 | controller | model plus deterministic harness |
 | plant | external software or physical environment |
-| actuator | tool/action interface |
+| actuator | tool or action interface |
 | sensor | observation, tool result, telemetry |
-| disturbance | user change, outage, adversary, stochastic environment |
+| disturbance | user change, outage, adversary, noise |
 
-An **open-loop** controller acts without measuring the result. A fixed generated plan executed end to end is open-loop after planning. A **closed-loop** controller observes outcomes and corrects. Agent loops are closed-loop only when observations are timely, relevant, and actually change action.
+An **open-loop** controller acts without measuring the result — a fixed generated plan executed to the end. A **closed-loop** controller observes outcomes and corrects, but it is only genuinely closed-loop when observations are timely, relevant, and actually change the action. @fig-appa-control locates which box owns correction.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-appa-control
-%%| fig-cap: "Which box owns correction in an agent feedback loop?"
-%%| fig-alt: "A goal is compared with an observed state to form error. The model and harness controller chooses a bounded tool action, the environment changes under action and disturbance, and a sensor returns an observation with delay."
+%%| fig-cap: "Which box owns correction in an agent feedback loop? The goal is compared with the observed state to form an error; the model-plus-harness controller chooses a bounded action; the environment changes under action and disturbance; and a sensor returns an observation with delay. Correction lives in the controller, but its quality is capped by the sensor's freshness."
 flowchart LR
-    GOAL["Goal / setpoint"] --> ERROR(("Compare"))
+    GOAL["Goal / setpoint"] --> ERROR(("compare"))
     OBS["Observed state"] --> ERROR
     ERROR --> CTRL["Controller<br/>model + harness"]
     CTRL -->|"bounded action"| TOOL["Tool / actuator"]
@@ -324,164 +775,360 @@ flowchart LR
     ENV -->|"sensor + delay"| OBS
 ```
 
-Feedback with lag can destabilize. Suppose an agent retries because a write is not yet visible. The first write is still propagating; a second is issued; both become visible; the agent now compensates twice. More frequent observation worsens the oscillation if the observation is stale.
+Feedback with lag can destabilize, and this is not abstract for agents: a worker retries because a write is not yet visible, both writes land, and now it compensates twice. We simulate the error dynamics of a proportional controller correcting on an observation that is $d$ steps stale, $e_{t+1} = e_t - K\,e_{t-d}$, across three gain-and-delay settings.
 
-A **deadband** ignores small error around a target. **Hysteresis** uses different thresholds for entering and leaving a state. A circuit might open at high failure rate but close only after a sustained lower rate, preventing rapid flapping. Agent stop conditions, human escalation, autoscaling, and circuit breakers benefit from this pattern.
+```{python}
+# @save
+def error_dynamics(gain: float, delay: int, steps: int = 40, start: float = 1.0) -> list[float]:
+    """Return the error trajectory of a proportional controller with lag.
 
-**Observability** asks whether internal state can be inferred from outputs over time. **Controllability** asks whether allowed inputs can drive the system to desired states. For an agent review: can we know whether the external effect committed? Can our tools reach a safe reconciled state? If either answer is no, better prompting does not repair the interface.
+    Each step corrects the error using a correction proportional to a possibly
+    stale observation of it, e[t+1] = e[t] - gain * e[t-delay]. With no delay
+    and moderate gain the error decays; add delay, or push the gain up, and the
+    correction fights yesterday's error, producing sustained or growing
+    oscillation — the control-theoretic shape of a retry storm.
+
+    Args:
+        gain: Proportional correction strength K.
+        delay: Observation staleness in steps.
+        steps: Number of steps to simulate.
+        start: Initial error.
+
+    Returns:
+        The error at each step, starting from ``start``.
+    """
+
+    history = [start]
+    for t in range(steps):
+        observed = history[t - delay] if t - delay >= 0 else start
+        history.append(history[-1] - gain * observed)
+    return history
+```
+
+```{python}
+for gain, delay in ((0.5, 0), (1.0, 1), (1.3, 1)):
+    trace = error_dynamics(gain, delay)
+    sample = [round(trace[i], 2) for i in (0, 5, 10, 20, 40)]
+    print(f"K={gain} delay={delay}: e at t=0,5,10,20,40 -> {sample}")
+```
+
+The three regimes are exactly the ones an operator sees. With no lag and a gain of 0.5 the error decays to zero; add one step of delay at unit gain and it oscillates forever without settling; push the gain to 1.3 and the oscillation *grows*, diverging past fifty within forty steps. @fig-appa-stability plots all three. The fixes are the deadband and hysteresis: a **deadband** ignores small errors near the target, and **hysteresis** uses a higher threshold to enter a state than to leave it, so a circuit breaker opens on a spike but closes only after a sustained recovery, preventing the flap. Agent stop conditions, escalation, autoscaling, and circuit breakers all want this. The review questions are the control-theoretic ones: is the system **observable** — can we tell from outputs whether the external effect committed? — and **controllable** — can our tools reach a safe reconciled state? If either answer is no, better prompting will not repair the interface.
+
+```{python}
+#| label: fig-appa-stability
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "When does a correcting agent oscillate? Error over time for three controllers. With no observation delay (K=0.5) the error decays; one step of lag at unit gain sustains an oscillation; higher gain with lag makes it grow without bound — the same feedback that fixes a stable loop destabilizes a laggy one."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(6.4, 3.2))
+for gain, delay, label in ((0.5, 0, "K=0.5, no lag (stable)"),
+                           (1.0, 1, "K=1.0, lag 1 (oscillates)"),
+                           (1.3, 1, "K=1.3, lag 1 (diverges)")):
+    ax.plot(error_dynamics(gain, delay), label=label)
+ax.axhline(0, color="0.6", lw=0.8)
+ax.set_ylim(-12, 12)
+ax.set_xlabel("step")
+ax.set_ylabel("error")
+ax.legend(fontsize=8)
+ax.spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+plt.show()
+```
 
 ## Distributed systems: partial failure, idempotency, and backpressure {#app-a-distributed}
 
-Distributed components do not fail as one unit. A caller can time out while a server continues; an acknowledgement can be lost after an effect; a process can restart with another component still holding state. This is **partial failure**.
+Distributed components do not fail as one unit. A caller times out while a server keeps working; an acknowledgement is lost after an effect; a process restarts while another still holds state. This is **partial failure**, and its most dangerous shape is the ambiguous window: a worker sends an effect, the provider performs it, the response or the local commit is lost, and the worker cannot tell whether a retry duplicates the effect or a skip loses it. Delivery semantics do not make the effect atomic — at-most-once may lose work, at-least-once may duplicate it, and "exactly once" is only meaningful as an end-to-end property built from stable intent identity, atomic local state, and provider idempotency or reconciliation.
 
-The most important ambiguous window is:
+An **idempotent** operation produces the same external result when repeated with the same intent, so the key must identify the intent, not the delivery attempt — a fresh UUID per retry defeats deduplication. We build the smallest worker that makes this window executable, and break it twice. First the pieces: a task whose key hashes its intent, a provider that counts calls and effects, and a ledger that records intent status.
 
-1. worker sends an effect request;
-2. provider performs the effect;
-3. response or local commit is lost;
-4. worker cannot tell whether retry is necessary.
+```{python}
+# @save
+class InjectedCrash(RuntimeError):
+    """Raised once, after an external effect and before the local commit."""
 
-Delivery semantics do not make the external effect atomic. **At-most-once delivery** may lose work. **At-least-once delivery** retries and may duplicate it. “Exactly once” is meaningful only with a stated boundary. Exactly-once processing is an end-to-end property built from retries, stable intent identity, atomic local state transitions, provider idempotency or reconciliation, and application semantics.
 
-An **idempotent** operation produces the same externally relevant result when repeated with the same intent. The key must identify canonical intent, not a delivery attempt. A new UUID on every retry defeats deduplication.
+@dataclass(frozen=True)
+class Task:
+    """A notification intent carried by an at-least-once queue."""
 
-@fig-appa-duplicate answers where a queue duplicate comes from.
+    payment_id: str
+    recipient: str
+
+    @property
+    def key(self) -> str:
+        """Return an idempotency key derived from intent, not delivery attempt.
+
+        Hashing the canonical intent fields means every redelivery of the same
+        notification shares a key, so deduplication can recognize it; a key tied
+        to the delivery instead would make each retry look like new work.
+        """
+
+        payload = json.dumps(
+            {"payment_id": self.payment_id, "recipient": self.recipient}, sort_keys=True
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
+```
+
+The provider is the external world. It counts every call, and optionally honors the caller's key so that a repeated call performs at most one effect — the behavior a real idempotent API offers.
+
+```{python}
+# @save
+class CountingProvider:
+    """An external effect that counts calls and, optionally, deduplicates them."""
+
+    def __init__(self, deduplicate: bool = False) -> None:
+        self.deduplicate = deduplicate
+        self.calls = 0
+        self.effects = 0
+        self.seen: set[str] = set()
+
+    def send(self, task: Task) -> None:
+        """Record one call and one externally visible effect, unless deduplicating."""
+
+        self.calls += 1
+        if self.deduplicate and task.key in self.seen:
+            return
+        self.seen.add(task.key)
+        self.effects += 1
+```
+
+The ledger is the worker's own memory of what it has started and finished. Reserving a key marks it pending; committing marks it done; an already-committed key refuses re-reservation. We keep it in SQLite to make the point that this is a real check-then-write, not a Python set.
+
+```{python}
+# @save
+class Ledger:
+    """A local record of pending and committed intent keys.
+
+    The reserve-then-commit shape is the crux of the lab: an intent becomes
+    pending before the effect and committed only after, so a crash between the
+    two leaves a pending row that cannot, by itself, say whether the external
+    effect happened.
+    """
+
+    def __init__(self) -> None:
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.execute("CREATE TABLE effects (key TEXT PRIMARY KEY, status TEXT NOT NULL)")
+
+    def status(self, key: str) -> str | None:
+        """Return the recorded status for an intent key, or None if unseen."""
+
+        row = self.connection.execute("SELECT status FROM effects WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def reserve(self, key: str) -> bool:
+        """Claim an intent as pending; refuse if it is already committed.
+
+        Returns:
+            True if the caller may proceed, False if the work is already done.
+        """
+
+        if self.status(key) == "committed":
+            return False
+        self.connection.execute(
+            "INSERT OR IGNORE INTO effects(key, status) VALUES (?, 'pending')", (key,)
+        )
+        return True
+
+    def commit(self, key: str) -> None:
+        """Mark a reserved intent committed."""
+
+        self.connection.execute("UPDATE effects SET status = 'committed' WHERE key = ?", (key,))
+```
+
+The worker ties them together: reserve, perform the effect, commit. @fig-appa-duplicate shows where a duplicate enters — the crash lands after the provider effect but before the commit, so the redelivered intent finds a pending row and cannot know the effect already happened.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-appa-duplicate
-%%| fig-cap: "Where does duplicate execution enter an at-least-once worker?"
-%%| fig-alt: "The queue delivers an intent, the worker reserves its key and calls a provider, the provider performs the effect, then the worker crashes before committing. The queue redelivers; local state remains pending, so the worker cannot know whether the effect happened."
+%%| fig-cap: "Where does duplicate execution enter an at-least-once worker? The queue delivers an intent; the worker reserves the key and calls the provider; the provider performs the effect; the worker crashes before committing. On redelivery the local status is still pending, so the worker cannot tell whether the effect happened — retry may duplicate, skip may lose."
 sequenceDiagram
     participant Q as At-least-once queue
     participant W as Worker
     participant L as Local ledger
     participant P as External provider
-    Q->>W: "deliver intent, key=k"
-    W->>L: "reserve k → pending"
-    W->>P: "perform effect, key=k"
-    P-->>W: "effect completed"
-    Note over W: "crash before local commit"
-    Q->>W: "redeliver same intent, key=k"
-    W->>L: "status(k) = pending"
-    Note over W,P: "ambiguous: retry may duplicate; skip may lose"
+    Q->>W: deliver intent, key=k
+    W->>L: reserve k -> pending
+    W->>P: perform effect, key=k
+    P-->>W: effect completed
+    Note over W: crash before local commit
+    Q->>W: redeliver same intent, key=k
+    W->>L: status(k) = pending
+    Note over W,P: ambiguous: retry may duplicate, skip may lose
 ```
 
-The build makes this window executable. With 20 unique tasks and four duplicate deliveries, the naive worker performs 24 effects. A local ledger collapses ordinary queue duplicates to 20. When one crash is injected after the provider effect but before local commit, a non-deduplicating provider performs 21 effects. Passing the stable key to a provider that honors it produces 21 calls but 20 effects.
+```{python}
+# @save
+def fixture_deliveries(task_count: int = 20) -> list[Task]:
+    """Return an at-least-once stream: unique tasks with a duplicate every fifth."""
 
-This is not a universal guarantee. Provider idempotency keys may expire; the provider may not cover every failure; a local reservation can race across workers. Chapter 26 adds atomic reservation, fencing, outbox patterns, reconciliation, and compensation.
+    unique = [Task(f"payment-{i:02d}", f"user-{i:02d}@example.test") for i in range(task_count)]
+    stream: list[Task] = []
+    for i, task in enumerate(unique, start=1):
+        stream.append(task)
+        if i % 5 == 0:
+            stream.append(task)
+    return stream
 
-Queues also require capacity reasoning. **Little's law** states
 
-$$
-L=\lambda W,
-$$
+def run_naive(deliveries: list[Task], provider: CountingProvider) -> None:
+    """Execute every delivery with no ledger — the un-deduplicated baseline."""
 
-where $L$ is average items in a stable system, $\lambda$ arrival rate, and $W$ average time in system. If a job fan-out factor $a$ creates multiple downstream items per request, downstream work-in-progress is approximately
+    for task in deliveries:
+        provider.send(task)
 
-$$
-L=\lambda a W.
-$$
 
-At 20 requests/s, fan-out 3, and 2 s average downstream residence, expect about 120 in-flight items before headroom. If service rate falls below arrival rate, the queue grows without a finite steady-state $W$. Little's law describes the state; it does not create capacity.
+class IdempotentWorker:
+    """Reserve, perform, then commit — exposing the effect-before-commit window."""
 
-Retries amplify load precisely when dependencies are weak. Bound attempts, use jittered backoff, honor retry-after signals, and maintain one deadline budget across layers. A **bounded queue** creates backpressure: when capacity is exhausted, callers wait, degrade, shed, or reject instead of consuming unlimited memory. Queue age often reveals user delay more directly than depth alone.
+    def __init__(self, ledger: Ledger, provider: CountingProvider) -> None:
+        self.ledger = ledger
+        self.provider = provider
+        self.crashed: set[str] = set()
+
+    def process(self, task: Task, crash_after_effect_for: str | None = None) -> str:
+        """Process one delivery, optionally crashing once in the ambiguous window.
+
+        Reserves the intent, performs the external effect, and commits — but if
+        asked, raises exactly once *after* the effect and *before* the commit,
+        reproducing the partial failure that a local ledger alone cannot resolve.
+
+        Args:
+            task: The delivered intent.
+            crash_after_effect_for: Payment id to crash on once, or None.
+
+        Returns:
+            ``"committed"`` for new work, ``"duplicate:committed"`` for a skip.
+        """
+
+        if not self.ledger.reserve(task.key):
+            return "duplicate:committed"
+        self.provider.send(task)
+        if crash_after_effect_for == task.payment_id and task.key not in self.crashed:
+            self.crashed.add(task.key)
+            raise InjectedCrash(task.payment_id)
+        self.ledger.commit(task.key)
+        return "committed"
+
+    def drain(self, deliveries: list[Task], crash_after_effect_for: str | None = None) -> int:
+        """Drain the stream, retrying crashed intents, and return the crash count."""
+
+        crashes, retry = 0, []
+        for task in deliveries:
+            try:
+                self.process(task, crash_after_effect_for)
+            except InjectedCrash:
+                crashes += 1
+                retry.append(task)
+        for task in retry:
+            self.process(task, crash_after_effect_for)
+        return crashes
+
+
+def build_report() -> dict[str, object]:
+    """Run the four break-it drills and return their call and effect counts.
+
+    Runs the same twenty-task, four-duplicate stream through the naive worker,
+    the ledgered worker with no crash, the ledgered worker crashed once in the
+    ambiguous window, and the crashed worker against a deduplicating provider.
+    The counts are the lab's whole argument, so they are returned rather than
+    printed.
+
+    Returns:
+        A nested dict of calls and effects for each of the four drills.
+    """
+
+    deliveries = fixture_deliveries()
+    naive = CountingProvider()
+    run_naive(deliveries, naive)
+
+    local = CountingProvider()
+    IdempotentWorker(Ledger(), local).drain(deliveries)
+
+    ambiguous = CountingProvider()
+    ambiguous_crashes = IdempotentWorker(Ledger(), ambiguous).drain(deliveries, "payment-07")
+
+    dedup = CountingProvider(deduplicate=True)
+    dedup_crashes = IdempotentWorker(Ledger(), dedup).drain(deliveries, "payment-07")
+
+    return {
+        "unique_tasks": 20,
+        "deliveries": len(deliveries),
+        "naive": {"calls": naive.calls, "effects": naive.effects},
+        "local_ledger": {"calls": local.calls, "effects": local.effects},
+        "ambiguous_window": {"crashes": ambiguous_crashes, "calls": ambiguous.calls, "effects": ambiguous.effects},
+        "provider_key": {"crashes": dedup_crashes, "calls": dedup.calls, "effects": dedup.effects},
+    }
+```
+
+Now we run all four drills and print their counts:
+
+```{python}
+print(json.dumps(build_report(), indent=2))
+```
+
+The counts tell the whole story, and @tbl-appa-drills lays them side by side.
+
+| Drill | Provider calls | External effects | Meaning |
+|---|---:|---:|---|
+| naive, no ledger | 24 | 24 | queue duplicates over-execute |
+| local ledger, no crash | 20 | 20 | ordinary redelivery collapses cleanly |
+| crash after effect | 21 | 21 | local state cannot resolve the ambiguous window |
+| crash + provider key | 21 | 20 | repeated call, one effect: the window is closed at the provider |
+
+: The four drills over one twenty-task, four-duplicate stream. A local ledger collapses ordinary duplicates but cannot close the crash window; only an idempotency key the provider honors reduces twenty-one calls to twenty effects. {#tbl-appa-drills}
+
+The lesson is precise: a local ledger fixes ordinary duplicates but *not* the crash window, because the pending row is genuinely ambiguous — the fix has to live at the provider, as an idempotency key it deduplicates on, or as reconciliation. Multi-worker exclusion, key lifetime, transactional outbox, and saga compensation are Chapter 26's job; this lab stops exactly at the point where one worker and one local ledger can go no further.
+
+Capacity is the other half of distributed reasoning. **Little's law**, $L = \lambda W$, relates the average number of items in a stable system to the arrival rate and the time each spends inside; with a fan-out $a$ of downstream items per request it becomes $L = \lambda a W$.
+
+```{python}
+lam, fan_out, residence = 20, 3, 2
+print(f"in-flight downstream items = {lam} * {fan_out} * {residence} = {lam * fan_out * residence}")
+```
+
+At twenty requests a second, fan-out three, and two seconds of downstream residence, expect about a hundred and twenty items in flight before any headroom. If the service rate ever falls below the arrival rate, there is no finite steady state and the queue grows without bound. Little's law describes the state; it does not create capacity. The response is a **bounded queue** that produces backpressure — when it fills, callers wait, degrade, shed, or reject rather than consume unlimited memory — together with bounded retries, jittered backoff, honored retry-after signals, and one deadline budget shared across layers, because retries amplify load precisely when a dependency is already weak.
 
 ## Threat modeling: assets, boundaries, and attack trees {#app-a-threats}
 
-Threat modeling is a structured design activity, not a penetration test or a launch-time document. A useful loop asks:
+Threat modeling is a design activity, not a penetration test or a launch-day form. A useful pass asks four questions: what are we building, what can go wrong, what will we do about it, and did we do a good job? It starts from **assets** — data, credentials, money, availability, model integrity, audit evidence, user trust, physical safety — and a data-flow diagram whose **trust boundaries** mark every place data or authority crosses between zones with different assumptions. Model input is a boundary crossing even when it arrives from an internal document, which is the whole reason indirect prompt injection is possible.
 
-1. What are we building?
-2. What can go wrong?
-3. What will we do about it?
-4. Did we do a good job?
-
-Begin with **assets**: data, credentials, money, availability, model integrity, audit evidence, user trust, or physical safety. Draw a data-flow diagram with processes, stores, external actors, and flows. A **trust boundary** is where data or authority crosses between zones with different assumptions or control. Model input is a boundary crossing even when it comes from an internal document.
-
-An **attack tree** starts with an adversary goal. OR children are alternative paths; AND children must all occur. Trees expose which control cuts which path and where independent defenses are needed.
+An **attack tree** starts from an adversary goal and decomposes it: OR children are alternative paths, AND children must all occur. @fig-appa-attack-tree draws one for the naive retrieval agent Chapter 24 attacks, whose goal is an unauthorized disclosure or irreversible action. The tree exposes which control cuts which path — and, read against Chapter 24's layered rebuild, why no single control suffices.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-appa-attack-tree
-%%| fig-cap: "Which paths let an attacker cause a duplicate side effect?"
-%%| fig-alt: "The root goal has three OR paths: create two different intent identities, exploit the effect-before-commit crash window, or bypass local atomic reservation through a worker race. The crash path requires an effect followed by lost commit and a retry."
+%%| fig-cap: "Which paths let an attacker turn a RAG agent into a data-exfiltration or unauthorized-action tool? Three OR paths reach the goal: a direct instruction in the user turn, an indirect instruction hidden in a retrieved document, and a bypass of the action's permission check. Each is cut by a different control (dashed), which is why Chapter 24 layers source separation, an egress allowlist, and a bound approval rather than trusting one filter."
 flowchart TD
-    ROOT["OR: attacker causes duplicate effect"]
-    ROOT --> K["Create two keys<br/>for one intent"]
-    ROOT --> C["AND: exploit ambiguous crash window"]
-    ROOT --> R["Race two workers<br/>past local reservation"]
-    C --> E["Provider performs effect"]
-    C --> LOST["Commit / acknowledgement lost"]
-    C --> RETRY["Pending intent retried"]
-    K --> KC["Control: canonical intent key"]
-    C --> PC["Control: provider key + reconciliation"]
-    R --> AC["Control: atomic claim + fencing"]
+    ROOT["OR: agent performs unauthorized disclosure or action"]
+    ROOT --> DIRECT["Direct injection<br/>in the user turn"]
+    ROOT --> INDIRECT["Indirect injection<br/>via retrieved document"]
+    ROOT --> BYPASS["Bypass the action<br/>permission check"]
+    DIRECT -.cut by.-> C1["Instruction/data separation"]
+    INDIRECT -.cut by.-> C2["Quarantined reader + egress allowlist"]
+    BYPASS -.cut by.-> C3["Policy enforcement point + bound approval"]
 ```
 
-STRIDE—spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege—is a checklist that can improve coverage. It is not the threat model itself. The model is the concrete assets, flows, assumptions, attacker goals, controls, tests, and residual risks of this system.
+STRIDE — spoofing, tampering, repudiation, information disclosure, denial of service, elevation of privilege — is a checklist that improves coverage, but it is not the threat model; the model is the concrete assets, flows, assumptions, attacker goals, controls, tests, and residual risks of *this* system. The agent-specific extension is one sentence long: untrusted content can steer a probabilistic planner that holds tools, so separate instructions from data, minimize tool authority, validate typed proposals, and let deterministic code own the effects. Chapter 24 builds exactly that architecture and re-runs the attack suite against it.
 
-The agent-specific extension is straightforward: untrusted content can influence a probabilistic planner that has tools. Therefore separate instructions from data, minimize tool authority, validate typed proposals, and make deterministic code own effects. Chapter 24 develops that architecture.
+## Carrying the bridge forward {#app-a-forward}
 
-## Build: break the worker twice {#app-a-build}
-
-The reference artifact is [`idempotent_worker.py`](../code/appa/idempotent_worker.py). Run it and its tests from the book root:
-
-```bash
-python code/appa/idempotent_worker.py
-python -m pytest tests/test_appendix_a_bridge.py -q
-python code/appa/render_pareto.py --plot assets/figures/appa-pareto.svg
-```
-
-The output is:
-
-| Drill | Deliveries/calls | External effects | Ledger state | Meaning |
-|---|---:|---:|---|---|
-| naive | 24 | 24 | none | queue duplicates over-execute |
-| local ledger, no crash | 20 provider calls | 20 | 20 committed | ordinary redelivery collapses |
-| crash after effect | 21 provider calls | 21 | 20 committed | local state cannot resolve the ambiguous window |
-| crash + provider key | 21 provider calls | 20 | 20 committed | repeated call, one provider effect |
-
-The progressive mechanism is small. `Task.key` hashes canonical intent fields. `Ledger.reserve` rejects already committed keys. The worker calls the provider and then commits. An injected exception after the call leaves `pending`; resume exposes the ambiguity instead of pretending it is solved.
-
-```python
-# artifact: idempotent_worker.py — Appendix A build adds: crash-window drill
-def process(self, task: Task, crash_after_effect_for: str | None = None) -> str:
-    if not self.ledger.reserve(task.key):
-        return "duplicate:committed"
-    self.provider.send(task)
-    if crash_after_effect_for == task.payment_id and task.key not in self.crashed:
-        self.crashed.add(task.key)
-        raise InjectedCrash(task.payment_id)
-    self.ledger.commit(task.key)
-    return "committed"
-```
-
-Six tests assert the queue contains 20 identities and 24 deliveries, the local ledger collapses ordinary duplicates, the ambiguous window produces 21 effects without provider deduplication, provider-key behavior returns to 20 effects, VOI is positive for the triage signal, and dominated Pareto points are removed.
-
-The build deliberately stops at one worker and one local ledger. It does not prove multi-worker exclusion, key lifetime, provider reconciliation, transactional outbox behavior, or compensation. That residue is exactly why Chapter 26 exists.
-
-## What endures, what changes {#app-a-endures}
-
-The appendix's durable vocabulary should outlast any model release: condition on evidence; combine belief with loss; distinguish observation from intervention; separate hard constraints from preferences; use explicit search and solvers where their guarantees matter; model hidden state and sequential consequences; expect feedback lag; design for partial failure; bound queues; and threat-model authority crossings.
-
-What changes is which chapter mechanism needs each bridge most urgently. If the book is reorganized, update the consumption map. The classical ideas and their engineering questions remain stable.
+The durable move in each section outlasts any model release: condition belief on evidence, then combine it with loss; separate observation from intervention before trusting a comparison; keep hard constraints out of the blended score; use explicit search and solvers where their guarantees matter; treat an agent's context as a belief, not a state; expect feedback lag to oscillate; design for partial failure and bound your queues; and threat-model every authority crossing. Each idea came with a number you ran, and each points at the chapter that spends it. When the book reorganizes, the consumption map at the top is what to update; the classical ideas and their design-review questions do not move.
 
 ## Exercises {#app-a-exercises}
 
-1. Compute VOI for support-ticket triage under your own false-negative and false-positive losses. Find the observation cost at which asking becomes negative-value.
+1. Using `value_of_signal`, compute VOI for support-ticket triage under your own false-negative and false-positive losses. Find the observation cost at which asking becomes negative-value, and confirm it equals the printed VOI.
 
-2. Construct two forecasters where one has higher threshold accuracy but worse log score. Explain which probability estimate you would allow to gate a release and why.
+2. Construct two forecasters where one has higher thresholded accuracy but a worse expected log loss. Using `log_loss` and `brier`, show the ranking flips, and argue which estimate you would let gate a release.
 
-3. Draw a DAG for a canary where difficult tenants are preferentially routed to the new system. Identify a backdoor adjustment set and one variable that would be dangerous to condition on.
+3. In `simulate_routing`, make the routing depend on difficulty even more strongly and re-run `naive_effect` and `backdoor_effect`. How large can the confounding grow before the naive estimate changes sign? Then name one variable that would be dangerous to add to the adjustment set, and why.
 
-4. Add latency as a third objective to the Pareto fixture. Exhibit a weighted-sum winner that violates a hard cost cap, then apply constraint-first lexicographic selection.
+4. Add latency as a third objective to `POINTS`. Exhibit a weighted-sum winner that violates a hard latency cap, then apply constraint-first lexicographic selection and show it picks a different configuration.
 
-5. Enumerate every crash boundary in the worker's path. For each, state local ledger status, possible provider state, and safe next action. Add a `crash_after="pending"` injection and test it.
+5. Change `GRID` to add a shorter path behind a wall, and re-run `astar` with the Manhattan heuristic and with `h = 0`. Report the path length and the expansion counts for each, and explain the gap in terms of admissibility.
 
-6. Redeliver one intent 1,000 times in random order in one process. Assert one committed local record and one provider effect when provider keys are enabled.
+6. Using `clarifying_info_gain`, find a question whose two answer-likelihoods give high information gain but whose *utility* VOI is low (the resolved intent does not change the action). Explain why an agent should still not ask it.
 
-7. Explain why SQLite's check-then-write shape does not establish one owner across PostgreSQL workers. Sketch an atomic claim using a conditional update and `RETURNING`, then point to the Chapter 26 mechanism that handles stale ownership.
+7. Enumerate every crash boundary in `IdempotentWorker.process`. For each, state the ledger status, the possible provider state, and the safe next action. Add a crash injected *before* the provider call and predict the counts before running it.
 
-8. A provider promises idempotency, so a teammate proposes removing caller keys and the local ledger. In a design review, use the attack tree to analyze key expiry, caller-generated duplicates, audit, and reconciliation.
-
-## Notes and sources {#app-a-sources}
-
-Stable references include Russell and Norvig's *Artificial Intelligence: A Modern Approach* for search and planning; Sutton and Barto's [*Reinforcement Learning: An Introduction*](http://incompleteideas.net/book/the-book-2nd.html) for bandits and MDPs; Gneiting and Raftery's [proper scoring rule review](https://doi.org/10.1198/016214506000001437); Pearl, Glymour, and Jewell's *Causal Inference in Statistics: A Primer*; Dudík, Langford, and Li on [doubly robust policy evaluation](https://arxiv.org/abs/1103.4601); Browne et al.'s [MCTS survey](https://doi.org/10.1109/TCIAIG.2012.2186810); Åström and Murray's free [*Feedback Systems*](https://fbsbook.org/); Kleppmann's *Designing Data-Intensive Applications*; Shostack's *Threat Modeling*; and Schneier's [attack trees](https://www.schneier.com/academic/archives/1999/12/attack_trees.html).
+8. A provider promises idempotency, so a teammate proposes deleting both the caller key and the local ledger. Using the attack tree, walk a design review through key expiry, caller-generated duplicates, audit, and cross-worker races, and state what you would keep.
