@@ -18,7 +18,7 @@ CH02 = ROOT / "code" / "ch02"
 sys.path.insert(0, str(CH05))
 sys.path.insert(0, str(CH02))
 
-from bpe import BytePairTokenizer  # noqa: E402
+from chapter2_adapter import BytePairTokenizer  # noqa: E402
 from mini_pipeline import (  # noqa: E402
     Document,
     decontaminate,

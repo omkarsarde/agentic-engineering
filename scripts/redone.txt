@@ -4,3 +4,4 @@
 # per line, e.g. 01-operational-on-ramp. Empty during the incremental redo so
 # that `validate_book.py --strict` stays green.
 01-operational-on-ramp
+02-transformer-first-principles
