@@ -7,6 +7,7 @@ book:
   title: "Agentic Engineering"
   subtitle: "From neural networks to dependable agent systems"
   author: "Omkar Sarde"
+  output-file: agentic-engineering
   date: last-modified
   search:
     location: sidebar
@@ -126,6 +127,7 @@ format:
     keep-tex: false
   epub:
     toc: true
+    epub-cover-image: assets/epub-cover.png
 
 execute:
   freeze: auto

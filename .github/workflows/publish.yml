@@ -33,6 +33,12 @@ jobs:
       - name: Render HTML book
         run: quarto render --to html
 
+      - name: Install Chromium for diagram pre-rendering
+        run: quarto install chromium --no-prompt
+
+      - name: Render EPUB
+        run: quarto render --to epub
+
       - name: Publish rendered HTML
         uses: quarto-dev/quarto-actions/publish@v2
         with:

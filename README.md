@@ -16,7 +16,7 @@ Build the deployable website with:
 quarto render --to html
 ```
 
-The HTML site is written to `_book/`. A full `quarto render` also requests the configured PDF and EPUB formats; PDF rendering requires a TeX distribution. The website intentionally shows no download buttons until those artifacts are built and published alongside it, so an HTML-only deployment cannot advertise broken files. GitHub Pages deployment is defined in `.github/workflows/publish.yml` for the case where this directory becomes the repository root. See [DEPLOYMENT.md](DEPLOYMENT.md) for the $0 hosting paths, nested-repository setup, and the rationale for Quarto Markdown and the visual stack.
+The HTML site is written to `_book/`. A full `quarto render` also requests the configured PDF and EPUB formats; PDF rendering requires a TeX distribution. The CI pipeline renders the HTML site and the EPUB together, so the download link on the landing page always matches the published content. PDF remains a manual build requiring a TeX distribution. GitHub Pages deployment is defined in `.github/workflows/publish.yml` for the case where this directory becomes the repository root. See [DEPLOYMENT.md](DEPLOYMENT.md) for the $0 hosting paths, nested-repository setup, and the rationale for Quarto Markdown and the visual stack.
 
 ## Validate source
 

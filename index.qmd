@@ -30,6 +30,6 @@ flowchart LR
 
 We teach the way *Dive into Deep Learning* teaches: you watch working code produce real output, narrated by a knowledgeable "we". Every mechanism is developed inline in executable cells whose printed values, generated text, and plots appear right beneath them, so you can reproduce every number yourself. Figures are there to build intuition, not to decorate. Every build is deterministic and runs offline by default.
 
-There is one linear path, Chapters 1 through 32; a reader already fluent in transformers and serving can start at Chapter 12. Appendix A is a just-in-time bridge for the occasional mathematical or systems background a chapter leans on. Appendix B is the system-design workbook: worked, diagram-first design studies to practice against. Appendix C holds the volatile facts, so the chapters can stay about mechanisms.
+There is one linear path, Chapters 1 through 32, and a reader already fluent in transformers and serving can start at Chapter 12. Part IX (Chapters 33–40) is the agentic system-design interview: one reusable seven-move framework, then seven worked designs, each teaching a whole problem family. Appendix A is a just-in-time bridge for the occasional mathematical or systems background a chapter leans on; Appendix B holds the evidence templates, sizing worksheets, and drills; Appendix C holds the volatile facts, so the chapters can stay about mechanisms.
 
-Begin with [Chapter 1](chapters/01-operational-on-ramp.qmd).
+Begin with [Chapter 1](chapters/01-operational-on-ramp.qmd), or take the book with you: [download the EPUB](agentic-engineering.epub).
