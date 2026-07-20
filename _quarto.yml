@@ -77,6 +77,10 @@ book:
         - chapters/31-world-models-vla-embodied.qmd
         - chapters/32-capstone.qmd
 
+    - part: "Part IX — The Agentic System-Design Interview"
+      chapters:
+        - chapters/33-sd-interview-framework.qmd
+
   appendices:
     - appendices/a-bridge.qmd
     - appendices/b-artifacts-workbook.qmd

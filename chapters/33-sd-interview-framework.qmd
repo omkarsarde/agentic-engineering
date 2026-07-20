@@ -184,7 +184,7 @@ print(f"per query, 2.5k-token prefix hot: ${warm:.4f}")
 print(f"if peak 50 QPS held for a day  : ${plain * 50 * 86_400:>9,.0f}  vs  ${warm * 50 * 86_400:,.0f}")
 ```
 
-A cent and a half per query meets "cost pennies," and the day-rate line is the one to say aloud: at peak load the difference between a cold and a warm prompt cache is tens of thousands of dollars per day, which is why cache-aware context assembly (Chapter 13) is a cost decision, not a tidiness preference. The day-rate is an upper bound — real traffic is not flat at peak — and saying *that* aloud is part of the move.
+About a cent and a half per query meets "cost pennies," and the day-rate line is the one to say aloud: at peak load the difference between a cold and a warm prompt cache is tens of thousands of dollars per day, which is why cache-aware context assembly (Chapter 13) is a cost decision, not a tidiness preference. The day-rate is an upper bound — real traffic is not flat at peak — and saying *that* aloud is part of the move.
 
 Latency next. Chapter 1 measured the two phases of one generation and defined TTFT and TPOT (@sec-ch01-latency, @eq-ch01-tpot); the interview needs one composition on top of them:
 
@@ -413,7 +413,7 @@ print(f"devices at {per_device}/device, 30% headroom: "
 print(f"same, if a 3x burst must be served : {devices_for_load(150, 5.6, per_device)}")
 ```
 
-The interview framing: "fifty QPS at five and a half seconds' residence is 280 in flight; with headroom that is four devices, eleven under a three-times burst — so the real design question is whether we buy the burst or shed it." That last clause is the senior part; the arithmetic exists to set it up. The remaining capacity number is storage for the retrieval index, and its formula is a product of five factors you can recite:
+The interview framing: "fifty QPS at 5.6 s residence is 280 in flight; with headroom that is four devices, eleven under a three-times burst — so the real design question is whether we buy the burst or shed it." That last clause is the senior part; the arithmetic exists to set it up. The remaining capacity number is storage for the retrieval index, and its formula is a product of five factors you can recite:
 
 $$
 M_{\text{index}} \;=\; n\,d\,b\,i\,r,
@@ -646,7 +646,7 @@ The second call is the teaching moment: the same retrieval ambition that fits co
 
 ## How you are graded {#sec-ch33-grading}
 
-The rubric behind this round is not a secret, and this book keeps exactly one copy of it: Appendix B's [five-layer review rubric](../appendices/b-artifacts-workbook.qmd#app-b-design) — scope and contract, model and data path, authority and security, reliability and economics, evidence and operations — with its [45-minute protocol and 0–4 self-scoring scale](../appendices/b-artifacts-workbook.qmd#app-b-timed) and its scoping form. We do not restate them here; we use them. The seven moves are that rubric turned into a clock: moves 1–3 earn layer one, move 4 earns layer two, the dives and the failure pass earn layers three and four, and move 7 earns layer five. The scoring is AND-gated — a brilliant retrieval dive does not compensate for a design with no authority story — which is why the clock refuses to let any move be skipped. What changes between candidate levels is not which topics come up but what the interviewer *hears* when they do:
+The rubric behind this round is not a secret, and this book keeps exactly one copy of it: Appendix B's [five-layer review rubric](../appendices/b-artifacts-workbook.qmd#app-b-design) — scope and contract, model and data path, authority and security, reliability and economics, evidence and operations — with its [45-minute protocol and 0–4 self-scoring scale](../appendices/b-artifacts-workbook.qmd#app-b-timed) and its scoping form. We do not restate them here; we use them. The seven moves are that rubric turned into a clock: moves 1–3 earn layer one, move 4 earns layer two, the dives and the failure pass earn layers three and four, and move 7 earns layer five. The scoring is AND-gated — a brilliant retrieval dive does not compensate for a design with no authority story — which is why the clock refuses to let any move be skipped. What changes between candidate levels is not which topics come up but what the interviewer *hears* when they do (@tbl-ch33-signals):
 
 | Level | What the interviewer hears |
 |---|---|
