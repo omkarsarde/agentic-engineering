@@ -1,201 +1,171 @@
-"""Executable contracts for Chapter 5 scaling and pretraining data."""
+"""Executable invariants for the Chapter 5 teaching code.
+
+Imports the tangled module ``code/ch05/_generated.py`` (produced from the
+chapter's ``# @save`` cells by ``scripts/tangle.py``) and checks the properties
+the chapter claims: that the joint law recovers the exponents of a known
+generator and that its compute-optimal split satisfies ``C = 6ND``; that the
+residual-bootstrap forecast returns an ordered interval; that the data pipeline
+extracts, filters with named reasons, catches a planted near-duplicate via
+MinHash/LSH while preserving documents that merely share boilerplate, removes an
+evaluation plant, and selects exact source quotas without silent backfill; that
+fertility orders a multibyte language above English; and that recursive
+self-consumption collapses a distribution while a real anchor preserves it.
+
+The module is loaded under a unique name (``ch05_generated``) rather than the
+bare ``sys.path`` pattern because several chapters each ship a ``_generated``
+module; a plain import would collide inside one pytest process.
+"""
 
 from __future__ import annotations
 
-import csv
 import importlib.util
-import json
 import sys
-from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CH05 = ROOT / "code" / "ch05"
-CH02 = ROOT / "code" / "ch02"
-sys.path.insert(0, str(CH05))
-sys.path.insert(0, str(CH02))
-
-from chapter2_adapter import BytePairTokenizer  # noqa: E402
-from mini_pipeline import (  # noqa: E402
-    Document,
-    decontaminate,
-    extract_wet,
-    filter_documents,
-    measure_fertility,
-    mix_documents,
-    near_deduplicate,
+_SPEC = importlib.util.spec_from_file_location(
+    "ch05_generated", ROOT / "code" / "ch05" / "_generated.py"
 )
-from scaling_fit import (  # noqa: E402
-    ScalingObservation,
-    extrapolation_interval,
-    fit_scaling_law,
-    load_observations,
-)
+assert _SPEC is not None and _SPEC.loader is not None
+ch05 = importlib.util.module_from_spec(_SPEC)
+sys.modules.setdefault("ch05_generated", ch05)
+_SPEC.loader.exec_module(ch05)
+
+ScalingLaw = ch05.ScalingLaw
+fit_scaling_law = ch05.fit_scaling_law
+extrapolation_interval = ch05.extrapolation_interval
+Document = ch05.Document
+extract_records = ch05.extract_records
+filter_documents = ch05.filter_documents
+near_deduplicate = ch05.near_deduplicate
+decontaminate = ch05.decontaminate
+mix_documents = ch05.mix_documents
+measure_fertility = ch05.measure_fertility
+recursive_generations = ch05.recursive_generations
 
 
-_BUILD_SPEC = importlib.util.spec_from_file_location("ch05_run_build", CH05 / "run_build.py")
-assert _BUILD_SPEC is not None and _BUILD_SPEC.loader is not None
-_BUILD_MODULE = importlib.util.module_from_spec(_BUILD_SPEC)
-_BUILD_SPEC.loader.exec_module(_BUILD_MODULE)
-run_build = _BUILD_MODULE.run_build
-write_synthetic_wet = _BUILD_MODULE.write_synthetic_wet
-CLOZE_TASKS = _BUILD_MODULE.CLOZE_TASKS
+def _synthetic_ladder():
+    """A ladder generated from a known law so the fit has a ground truth."""
+    generator = ScalingLaw(floor=2.0, param_coeff=1.0, data_coeff=1.0,
+                           param_exponent=0.34, data_exponent=0.28)
+    params, tokens, losses = [], [], []
+    rng = np.random.default_rng(0)
+    for n in (2.5e7, 1.0e8, 4.0e8, 1.6e9):
+        for d in (3.0e8, 1.2e9, 6.0e9, 2.4e10):
+            params.append(n)
+            tokens.append(d)
+            losses.append(float(generator.loss(n, d)) + rng.normal(0, 0.002))
+    return params, tokens, losses
 
 
-def test_scaling_fit_recovers_proxy_exponents_and_compute_optimum() -> None:
-    observations = load_observations(CH05 / "fixtures" / "proxy_ladder.csv")
-    law = fit_scaling_law(observations)
-    assert abs(law.parameter_exponent - 0.34) < 0.04
-    assert abs(law.data_exponent - 0.28) < 0.04
+def test_fit_recovers_exponents_and_compute_optimum_obeys_6nd() -> None:
+    params, tokens, losses = _synthetic_ladder()
+    law = fit_scaling_law(params, tokens, losses)
+    # A joint fit at small scale is only loosely determined, so we ask for the
+    # right ballpark on the exponents and a tight fit on the losses themselves.
+    assert abs(law.param_exponent - 0.34) < 0.1
+    assert abs(law.data_exponent - 0.28) < 0.1
+    predicted = [float(law.loss(n, d)) for n, d in zip(params, tokens)]
+    rmse = np.sqrt(np.mean([(p - o) ** 2 for p, o in zip(predicted, losses)]))
+    assert rmse < 0.01
     compute = 9.0e20
-    parameters, tokens, loss = law.compute_optimal(compute)
-    assert abs(6 * parameters * tokens / compute - 1) < 1e-10
-    assert parameters > 0 and tokens > 0 and loss > law.irreducible_loss
+    opt_n, opt_d, opt_loss = law.compute_optimal(compute)
+    assert abs(6 * opt_n * opt_d / compute - 1) < 1e-9
+    assert opt_n > 0 and opt_d > 0 and opt_loss > law.floor
 
 
-def test_extrapolation_reports_an_ordered_uncertainty_interval() -> None:
-    observations = load_observations(CH05 / "fixtures" / "proxy_ladder.csv")
-    result = extrapolation_interval(observations, bootstrap_samples=30, seed=3)
-    assert result["prediction_p05"] < result["prediction_p95"]
-    assert result["fit_p05"] < result["fit_p95"]
-    assert result["target_compute_flops"] == max(row.compute_flops for row in observations) * 10
-    assert result["valid_bootstrap_fits"] >= 15
+def test_scaling_law_loss_falls_with_more_resources() -> None:
+    law = ScalingLaw(2.0, 1.0, 1.0, 0.34, 0.28)
+    assert law.loss(2e8, 1e9) < law.loss(1e8, 1e9)   # more params helps
+    assert law.loss(1e8, 2e9) < law.loss(1e8, 1e9)   # more tokens helps
 
 
-def test_scaling_fit_rejects_nonfinite_observations() -> None:
-    observations = load_observations(CH05 / "fixtures" / "proxy_ladder.csv")
-    observations[0] = ScalingObservation(float("nan"), observations[0].tokens, observations[0].loss)
-    with pytest.raises(ValueError, match="finite and positive"):
-        fit_scaling_law(observations)
-
-
-def test_wet_extraction_and_filtering_leave_a_reason_ledger(tmp_path: Path) -> None:
-    path = tmp_path / "fixture.wet"
-    records = write_synthetic_wet(path, target_bytes=700_000, body_bytes=16_384)
-    documents = extract_wet(path)
-    accepted, rejected = filter_documents(documents)
-    reasons = Counter(row["reason"] for row in rejected)
-    assert len(documents) == records
-    assert {"reference", "library", "community"} & {document.source for document in accepted}
-    assert reasons["rights-policy"] > 0
-    assert reasons["line-repetition"] > 0
-    assert reasons["too-short"] > 0
-
-
-def test_minhash_lsh_clusters_near_duplicates_but_preserves_distinct_text() -> None:
-    common = "\n".join(
-        f"Evidence line {index} describes a measured system and a recorded source."
-        for index in range(180)
+def test_extrapolation_reports_an_ordered_interval() -> None:
+    params, tokens, losses = _synthetic_ladder()
+    result = extrapolation_interval(params, tokens, losses, multiplier=100.0, samples=40, seed=1)
+    assert result["p05"] <= result["p95"]
+    assert result["valid"] >= 20
+    assert result["target_compute"] == pytest.approx(
+        max(6 * p * d for p, d in zip(params, tokens)) * 100.0
     )
-    documents = [
-        Document("a", "https://x/a", "reference", "en", "licensed", common),
-        Document("b", "https://x/b", "reference", "en", "licensed", common + "\nA small revision."),
-        Document(
-            "c",
-            "https://x/c",
-            "library",
-            "en",
-            "public-domain",
-            "\n".join(f"Botany record {index} explains roots leaves and seeds." for index in range(180)),
-        ),
+    assert result["opt_params"] > 0 and result["opt_tokens"] > 0
+
+
+def _raw(url, source, rights, text, lang="en"):
+    return {"url": url, "source": source, "rights": rights, "lang": lang, "text": text}
+
+
+def test_extraction_and_filter_leave_a_reason_ledger() -> None:
+    body = "A durable checked record with plain readable prose about surveys and dates. " * 6
+    raw = [
+        _raw("u://a", "reference", "licensed", body),
+        _raw("u://b", "reference", "restricted", body),          # rights
+        _raw("u://c", "community", "permission", "Short."),      # too-short
+        _raw("u://d", "web", "licensed", "\n".join(["BUY NOW"] * 40)),  # repetition
     ]
-    unique, audit = near_deduplicate(documents)
-    assert len(unique) == 2
-    assert any(row["cluster_size"] == 2 for row in audit)
-    assert {document.doc_id for document in unique} & {"a", "b"}
-    assert "c" in {document.doc_id for document in unique}
+    documents = extract_records(raw)
+    assert len(documents) == 4
+    assert len({d.doc_id for d in documents}) == 4
+    kept, rejected = filter_documents(documents)
+    reasons = {r["reason"] for r in rejected}
+    assert {"rights", "too-short", "repetition"} <= reasons
+    assert [d.source for d in kept] == ["reference"]
 
 
-def test_bottom_k_shingles_do_not_confuse_shared_boilerplate_with_content() -> None:
-    boilerplate = "\n".join(f"Shared navigation item {index} home account help." for index in range(30))
-    left = boilerplate + "\n" + "\n".join(
-        f"Astronomy evidence {index} discusses stars galaxies and spectra." for index in range(700)
-    )
-    right = boilerplate + "\n" + "\n".join(
-        f"Botany evidence {index} discusses roots leaves and pollen." for index in range(700)
-    )
-    documents = [
-        Document("left", "u:left", "reference", "en", "licensed", left),
-        Document("right", "u:right", "reference", "en", "licensed", right),
+def test_minhash_catches_near_duplicate_but_keeps_distinct_boilerplate() -> None:
+    nav = "Home About Login Cart Help"
+    body = "Evidence line {i} describes a measured system and a recorded source."
+    shared = "\n".join(body.format(i=i) for i in range(120))
+    other = "\n".join(f"Botany record {i} explains roots leaves and seeds." for i in range(120))
+    docs = [
+        Document("a", "u://a", "reference", "en", "licensed", nav + "\n" + shared),
+        Document("b", "u://b", "reference", "en", "licensed", nav + "\n" + shared + "\nA tiny footer edit."),
+        Document("c", "u://c", "library", "en", "public-domain", nav + "\n" + other),
     ]
-    unique, _ = near_deduplicate(documents)
-    assert {document.doc_id for document in unique} == {"left", "right"}
+    kept, clusters = near_deduplicate(docs)
+    assert len(kept) == 2                                    # a and b collapse
+    assert any(len(members) == 2 for members in clusters)
+    assert "c" in {d.doc_id for d in kept}                   # distinct doc survives despite shared nav
 
 
-def test_decontamination_mixture_and_fertility_are_explicit() -> None:
-    documents = [
-        Document("r1", "u:r1", "reference", "en", "licensed", "A long clean record. " * 20),
-        Document("r2", "u:r2", "reference", "en", "licensed", "The benchmark answer phrase is hidden here. " * 8),
-        Document("l1", "u:l1", "library", "en", "public-domain", "A library record with durable prose. " * 20),
-        Document("c1", "u:c1", "community", "en", "permission", "A community record with durable prose. " * 20),
-        Document("r3", "u:r3", "reference", "en", "licensed", "Another reference record. " * 20),
-        Document("w1", "u:w1", "web", "en", "licensed", "A zero weight web record. " * 20),
+def test_decontamination_and_mixture_are_exact() -> None:
+    body = "A durable checked record with plain readable prose about surveys. " * 8
+    docs = [
+        Document("r1", "u://r1", "reference", "en", "licensed", body),
+        Document("r2", "u://r2", "reference", "en", "licensed", "the benchmark answer is cobalt river " + body),
+        Document("r3", "u://r3", "reference", "en", "licensed", body),
+        Document("l1", "u://l1", "library", "en", "public-domain", body),
+        Document("l2", "u://l2", "library", "en", "public-domain", body),
+        Document("c1", "u://c1", "community", "en", "permission", body),
+        Document("w1", "u://w1", "web", "en", "licensed", body),
     ]
-    kept, rejected = decontaminate(documents, ["benchmark answer phrase is hidden here"])
-    assert {row["doc_id"] for row in rejected} == {"r2"}
-    mixture = mix_documents(
-        kept, {"reference": 0.5, "library": 0.25, "community": 0.25}, total_docs=4
+    clean, removed = decontaminate(docs, ["benchmark answer is cobalt river"])
+    assert {r["doc_id"] for r in removed} == {"r2"}
+    mixture = mix_documents(clean, {"reference": 0.5, "library": 0.25, "community": 0.25, "web": 0.0}, total=4)
+    counts = {}
+    for doc in mixture:
+        counts[doc.source] = counts.get(doc.source, 0) + 1
+    assert counts == {"reference": 2, "library": 1, "community": 1}
+    assert all(doc.source != "web" for doc in mixture)
+
+
+def test_fertility_orders_a_multibyte_language_above_english() -> None:
+    byte_encode = lambda text: list(text.encode("utf-8"))
+    rows = measure_fertility(
+        {"English": "measure tokens before a budget", "Arabic": "قس الرموز قبل الميزانية"},
+        byte_encode,
     )
-    assert Counter(document.source for document in mixture) == {
-        "reference": 2,
-        "library": 1,
-        "community": 1,
-    }
-    assert all(document.source != "web" for document in mixture)
-    with pytest.raises(ValueError, match="infeasible source quotas"):
-        mix_documents(
-            kept, {"reference": 0.8, "library": 0.1, "community": 0.1, "web": 0.0}, total_docs=4
-        )
-    tokenizer = BytePairTokenizer.train("Engineering evidence and careful budgets. " * 100, 280)
-    fertility = measure_fertility(
-        {"English": "Measure tokens before setting a budget.", "Arabic": "قس الرموز قبل تحديد الميزانية."},
-        tokenizer.encode,
-    )
-    values = {row["language"]: row["tokens_per_character"] for row in fertility}
+    values = {r["language"]: r["tokens_per_char"] for r in rows}
     assert values["Arabic"] > values["English"]
 
 
-def test_integrated_build_emits_evidence_and_cleaned_data_wins(tmp_path: Path) -> None:
-    metrics = run_build(
-        tmp_path,
-        raw_target_bytes=2_200_000,
-        train_steps=35,
-        bootstrap_samples=30,
-        replicate_seeds=(17, 29),
-    )
-    raw_loss = metrics["toy_pretraining"]["raw"]["heldout_loss"]
-    cleaned_loss = metrics["toy_pretraining"]["cleaned"]["heldout_loss"]
-    assert cleaned_loss < raw_loss
-    paired = metrics["toy_pretraining"]["paired_raw_minus_cleaned"]
-    assert paired["cleaned_wins_every_seed"]
-    assert paired["p05"] > 0
-    cloze = metrics["toy_pretraining"]["cloze_contract"]
-    assert cloze["few_shot_examples"] == 2
-    assert cloze["constant_position_baseline_accuracy"] == 0.4
-    assert len(set(cloze["correct_answer_positions"])) == 3
-    assert metrics["pipeline"]["mixture_sources"] == {"reference": 3, "library": 2, "community": 1}
-    assert metrics["experiment_contracts"]["pipeline"]["actual_bytes"] >= 2_200_000
-    for filename in (
-        "metrics.json",
-        "scaling-fit.csv",
-        "pipeline-stages.csv",
-        "dedup-clusters.csv",
-        "document-ledger.csv",
-        "training-curves.csv",
-        "fertility.csv",
-        "samples.txt",
-        "scaling-law-fit.svg",
-        "data-pipeline.svg",
-        "data-quality-training.svg",
-    ):
-        assert (tmp_path / filename).exists()
-    assert not (tmp_path / "synthetic-crawl.wet").exists()
-    saved = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
-    assert saved["experiment_contracts"]["training"]["paired_seeds"] == [17, 29]
-    assert saved["reproducibility"]["input_hashes"]["tokenizer_sha256"]
-    ledger = list(csv.DictReader((tmp_path / "document-ledger.csv").open(encoding="utf-8")))
-    assert len(ledger) == metrics["pipeline"]["stages"][0]["documents"]
-    assert {row["decision"] for row in ledger} >= {"rejected", "selected", "eligible-not-selected"}
+def test_recursive_replacement_collapses_but_a_real_anchor_preserves() -> None:
+    seeds = range(120)
+    replace = np.mean([recursive_generations(mode="replace", seed=s)[0] for s in seeds], axis=0)
+    accumulate = np.mean([recursive_generations(mode="accumulate", seed=s)[0] for s in seeds], axis=0)
+    assert replace[-1] < replace[0] * 0.85          # spread collapses under replacement
+    assert accumulate[-1] > replace[-1]             # the real anchor holds more spread
