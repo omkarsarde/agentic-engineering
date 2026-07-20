@@ -1,62 +1,76 @@
 ---
-description: "Trace one request through prefill and decode, construct its sampling policy, measure uncertainty, and turn abstention into an explicit reliability contract."
+description: "Open the generate loop on a real model: measure the prefill/decode split, build the sampling stack, watch batching break determinism, and turn confidence into a calibrated abstention contract with a risk-coverage curve and conformal guarantee."
 ---
 
-# Inference Anatomy and Model Behavior: Sampling, Hallucination, and Abstention [F] {#sec-ch09}
+# Inference Anatomy and Model Behavior: Sampling, Hallucination, and Abstention {#sec-ch09}
 
-## What you need going in {#sec-ch09-prerequisites}
+A user sends a 2,000-token contract and asks for a 100-token answer. The first token arrives slowly; the rest stream at a steadier pace. A dashboard reports one latency number, so an engineer shortens the output limit. Total latency drops a little, but the long opening pause is untouched. The intervention changed the wrong phase, because the two phases of autoregressive inference obey different physics and the single number hid the split.
 
-> **Assumed:** neural-network fundamentals, backpropagation, basic Python, and beginner PyTorch.
->
-> **From earlier chapters:** [Chapter 1, Sampling controls a distribution, not truth](01-operational-on-ramp.qmd#sec-ch01-sampling) introduced temperature and the difference between repeatability and correctness. [Chapter 8, Coverage turns samples into opportunity](08-reasoning-test-time-compute.qmd#sec-ch08-coverage) separated one-sample quality from repeated-sample coverage. This chapter opens the generate loop and derives the mechanisms behind those observations.
->
-> **Not required:** an inference server, a GPU, conformal prediction, calibration theory, retrieval, or prior experience reading token log probabilities. KV-cache construction was developed earlier; its byte formula is recapped here only to connect one request to latency.
+This chapter opens the generate loop and measures what is inside it, reusing the small GPT we trained in @sec-ch02 as the thing under the microscope. We (i) time prefill against per-token decode on that real model and watch the asymmetry grow with context; (ii) build the sampling stack — temperature, top-$k$, top-$p$, min-$p$, and the logit processors — and show what each does to a real logit vector; (iii) batch the same prompt at different sizes and measure the logits drift, so "set the seed" stops meaning "get the same output"; and (iv) spend the second half on the applied reader's most-asked question — when the model should *not* answer — building calibrated confidence, a semantic-entropy estimate, a risk-coverage curve, and a conformal abstention rule that comes with a coverage guarantee. Everything runs on CPU in about ten seconds.
 
-## Contents {#sec-ch09-contents}
+We start by reusing Chapter 2's tokenizer and model, training one small instance so its next-token distributions are meaningful rather than uniform.
 
-- [One request has two latency phases](#sec-ch09-request)
-- [What you will build](#sec-ch09-will-build)
-- [KV bytes place the phases on a roofline](#sec-ch09-roofline)
-- [Decoding turns logits into a choice](#sec-ch09-decoding)
-- [Truncation shapes the candidate support](#sec-ch09-truncation)
-- [Processor order changes the policy](#sec-ch09-processors)
-- [Seeded is not batch invariant](#sec-ch09-determinism)
-- [Hallucination is a task-relative failure](#sec-ch09-hallucination)
-- [Confidence must forecast correctness](#sec-ch09-confidence)
-- [Abstention spends coverage to buy reliability](#sec-ch09-abstention)
-- [Streaming tokens are not text chunks](#sec-ch09-streaming)
-- [Landscape 2026 (dated)](#sec-ch09-landscape)
-- [Build](#sec-ch09-build)
-- [What endures, what changes](#sec-ch09-endures)
-- [Exercises](#sec-ch09-exercises)
-- [Notes and sources](#sec-ch09-sources)
+```{python}
+import matplotlib
+matplotlib.use("Agg")
+import sys, math, time, codecs, re, random, statistics
+sys.path.insert(0, "code/ch02")
+import torch
+import _generated as ch02              # the tokenizer and TinyGPT we built in Chapter 2
 
-## One request has two latency phases {#sec-ch09-request}
+torch.manual_seed(0)
+torch.set_num_threads(4)
+CORPUS = (
+ "the cat sat on the mat. the dog ran in the park. a happy cat drinks warm milk. "
+ "the dog wants a bone. birds sing in the trees. the lake is calm and blue. "
+ "a child reads a book by the window. the sun sets behind the hills. "
+ "rain falls on the quiet street. the old clock ticks in the hall. "
+ "the cat naps in the sun. the dog barks at the moon. green leaves fall in autumn. "
+) * 10
+tok = ch02.BytePairTokenizer.train(CORPUS, vocab_size=320)
+data = torch.tensor(tok.encode(CORPUS))
+cfg = ch02.GPTConfig(vocab_size=tok.vocab_size, block_size=192, d_model=96, n_heads=6, n_layers=3)
+model = ch02.TinyGPT(cfg)
 
-A user sends a 2,000-token contract and asks for a 100-token answer. The first visible token arrives slowly. The remaining tokens stream at a steadier cadence. A dashboard reports one latency number, so an engineer shortens the output limit. Total latency falls, but the long initial pause remains. The intervention changed the wrong phase.
+opt = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=0.01)
+gen = torch.Generator().manual_seed(0)
+model.train()
+for step in range(120):
+    xb, yb = ch02.next_token_batch(data, cfg.block_size, 16, gen)
+    _, loss, _ = model(xb, yb)
+    opt.zero_grad(); loss.backward()
+    for group in opt.param_groups:
+        group["lr"] = ch02.lr_schedule(step, 120, 2e-3)
+    opt.step()
+model.eval()
+print(f"trained {model.parameter_count()} params, final loss {loss.item():.3f}")
+```
 
-Autoregressive inference has two mechanically different phases. During **prefill**, the model processes the prompt positions in parallel and constructs a key–value cache for every layer. During **decode**, it produces one new position, appends that position's keys and values to the cache, and repeats. Prefill can expose large matrix multiplications to the accelerator. Decode has a serial dependency: token $t+1$ cannot be chosen before token $t$ becomes context.
+The loss is low because the corpus is tiny and repetitive; that is fine. We want a model whose forward pass we can time and whose logits carry real structure, not a good language model.
 
-Three request-level measurements keep the distinction visible:
+## Prefill and decode are two different machines {#sec-ch09-phases}
 
-- **Time to first token (TTFT)** starts when the caller submits a request and ends when the first output token is available. End-to-end TTFT can include network transit, queueing, tokenization, prefill, and the first decode decision. A model-only TTFT excludes some of those terms, so every report must state its boundary.
-- **Time per output token (TPOT)** is the average time between output tokens after the first. **Inter-token latency (ITL)** is each individual gap; its tail exposes stalls hidden by a mean.
-- **End-to-end latency** for $n_{out}$ output tokens is approximately
+Autoregressive inference runs in two mechanically different phases. During **prefill**, the model reads every prompt position at once and builds a key–value cache for each layer — one big parallel matrix multiply that the accelerator likes. During **decode**, it produces one position, appends that position's keys and values to the cache, and repeats. Decode carries a serial dependency: token $t+1$ cannot be chosen until token $t$ is in the context. Prefill is wide and parallel; decode is a long chain of narrow steps.
+
+Three request-level measurements keep the split visible:
+
+- **Time to first token (TTFT)** runs from submission to the first output token. It can absorb network, queueing, tokenization, all of prefill, and the first decode step, so every report must state its boundary.
+- **Time per output token (TPOT)** is the mean gap between output tokens after the first. **Inter-token latency (ITL)** is each individual gap; its tail exposes stalls a mean hides.
+- **End-to-end latency** for $n$ output tokens is approximately
 
 $$
-L \approx \mathrm{TTFT} + (n_{out}-1)\,\mathrm{TPOT}.
-$$
+L \approx \mathrm{TTFT} + (n-1)\,\mathrm{TPOT}.
+$$ {#eq-ch09-latency}
 
-The approximation is useful only when accompanied by its units and scope. Stop detection, detokenization, network flushing, variable step time as the cache grows, and scheduling can make individual gaps differ. Still, it immediately explains why shortening a response mostly affects the second term and shortening a long prompt mostly affects the first.
-
-Figure @fig-ch09-request asks where a millisecond can enter one request. It deliberately ends at the boundary of a single request. Continuous batching, queue disciplines, prefix caching, speculative decoding, goodput, and production service objectives belong to Chapter 10.
+@eq-ch09-latency is only useful with its units and scope attached, but it already explains the opening incident: shortening the *output* shrinks the second term while the *prompt*-driven first term stays put. @fig-ch09-request traces where a millisecond can enter one request; it deliberately stops at a single request, leaving batching and scheduling to @sec-ch10.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch09-request
-%%| fig-cap: "Where does elapsed time enter one autoregressive request?"
+%%| fig-cap: "Where does elapsed time enter one autoregressive request? Prefill runs once over the whole prompt; decode is a serial loop of one-token steps. TTFT covers everything up to the first token; the gaps between later tokens are ITL, and their mean is TPOT."
 sequenceDiagram
     participant C as Caller
-    participant Q as Queue and tokenizer
+    participant Q as Queue + tokenizer
     participant M as Model runtime
     participant D as Detokenizer
     C->>Q: prompt + decoding policy
@@ -66,7 +80,7 @@ sequenceDiagram
     M->>M: decode first output token
     M-->>D: first token ID
     D-->>C: first safe text chunk
-    Note over C,M: TTFT ends
+    Note over C,M: TTFT ends here
     loop remaining output positions
         M->>M: one cached decode step
         M-->>D: next token ID
@@ -75,451 +89,933 @@ sequenceDiagram
     Note over C,M: gaps are ITL; their mean is TPOT
 ```
 
-The durable measurement rule is to preserve both phases. A single percentile for total latency cannot tell whether prompt work, serial generation, queueing, or streaming is responsible.
+Rather than assert the asymmetry, we time it. We prefill prompts of growing length and, from each resulting cache, time one decode step. Prefill work scales with the prompt; a single decode step does not.
 
-## What you will build {#sec-ch09-will-build}
+```{python}
+def median_ms(call, reps):
+    call()                                            # warm up
+    samples = []
+    for _ in range(reps):
+        start = time.perf_counter(); call(); samples.append((time.perf_counter() - start) * 1000)
+    return statistics.median(samples)
 
-::: {.callout-tip title="The inference-behavior microscope"}
-You will run one integrated, engine-free CPU build rooted at [`code/ch09/inference_lab.py`](../code/ch09/inference_lab.py). The facade composes three focused mechanisms: [`request_profile.py`](../code/ch09/request_profile.py), [`decoding_runtime.py`](../code/ch09/decoding_runtime.py), and [`selective_prediction.py`](../code/ch09/selective_prediction.py). Its deterministic fixture follows one request through an illustrative roofline model, accounts for KV bytes, applies temperature and four truncation policies, demonstrates processor ordering, creates a greedy flip from two legal floating-point reduction orders, calibrates answer confidence, constructs split-conformal answer sets, applies conformal risk control, and buffers a split UTF-8 stream safely.
+@torch.inference_mode()
+def prefill(prompt_len):
+    ids = torch.randint(0, cfg.vocab_size, (1, prompt_len))
+    return model(ids)[2]                              # returns the per-layer KV cache
 
-The build emits TTFT, TPOT, total latency, KV MiB, sampler support and entropy, replay equality, probability drift, calibration scores, semantic entropy, risk–coverage points, conformal coverage, and streamed text. [`render_metrics.py`](../code/ch09/render_metrics.py) turns the same values into the chapter's print-safe SVG. Success means every formula matches the fixture, seed replay is exact while the batch-order probe still flips, calibration improves proper scores, and the abstention report distinguishes marginal error from error among answered queries.
+@torch.inference_mode()
+def one_decode(cache):
+    step = torch.randint(0, cfg.vocab_size, (1, 1))
+    return model(step, cache=cache)[2]
 
-[`hf_inference_adapter.py`](../code/ch09/hf_inference_adapter.py) is an optional `torch`/`transformers` seam. It times a real cached greedy loop and compares a prompt alone with the same prompt in a larger batch. It may download weights and is never imported by the default build.
-:::
-
-## KV bytes place the phases on a roofline {#sec-ch09-roofline}
-
-The KV cache prevents decode from recomputing every earlier key and value. This chapter needs one result from that mechanism: its storage grows linearly with sequence length. For a conventional decoder cache,
-
-$$
-M_{KV}=2LBTH_{KV}d_hs \quad \text{bytes}.
-$$
-
-Here $L$ is the number of layers, $B$ the batch size, $T$ the cached sequence length, $H_{KV}$ the number of key/value heads, $d_h$ the head dimension, and $s$ the bytes per stored scalar. The leading 2 accounts for keys and values. Query heads do not appear. In multi-head attention, $H_{KV}$ usually equals the number of query heads. Grouped-query attention uses fewer KV heads, and multi-query attention uses one. A latent-attention architecture stores a compressed representation with architecture-specific additions, so substituting its query-head count into this formula is wrong.
-
-| Attention cache form | Width term | Cache ratio against $H_Q$-head MHA |
-|---|---:|---:|
-| Multi-head attention | $H_{KV}=H_Q$ | 1 |
-| Grouped-query attention | $H_Q > H_{KV} > 1$ | $H_{KV}/H_Q$ |
-| Multi-query attention | $H_{KV}=1$ | $H_Q^{-1}$ |
-| Latent/compressed attention | compressed latent plus model-specific state | derive from that architecture |
-
-The fixture uses 32 layers, eight KV heads, head dimension 128, batch one, and two-byte cache values. It therefore stores 128 KiB per cached token: 16 MiB at 128 tokens, 64 MiB at 512, and 256 MiB at 2,048. These are configuration arithmetic, not measurements of a named model.
-
-Storage explains growth; the **roofline model** explains why prefill and decode often hit different hardware limits. Arithmetic intensity is
-
-$$
-I=\frac{\text{floating-point operations}}{\text{bytes moved from the limiting memory level}}.
-$$
-
-If hardware sustains peak compute $P_{max}$ FLOP/s and memory bandwidth $W_{max}$ byte/s, attainable performance is bounded by
-
-$$
-P(I)\leq \min(P_{max},\;I W_{max}).
-$$
-
-The **ridge point** $I^*=P_{max}/W_{max}$ separates the bandwidth-limited slope from the compute ceiling. For a weight matrix $W\in\mathbb{R}^{m\times k}$ multiplied by $b$ activation vectors, the dominant work is about $(2mkb)$ FLOPs. If the weights dominate traffic and each weight occupies $s$ bytes, intensity is approximately $(2b/s)$. With two-byte weights, $I\approx b$. A decode matrix multiplication has a small effective $b$; prefill exposes many prompt positions and has a much larger one.
-
-This is a placement model, not a latency oracle. Attention reads growing KV state. Fused kernels change traffic. Caches above HBM, quantization, sparsity, and tensor parallel communication add ceilings. The fixture intentionally uses an illustrative 80 TFLOP/s compute ceiling and 2 TB/s memory ceiling, giving a ridge at 40 FLOP/byte. Its decode point at intensity one is bandwidth-bound; all three prefill points are compute-bound. Chapter 10 turns these corollaries into batching and serving decisions.
-
-```python
-# code/ch09/request_profile.py — changed region: request_profiles
-def kv_bytes(tokens: int, batch: int = 1) -> int:
-    return (2 * MODEL["layers"] * MODEL["kv_heads"] * MODEL["head_dim"]
-            * tokens * batch * HARDWARE["dtype_bytes"])
-
-def request_profiles(output_tokens: int = 128):
-    parameter_bytes = MODEL["parameters"] * HARDWARE["dtype_bytes"]
-    for tokens in (128, 512, 2048):
-        prefill_ms = max(2 * MODEL["parameters"] * tokens / HARDWARE["peak_flops"],
-                         parameter_bytes / HARDWARE["memory_bandwidth"]) * 1000
-        decode_bytes = parameter_bytes + kv_bytes(tokens)
-        tpot_ms = max(2 * MODEL["parameters"] / HARDWARE["peak_flops"],
-                      decode_bytes / HARDWARE["memory_bandwidth"]) * 1000
-        yield prefill_ms + tpot_ms, tpot_ms, kv_bytes(tokens)
+contexts, prefill_ms, decode_ms = [32, 64, 128, 176], [], []
+for ctx in contexts:
+    prefill_ms.append(median_ms(lambda: prefill(ctx), 6))
+    cache = prefill(ctx)
+    decode_ms.append(median_ms(lambda: one_decode([(k.clone(), v.clone()) for k, v in cache]), 10))
+    print(f"context {ctx:4d}:  prefill {prefill_ms[-1]:6.2f} ms   decode/token {decode_ms[-1]:5.2f} ms"
+          f"   ratio {prefill_ms[-1] / decode_ms[-1]:4.1f}")
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `request_profile.py` after request profiling | 31 lines | KV storage is linear in cached tokens; prompt length raises TTFT far more than TPOT in the declared illustrative roofline. |
-:::
+Prefill time climbs with context while per-token decode stays roughly flat, so their ratio grows. These are wall-clock numbers on one CPU and will differ on other hardware; the *shape* is the lesson, and @fig-ch09-phases draws it.
 
-## Decoding turns logits into a choice {#sec-ch09-decoding}
-
-At output position $t$, the model produces one logit $z_i$ for every vocabulary token $i$. A decoding policy turns that vector into a token. Greedy decoding returns an index with maximum logit. Sampling first defines probabilities and draws from them. Both choices are caller policy layered over the same model output.
-
-Temperature rescales logits before softmax:
-
-$$
-p_i(T)=\frac{\exp(z_i/T)}{\sum_j\exp(z_j/T)}, \qquad T>0.
-$$
-
-Equivalently, if $p_i(1)$ is the ordinary softmax probability, then $p_i(T)$ is proportional to $p_i(1)^{1/T}$. Lower $T$ sharpens the distribution; higher $T$ flattens it. Dividing all logits by the same positive value preserves their order. Temperature changes gaps and entropy, not which token has the highest logit.
-
-Implement the small-$T$ limit as a branch to argmax rather than evaluating `exp(z/T)` with a near-zero divisor. Subtracting the maximum scaled logit before exponentiation prevents overflow without changing probabilities. The fixture's `softmax` does both. At `temperature=0`, it returns a one-hot greedy distribution with deterministic tie-breaking by index. That makes the *choice rule* deterministic for a fixed logit vector. Section @sec-ch09-determinism will show why the vector itself may still move.
-
-Greedy decoding optimizes one local decision at each step, not the probability or usefulness of a complete sequence. Beam search retains several high-scoring prefixes and usually normalizes sequence scores to reduce a short-output bias. It is search, not stochastic sampling; maximizing likelihood can also produce generic or repetitive text. Chapter 8 owns search and verifier-driven selection. This chapter keeps beam search as an exercise so the sampler remains inspectable.
-
-The bounded Route-B backfill for Chapter 12 begins here. A reader who understands the map `logits → policy → token`, the temperature equation, and the determinism contract in Section @sec-ch09-determinism has the sampling foundation needed to call a model API without treating its parameters as magic.
-
-## Truncation shapes the candidate support {#sec-ch09-truncation}
-
-Sampling from the full softmax preserves every token with nonzero probability. A large vocabulary can leave a long tail of locally implausible tokens. **Truncation** masks part of the distribution and renormalizes the survivors before drawing. It is a bias–diversity decision: remove too little and tail events can damage coherence; remove too much and useful alternatives disappear.
-
-Three policies express different invariants:
-
-- **Top-$k$** retains exactly the $k$ highest-probability tokens, except that a defensive implementation always retains at least one. Its support size is fixed even when the distribution is flat or sharply peaked.
-- **Nucleus or top-$p$** sorts tokens by descending probability and retains the smallest prefix whose cumulative mass reaches $p$. Its support adapts to distribution shape. The token that crosses the threshold belongs in the set; applying the mask before including it creates an off-by-one error. For any threshold, the top token keeps the set nonempty.
-- **Min-$p$** retains token $i$ when $p_i\geq \alpha p_{max}$, where $p_{max}$ is the largest probability and $alpha$ is a relative cutoff. Its threshold rises and falls with the leading token. This can preserve more candidates at high temperature than a fixed cumulative-mass rule while still removing probabilities small relative to the mode.
-
-Locally typical sampling offers another view: retain tokens whose information content $-\log p_i$ lies near the distribution's entropy, then stop when their mass reaches a budget. It can reduce degenerate repetition on some open-ended tasks, but no truncation policy dominates across workloads.
-
-The order `temperature → probabilities → truncation → renormalization` matters because top-$p$, min-$p$, and typicality inspect probabilities after temperature has reshaped them. On the fixture vector at temperature 1.2, full sampling retains five tokens, top-2 retains two, top-$p$ at 0.8 retains three, min-$p$ at 0.15 retains four, and typical sampling at 0.8 retains three. These support counts are local facts about one vector, not universal recommended settings.
-
-```python
-# code/ch09/decoding_runtime.py — changed region: top-p and min-p in truncate
-elif method == "top_p":
-    keep, mass = set(), 0.0
-    for i in order:
-        keep.add(i)
-        mass += probs[i]
-        if mass >= value:
-            break
-elif method == "min_p":
-    cutoff = value * probs[order[0]]
-    keep = {i for i in order if probs[i] >= cutoff} or {order[0]}
-total = sum(probs[i] for i in keep)
-return [probs[i] / total if i in keep else 0.0 for i in range(len(probs))]
+```{python}
+#| label: fig-ch09-phases
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How do the two phases scale with context? Prefill (measured on the trained model) rises with prompt length because it processes every position; a single decode step stays roughly flat because it processes one new token against a cached prefix. The widening gap is why prompt length drives TTFT and output length drives the TPOT term."
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(6.4, 3.6))
+ax.plot(contexts, prefill_ms, "o-", label="prefill (whole prompt)")
+ax.plot(contexts, decode_ms, "s-", label="one decode step")
+ax.set_xlabel("context length (tokens)"); ax.set_ylabel("milliseconds")
+ax.set_title("Prefill scales with context; decode does not"); ax.legend(); ax.grid(alpha=0.3)
+plt.show()
 ```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `decoding_runtime.py` after truncation | 39 lines | Every filter returns a normalized, nonempty distribution; top-$p$ includes its threshold-crossing token. |
-:::
+The operational corollary is the fix the opening engineer missed: a long *prompt* inflates the first term, so prompt trimming, caching, and prefill throughput move TTFT; a long *output* inflates the second term, so it is decode speed and output length that move total latency.
 
-## Processor order changes the policy {#sec-ch09-processors}
+## Where the two phases hit the hardware {#sec-ch09-roofline}
 
-Real generation applies more than temperature and a support mask. A **logit processor** changes logits using token history or caller policy. A logit bias adds a token-specific offset. A presence penalty acts once after a token has appeared. A frequency penalty grows with its count. A repetition penalty often uses a sign-aware multiplicative rule: divide a positive seen-token logit by $r>1$, but multiply a negative one by $r$. Applying the same division to negative logits would make them less negative and accidentally reward repetition.
+The KV cache is what makes decode cheap per step: instead of reprojecting every earlier token, the model reads stored keys and values and appends one new pair. We measured in @sec-ch02 that this storage grows linearly with sequence length, and sized it across attention variants in @sec-ch03. Here we only need the linear growth, read straight off the real cache.
 
-Let $c_i$ be the count of token $i$, $a_i$ an explicit bias, $f$ a frequency penalty, and $u$ a presence penalty. One additive form is
+```{python}
+for ctx in (32, 96, 176):
+    cache = prefill(ctx)
+    total = ch02.kv_cache_bytes(cache)
+    print(f"context {ctx:4d}:  KV cache {total/1024:6.1f} KiB   ({total/ctx:.0f} bytes per token)")
+```
+
+Bytes per token are constant, so the cache is a line in sequence length; grouped-query and multi-query attention lower the slope by storing fewer KV heads (@sec-ch03), but the shape is fixed. That linear-storage fact is also why the two phases hit different hardware limits. A useful one-line recap of the roofline (Williams et al., 2009): performance is bounded by whichever runs out first, compute or memory bandwidth. Prefill exposes many positions per weight read, so it is usually compute-bound; a decode step reads the full weights and the growing cache to produce one token, so it is usually bandwidth-bound — which is exactly why prefill time tracked context above while decode time did not. @sec-ch10 turns this split into batching and scheduling decisions.
+
+## From logits to a token: temperature and truncation {#sec-ch09-decoding}
+
+At each output position the model emits one logit $z_i$ per vocabulary token. A decoding policy turns that vector into a choice. Greedy decoding returns the argmax; sampling first defines probabilities and draws. Both are caller policy layered on the same model output. The first knob is **temperature**, which rescales logits before the softmax:
 
 $$
-z'_i=z_i+a_i-fc_i-u\mathbf{1}[c_i>0].
+p_i(T) = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}, \qquad T > 0.
+$$ {#eq-ch09-temperature}
+
+Equivalently $p_i(T) \propto p_i(1)^{1/T}$: low $T$ sharpens the distribution, high $T$ flattens it, and dividing every logit by the same positive number never changes their order. Temperature moves gaps and entropy, not the argmax. We implement it with two guards the equation hides — a branch to argmax at $T\to 0$ instead of dividing by zero, and subtracting the peak logit before exponentiating so nothing overflows.
+
+```{python}
+# @save
+import math
+
+def softmax(logits: list[float], temperature: float = 1.0) -> list[float]:
+    """Turn logits into a temperature-scaled categorical distribution.
+
+    Implements @eq-ch09-temperature with two numerical guards: at
+    ``temperature <= 0`` it returns a one-hot argmax (the greedy limit, with
+    ties broken by lowest index) rather than dividing by zero, and it subtracts
+    the largest scaled logit before exponentiating so ``exp`` never overflows.
+    Neither guard changes the resulting probabilities.
+
+    Args:
+        logits: One real score per vocabulary token.
+        temperature: Positive scale; smaller sharpens, larger flattens. Values
+            at or below zero select the argmax deterministically.
+
+    Returns:
+        A probability distribution the same length as ``logits`` summing to 1.
+    """
+    if temperature <= 0:
+        winner = max(range(len(logits)), key=logits.__getitem__)
+        return [float(i == winner) for i in range(len(logits))]
+    scaled = [z / temperature for z in logits]
+    peak = max(scaled)
+    exps = [math.exp(s - peak) for s in scaled]
+    total = sum(exps)
+    return [e / total for e in exps]
+```
+
+We take a real logit vector from the trained model. After the prompt `"the cat s"` the model is genuinely uncertain — the completion could be *sat*, *sing*, and others — so its next-token distribution has a few real competitors and a long tail. We sweep the temperature over it.
+
+```{python}
+z_full = model(torch.tensor([tok.encode("the cat s")]))[0][0, -1].tolist()
+order = sorted(range(len(z_full)), key=lambda i: z_full[i], reverse=True)
+head = order[:8]
+labels = [tok.decode([i], errors="replace") for i in head]
+print("top-8 continuations:", labels)
+for T in (0.5, 1.0, 2.0):
+    p = softmax(z_full, T)
+    entropy = -sum(x * math.log(x) for x in p if x)
+    print(f"T={T}:  top prob {max(p):.3f}   entropy {entropy:.2f} nats   argmax id {p.index(max(p))}")
+```
+
+The argmax token is identical at all three temperatures; only the confidence in it changes, from near-certain at $T=0.5$ to nearly flat at $T=2.0$. @fig-ch09-temperature shows the head of the distribution melting as $T$ rises.
+
+```{python}
+#| label: fig-ch09-temperature
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does temperature do to a real distribution? The same eight model logits, softmaxed at three temperatures. Low temperature concentrates mass on the top continuation; high temperature spreads it toward uniform. The ordering — and therefore the greedy choice — never changes."
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 3, figsize=(8.6, 3.0), sharey=True)
+for ax, T in zip(axes, (0.5, 1.0, 2.0)):
+    p = softmax(z_full, T)
+    ax.bar(range(8), [p[i] for i in head], color="0.35")
+    ax.set_title(f"T = {T}"); ax.set_xticks(range(8))
+    ax.set_xticklabels([repr(l) for l in labels], rotation=90, fontsize=6)
+axes[0].set_ylabel("probability")
+plt.show()
+```
+
+Sampling from the full softmax keeps every token with nonzero probability, including a long tail of implausible ones. **Truncation** masks part of the distribution and renormalizes the survivors before drawing — a bias–diversity decision. Four policies express different invariants. **Top-$k$** keeps the $k$ highest-probability tokens (always at least one), a fixed support regardless of shape. **Top-$p$** (nucleus, Holtzman et al., 2020) keeps the smallest prefix whose cumulative mass reaches $p$; its support adapts to shape, and the token that crosses the threshold belongs *inside* the set. **Min-$p$** keeps token $i$ when $p_i \ge \alpha\,p_{\max}$, a floor relative to the mode (Nguyen et al., 2024). **Locally typical** sampling keeps tokens whose surprisal $-\log p_i$ sits near the distribution's entropy (Meister et al., 2023). We implement all four with one nonempty, renormalized result.
+
+```{python}
+# @save
+import math
+
+def truncate(probs: list[float], method: str = "full", value: float = 1.0) -> list[float]:
+    """Mask a distribution to a candidate set and renormalize the survivors.
+
+    Supports four policies that trade fixed against adaptive support: ``top_k``
+    (the ``value`` highest tokens), ``top_p`` (the smallest prefix reaching
+    cumulative mass ``value``, including the crossing token), ``min_p`` (tokens
+    at least ``value`` times the peak probability), and ``typical`` (tokens
+    whose surprisal is closest to the entropy until mass ``value``). Every
+    policy keeps at least one token, so the result is always a valid draw.
+
+    Args:
+        probs: A probability distribution (already temperature-scaled).
+        method: One of ``full``, ``top_k``, ``top_p``, ``min_p``, ``typical``.
+        value: The policy parameter (``k``, ``p``, ``alpha``, or mass budget).
+
+    Returns:
+        A distribution over the same support with dropped tokens at 0.0 and the
+        kept tokens renormalized to sum to 1.
+
+    Raises:
+        ValueError: If ``method`` is not a known policy.
+    """
+    order = sorted(range(len(probs)), key=lambda i: probs[i], reverse=True)
+    if method == "full":
+        keep = set(order)
+    elif method == "top_k":
+        keep = set(order[: max(1, int(value))])
+    elif method == "top_p":
+        keep, mass = set(), 0.0
+        for i in order:
+            keep.add(i); mass += probs[i]
+            if mass >= value:
+                break
+    elif method == "min_p":
+        cutoff = value * probs[order[0]]
+        keep = {i for i in order if probs[i] >= cutoff} or {order[0]}
+    elif method == "typical":
+        entropy = -sum(p * math.log(p) for p in probs if p)
+        ranked = sorted(order, key=lambda i: abs(-math.log(probs[i]) - entropy) if probs[i] else 1e9)
+        keep, mass = set(), 0.0
+        for i in ranked:
+            keep.add(i); mass += probs[i]
+            if mass >= value:
+                break
+    else:
+        raise ValueError(f"unknown truncation method: {method}")
+    total = sum(probs[i] for i in keep)
+    return [probs[i] / total if i in keep else 0.0 for i in range(len(probs))]
+```
+
+We run each policy on the same real distribution and print both the total support and which of the top-8 survive. The interesting behavior is in the tail: `top_p` reaches deep to accumulate its mass, while `min_p` collapses to the single confident token.
+
+```{python}
+base = softmax(z_full, 1.0)
+print(f"full distribution support: {sum(x > 0 for x in base)} tokens")
+for method, value in [("top_k", 3), ("top_p", 0.8), ("min_p", 0.2), ("typical", 0.8)]:
+    d = truncate(base, method, value)
+    survivors = [labels[j] for j, i in enumerate(head) if d[i] > 0]
+    print(f"{method:8} {value}:  support {sum(x > 0 for x in d):3d}   head survivors {survivors}")
+```
+
+```{python}
+#| label: fig-ch09-truncation
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "What does each mask keep? The top-8 head of the same distribution under three policies; kept tokens are dark, dropped ones light. Top-k keeps a fixed count; top-p adapts to shape and reaches into the tail; min-p keys off the peak and here retains only the mode. No policy dominates across distributions."
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 3, figsize=(8.6, 3.0), sharey=True)
+for ax, (method, value) in zip(axes, [("top_k", 3), ("top_p", 0.8), ("min_p", 0.2)]):
+    d = truncate(base, method, value)
+    colors = ["0.30" if d[i] > 0 else "0.80" for i in head]
+    ax.bar(range(8), [base[i] for i in head], color=colors)
+    ax.set_title(f"{method} = {value}"); ax.set_xticks(range(8))
+    ax.set_xticklabels([repr(l) for l in labels], rotation=90, fontsize=6)
+axes[0].set_ylabel("probability")
+plt.show()
+```
+
+The order matters: temperature reshapes the probabilities that top-$p$, min-$p$, and typicality then inspect, so `temperature → probabilities → truncation → renormalize` is the pipeline, and moving a stage changes the policy.
+
+## Logit processors and the order they run in {#sec-ch09-processors}
+
+Real generation applies more than a temperature and a mask. A **logit processor** edits logits using token history or caller policy before sampling. A logit bias adds a fixed offset; a presence penalty fires once after a token appears; a frequency penalty grows with its count. A repetition penalty needs a sign-aware rule: divide a *positive* seen-token logit by $r>1$ to shrink it, but *multiply* a negative one by $r$. Dividing a negative logit would move it toward zero and quietly reward repetition. Writing $c_i$ for the count of token $i$, $a_i$ for an explicit bias, $f$ for the frequency weight, and $u$ for the presence weight, one additive form is
+
 $$
+z'_i = z_i + a_i - f c_i - u \,\mathbf{1}[c_i > 0].
+$$ {#eq-ch09-processor}
 
-If the result is then divided by temperature, an additive offset's effective log-probability strength scales as $(1/T)$. Moving the same penalty after temperature changes the policy. Hard grammar masks, banned tokens, forced tokens, EOS rules, and provider-specific processors add further ordering choices. Record the effective pipeline, not merely parameter names.
+```{python}
+# @save
+def process_logits(logits: list[float], counts: list[int], repetition: float = 1.0,
+                   frequency: float = 0.0, presence: float = 0.0,
+                   bias: dict[int, float] | None = None) -> list[float]:
+    """Rewrite logits from token history using a sign-aware repetition rule.
 
-Figure @fig-ch09-pipeline shows the conceptual order used by the fixture. A serving library may combine stages or use a documented different order; that variation belongs in a versioned adapter test.
+    Applies @eq-ch09-processor plus a multiplicative repetition penalty that is
+    sign-aware: a positive seen logit is divided by ``repetition`` and a
+    negative one is multiplied by it, so a repeated token's probability always
+    falls. Frequency and presence penalties and an explicit per-token bias are
+    additive, so their strength scales as ``1/T`` if a later temperature divide
+    follows — which is why processor order is part of the policy.
+
+    Args:
+        logits: The model's raw logits.
+        counts: How many times each token already appears in the context.
+        repetition: Sign-aware multiplicative penalty (1.0 disables it).
+        frequency: Additive penalty per prior occurrence.
+        presence: Additive penalty applied once if the token appeared at all.
+        bias: Optional explicit per-index logit offsets.
+
+    Returns:
+        The rewritten logit list, same length as ``logits``.
+    """
+    out = logits[:]
+    for i, count in enumerate(counts):
+        if count and repetition != 1.0:
+            out[i] = out[i] / repetition if out[i] > 0 else out[i] * repetition
+        out[i] -= frequency * count + presence * float(count > 0)
+        out[i] += (bias or {}).get(i, 0.0)
+    return out
+```
+
+A quick check on three tokens — one positive and seen, one negative and seen, one unseen — shows the sign-aware split: the positive logit shrinks toward zero, the negative one grows more negative, and the untouched token is unchanged.
+
+```{python}
+demo = process_logits([2.0, -2.0, 0.5], counts=[3, 3, 0], repetition=1.5, frequency=0.1)
+print("before:", [2.0, -2.0, 0.5])
+print("after :", [round(x, 3) for x in demo])
+```
+
+@fig-ch09-pipeline places these stages in the order the sampler uses them. A serving library may fuse stages or document a different order; that variation is exactly what a versioned adapter test should pin.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch09-pipeline
-%%| fig-cap: "In what order does a decoding configuration become one categorical draw?"
+%%| fig-cap: "In what order does a decoding configuration become one categorical draw? History and bias processors edit logits first; temperature then rescales them (so additive penalties feel the 1/T scaling); the softmax, a truncation mask, and renormalization follow; finally a choice rule samples or takes the argmax. Each stage changes a different property of the draw."
 flowchart LR
-    Z(["Model logits z"]) --> P["History processors: repetition, frequency, presence"]
-    P --> B["Policy bias and hard token masks"]
+    Z(["Model logits z"]) --> P["History processors:\nrepetition, frequency, presence"]
+    P --> B["Bias + hard token masks"]
     B --> T["Divide by temperature T"]
-    T --> S(["Stable softmax probabilities"])
-    S --> M["Top-k, top-p, min-p, or typical mask"]
-    M --> R["Renormalize surviving mass"]
+    T --> S(["Stable softmax"])
+    S --> M["top-k / top-p / min-p / typical mask"]
+    M --> R["Renormalize survivors"]
     R --> C{"Choice rule"}
-    C -->|"sample"| RNG(["Seeded categorical draw"])
-    C -->|"greedy"| ARG(["Argmax with tie rule"])
+    C -->|sample| RNG(["Seeded categorical draw"])
+    C -->|greedy| ARG(["Argmax + tie rule"])
 ```
 
-Penalties are behavioral tools, not semantic constraints. Source code may need the same closing bracket, variable name, or indentation token many times. Aggressive repetition suppression can make valid syntax unreachable. Logit bias can ban a surface token while a synonym or alternate tokenization expresses the same content. If a property must hold, use a parser, schema, or deterministic validator at the appropriate boundary; Chapter 10 covers production structured decoding.
+Penalties are behavioral tools, not semantic guarantees. Source code legitimately repeats a bracket or variable name; an aggressive repetition penalty can make valid syntax unreachable, and a banned surface token often has a synonym or alternate tokenization. When a property must hold, enforce it with a parser or schema, not a penalty. The workload table below is a starting map, not a set of universal defaults.
 
 | Workload | Useful starting policy | Measure before changing it |
 |---|---|---|
 | Extract one label from a closed set | greedy or constrained choice | label accuracy, invalid-output rate |
-| Generate varied creative candidates | moderate sampling with adaptive truncation | human preference, diversity, repetition |
-| Produce executable code | low-entropy candidates plus tests | test-pass rate, syntax, repeated-run reliability |
-| Answer a consequential factual query | sampling policy is secondary to evidence and abstention | supported-claim accuracy, coverage, escalation load |
+| Generate varied creative candidates | moderate sampling + adaptive truncation | preference, diversity, repetition |
+| Produce executable code | low-entropy candidates + tests | test-pass rate, syntax, run-to-run reliability |
+| Answer a consequential factual query | sampling is secondary to evidence and abstention | supported-claim accuracy, coverage, escalation load |
 
-The last row prevents a category error. Lower temperature can make a false answer more repeatable. It cannot supply missing evidence.
+The last row prevents a category error we return to below: lowering temperature makes a false answer *more repeatable*, never more correct.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `decoding_runtime.py` after processors | 14 lines | Seen positive logits shrink, seen negative logits become more negative, and additive controls precede temperature. |
-:::
+## Seeded is not batch-invariant {#sec-ch09-determinism}
 
-## Seeded is not batch invariant {#sec-ch09-determinism}
+Set temperature to zero, fix a seed, send the same prompt twice under load, and you can still get different text. Sampling need not be the cause. Greedy output flips whenever a tiny numerical change reorders two nearly tied logits, and floating-point addition is not associative: $(a+b)+c$ can differ from $a+(b+c)$. GPU and CPU kernels partition reductions across threads and tiles, and a runtime may pick a different split when the batch shape, sequence packing, or kernel changes. Those legal execution paths produce slightly different logits — and once an argmax flips, every later token inherits a different context.
 
-Set temperature to zero, fix a seed, send the same prompt twice, and receive different text under load. Nothing requires sampling to have caused the difference. Greedy output changes if a tiny numerical difference changes the ordering of two nearly tied logits.
+We can measure this on the real model. We take one prompt, compute its last-token logits alone, then batch identical copies of it and compare. Nothing about the prompt changed; only the batch shape did.
 
-Floating-point addition is not associative. For finite-precision values, $(a+b)+c$ may differ from $a+(b+c)$. GPU kernels partition reductions across threads and tiles. A runtime may choose a different kernel or split when batch shape, sequence packing, quantization path, or hardware changes. Those legal execution paths can produce slightly different logits. Once an argmax flips, the new token changes every later autoregressive input, so a minute drift can become a different completion.
+```{python}
+@torch.inference_mode()
+def last_logits(ids_batch, net):
+    return net(ids_batch)[0][:, -1]
 
-A seed controls draws from pseudorandom generators. It does not pin weights, tokenizer revision, prompt serialization, kernel selection, reduction order, request batching, model replica, quantization, or postprocessing. Use four distinct reproducibility claims:
+batch_prompt = torch.tensor([tok.encode("the dog ran in the park and the cat sat on the")])
+base_logits = last_logits(batch_prompt, model)[0]
+for B in (2, 8, 32):
+    got = last_logits(batch_prompt.repeat(B, 1), model)[0]
+    drift = (got - base_logits).abs().max().item()
+    flip = int(base_logits.argmax().item() != got.argmax().item())
+    print(f"batch {B:3d}:  max |Δlogit| {drift:.2e}   greedy flip {flip}")
 
-1. **Seed replay:** the same probability vectors and random-number stream yield the same sampled indices.
-2. **Run-to-run numerical repeatability:** the same request and execution environment yield the same intermediate values.
-3. **Batch invariance:** one request yields the same result regardless of which other requests share the batch or how its sequence is partitioned.
-4. **Cross-environment bitwise identity:** results remain identical across hardware, driver, library, model, and tokenizer revisions. This is the strongest and least commonly available claim.
-
-The lab's narrated failure is intentionally small. Token A's logit contribution is reduced from `[1e16, 1, -1e16, 0]`. Serial summation loses the 1 and returns zero. A partitioned order cancels the large terms first and returns one. Token B stays at 0.5. The two legal orders flip the greedy winner and move the maximum probability by 0.244919. This is a pedagogical construction, not a measured estimate of drift in a real model.
-
-```python
-# code/ch09/request_profile.py — changed region: batch_invariance_probe
-parts = [1e16, 1.0, -1e16, 0.0]
-serial = sum(parts)
-partitioned = (parts[0] + parts[2]) + (parts[1] + parts[3])
-single = softmax([serial, 0.5])
-batched = softmax([partitioned, 0.5])
-greedy_flip = single.index(max(single)) != batched.index(max(batched))
-max_drift = max(abs(a - b) for a, b in zip(single, batched))
+fp64 = model.double()
+base64 = last_logits(batch_prompt, fp64)[0]
+drift64 = (last_logits(batch_prompt.repeat(32, 1), fp64)[0] - base64).abs().max().item()
+model.float()
+print(f"batch  32 in float64:  max |Δlogit| {drift64:.2e}")
 ```
 
-Figure @fig-ch09-determinism turns “deterministic” into an auditable envelope. Pinning only the seed closes one of several doors.
+The drift is small — around a part in ten million in float32 — and here it does not flip the greedy token, because this prompt's top two logits are far apart. Note the trap: at batch 2 the logits may be bitwise identical, so the bug hides until load grows the batch. In float64 the drift nearly vanishes, which locates the cause in finite precision, not in the model. To see how a drift this size *can* flip a choice, we construct the worst case: a logit built from a catastrophic cancellation, summed two legal ways.
+
+```{python}
+# @save
+def batch_invariance_probe() -> dict[str, float]:
+    """Show that two legal reduction orders can flip a greedy argmax.
+
+    A logit is assembled from terms that catastrophically cancel. Summed left to
+    right the small term is lost and the logit is 0.0; summed as two partial
+    sums the large terms cancel first and the logit is 1.0. Against a rival at
+    0.5 the two orders pick different winners, so a purely numerical reduction
+    change — not randomness — moves the argmax and the top probability.
+
+    Returns:
+        A dict with both reduction sums, whether the greedy winner flipped, and
+        the maximum probability drift between the two orders.
+    """
+    parts = [1e16, 1.0, -1e16, 0.0]
+    serial = 0.0
+    for term in parts:
+        serial += term                      # left-to-right loses the 1.0
+    partitioned = (parts[0] + parts[2]) + (parts[1] + parts[3])   # cancels large terms first
+    single = softmax([serial, 0.5])
+    batched = softmax([partitioned, 0.5])
+    return {"serial_sum": serial, "partitioned_sum": partitioned,
+            "greedy_flip": float(single.index(max(single)) != batched.index(max(batched))),
+            "max_drift": max(abs(a - b) for a, b in zip(single, batched))}
+```
+
+We run the constructed probe and read off the flip.
+
+```{python}
+print(batch_invariance_probe())
+```
+
+The two orders disagree by a full token and move the top probability by about a quarter. That is the mechanism behind the measured drift, magnified. It motivates four distinct reproducibility claims, in increasing strength: **seed replay** (same probabilities and RNG stream give the same draws), **run-to-run repeatability** (same request and environment give the same values), **batch invariance** (a request is unaffected by its batch-mates), and **cross-environment bitwise identity** (identical across hardware, drivers, and library versions). A seed buys only the first. @fig-ch09-determinism lists the surfaces that must be pinned before a repeated request can promise the same bytes.
 
 ```{mermaid}
+%%| echo: false
 %%| label: fig-ch09-determinism
-%%| fig-cap: "Which surfaces must be invariant before a repeated request can promise the same output?"
+%%| fig-cap: "Which surfaces must be invariant before a repeated request can promise the same output? A seed pins only the RNG stream. Weights, tokenizer, template, numerical path, batch scheduling, and detokenization each add a door; an unpinned replica, load level, or library version reopens the numerical-path and scheduling doors from the side."
 flowchart LR
     I(["Canonical request bytes"]) --> W["Pinned weights + tokenizer + template"]
-    W --> N["Pinned numerical path: dtype, kernels, reductions"]
-    N --> B["Batch- and partition-invariant scheduling"]
-    B --> R["Pinned RNG stream and tie rule"]
+    W --> N["Pinned numerical path:\ndtype, kernels, reductions"]
+    N --> Bt["Batch- and partition-invariant scheduling"]
+    Bt --> R["Pinned RNG stream + tie rule"]
     R --> D["Buffered detokenization + stop policy"]
     D --> O(["Reproducible output bytes"])
-    U["Unpinned replica, load, version, or hardware"] -.-> N
-    U -.-> B
+    U["Unpinned replica, load, version, hardware"] -.-> N
+    U -.-> Bt
 ```
 
-Test the property you need under the concurrency pattern you will operate. Save prompt bytes, all decoding controls, model and tokenizer revisions, runtime and kernel versions, device type, batch context when exposed, token IDs, and token-level scores. If the product invariant is semantic equivalence rather than byte identity, define and evaluate that separately. Chapter 22 owns the statistical comparison; this section owns the causal surfaces that must be recorded.
-
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `request_profile.py` after the batch probe | 12 lines | Exact seed replay does not imply batch invariance; a changed reduction order can flip greedy output without randomness. |
-:::
+Test the property you actually need, under the concurrency you will run, and record prompt bytes, all decoding controls, model and tokenizer revisions, kernel versions, device, and batch context. If the product invariant is *semantic* equivalence rather than byte identity, define and measure that separately — @sec-ch22 owns that statistical comparison; this section owns the causal surfaces.
 
 ## Hallucination is a task-relative failure {#sec-ch09-hallucination}
 
-Now consider a different failure. A user asks, “Which treaty created the Aerolith Maritime Council in 1987?” The entity is fabricated. A model produces a fluent treaty name, date, membership list, and citation. Lowering temperature makes the same invention appear more consistently. The inference loop is behaving as configured; the answer fails against the world.
+Now a different failure. A user asks, "Which treaty created the Aerolith Maritime Council in 1987?" The entity is invented. The model returns a fluent treaty name, a date, a membership list, and a citation. Lowering the temperature makes the same fabrication *more* consistent. The loop is behaving exactly as configured; the answer fails against the world.
 
-**Hallucination** is useful only after the evaluation contract says what the output should be faithful to. The term otherwise collapses different defects with different remedies:
+"Hallucination" is only a measurable defect once the evaluation contract names what the output must be faithful to. Absent that, the word collapses failures with different remedies.
 
-| Failure | Reference violated | Example | Appropriate first measurement |
+| Failure | Reference violated | Example | First measurement |
 |---|---|---|---|
 | Factual error | external world state | wrong capital or date | atomic factual correctness |
-| Fabrication | existence in the world or source set | invented entity or paper | existence/provenance check |
-| Unsupported claim | supplied evidence | true-sounding claim absent from sources | claim-level support |
-| Source contradiction | supplied evidence | answer reverses a policy clause | entailment/contradiction |
-| Stale knowledge | required snapshot time | names an earlier office holder | time-stamped correctness |
-| Task misunderstanding | user intent or schema | answers a related question | intent/task success |
-| Unfaithful explanation | claimed causal reasoning | rationale does not support answer | process/faithfulness study |
+| Fabrication | existence in the world | invented entity or paper | existence / provenance check |
+| Unsupported claim | supplied evidence | true-sounding, absent from sources | claim-level support |
+| Source contradiction | supplied evidence | reverses a policy clause | entailment / contradiction |
+| Stale knowledge | required snapshot time | names a former office holder | time-stamped correctness |
+| Task misunderstanding | user intent or schema | answers a related question | intent / task success |
 
-Long-form factuality should be decomposed into atomic claims before scoring; one correct paragraph can contain one consequential false sentence. A citation is not evidence until the cited source exists, is authoritative for the claim, and entails it. Core retrieval, source selection, citation entailment, and attribution mechanics belong to Chapter 14. This chapter owns the prior decision: whether the system has enough calibrated support to answer at all.
+A long answer should be decomposed into atomic claims before scoring, because one correct paragraph can carry one consequential false sentence (Min et al., 2023). We take the fabricated answer, split it into atomic claims, mark each supported or not against what actually exists, and compute a support fraction.
 
-Why does the failure occur? Next-token training rewards predictions that match text distributions. A false premise can resemble a legitimate historical question, and likely continuations include treaty vocabulary. Finite training data, ambiguous or conflicting sources, model capacity, distribution shift, and lossy parametric storage all create error. Post-training can reward helpful, decisive answers. Evaluations that give zero for abstention but some chance of credit for guessing reinforce the same behavior. The 2025 analysis [Why Language Models Hallucinate](https://arxiv.org/abs/2509.04664) formalizes this guessing incentive; [TruthfulQA](https://arxiv.org/abs/2109.07958) earlier demonstrated that imitating human text can reproduce popular false beliefs.
+```{python}
+# @save
+def support_fraction(claims: list[tuple[str, bool]]) -> float:
+    """Fraction of atomic claims that are supported by the reference.
 
-No decoding rule repairs a knowledge gap in general. Greedy decoding can select the most probable false continuation. Sampling may occasionally find a correct answer but also expands the tail. Self-consistency can concentrate a shared misconception. A model's critique can share its first answer's missing knowledge. External evidence and independent checks can change the information state; abstention can prevent an unsupported guess from being presented as fact.
+    Long-form factuality is scored per atomic claim, not per answer, so a fluent
+    response with one false sentence is not credited as correct. ``claims`` pairs
+    each atomic statement with whether the reference (world state or source set)
+    supports it.
 
-This section begins the bounded Chapter 14 backfill cluster. The durable sequence is: define the reference, decompose the failure, measure a confidence signal against correctness, and enforce an action below threshold. “Hallucination rate” without those choices is not a reproducible metric.
+    Args:
+        claims: ``(claim_text, is_supported)`` pairs from one answer.
+
+    Returns:
+        Supported claims divided by total claims, in [0, 1]; 0.0 if empty.
+    """
+    if not claims:
+        return 0.0
+    return sum(1 for _, ok in claims if ok) / len(claims)
+```
+
+We decompose the fabricated Aerolith answer and score it.
+
+```{python}
+answer = [
+    ("The Aerolith Maritime Council was created by a treaty", False),
+    ("It was created in 1987", False),
+    ("Maritime councils coordinate shipping policy", True),
+    ("It has seven member states", False),
+]
+supported = sum(ok for _, ok in answer)
+print(f"atomic claims: {len(answer)}   supported: {supported}   support fraction: {support_fraction(answer):.2f}")
+```
+
+A support fraction of a quarter, with a real-sounding citation, is the shape of a confident fabrication. Why does it happen? Next-token training rewards continuations that match text distributions, and a false premise can look exactly like a legitimate historical question whose likely continuations include treaty vocabulary. Post-training and evaluations that score a guess above an abstention sharpen the incentive to answer anyway; the 2025 analysis of *Why Language Models Hallucinate* (Kalai et al., 2025) formalizes that guessing incentive, and TruthfulQA (Lin et al., 2022) earlier showed models reproduce popular human falsehoods. No decoding rule repairs a missing fact: greedy picks the most probable false continuation, sampling widens the tail, and self-consistency can concentrate a shared misconception. What changes the outcome is *information* — external evidence and grounding, which @sec-ch14 owns — or declining to answer, which is the rest of this chapter.
 
 ## Confidence must forecast correctness {#sec-ch09-confidence}
 
-A confidence score $q(x)$ is calibrated for a binary event $Y$ when cases assigned confidence near $c$ are correct about a fraction $c$ of the time:
+To decide whether to answer, we need a confidence signal that *forecasts* correctness. A score $q(x)$ is **calibrated** for a binary event $Y$ when the cases it rates near $c$ are correct about a fraction $c$ of the time:
 
 $$
-\Pr(Y=1\mid q(X)\approx c)\approx c.
+\Pr\!\big(Y = 1 \mid q(X) \approx c\big) \approx c.
+$$ {#eq-ch09-calibration}
+
+Calibration is population- and event-specific: a score calibrated for short-answer correctness need not be calibrated for every atomic claim or after a domain shift. Several signals compete. **Token log probability** is available but measures fluency, not truth; summed it grows more negative with length, averaged it changes the quantity. **P(True)** shows the model its own answer and asks whether it is correct, a more relevant event with useful in-distribution calibration (Kadavath et al., 2022). **Verbalized confidence** — the model stating "I'm about 80% sure" — can beat raw probabilities for some post-trained models (Tian et al., 2023) but is a learned utterance that must itself be calibrated. We compare two of these on a labeled fixture, honestly synthetic, where each item carries a correctness label, an overconfident logprob-style score, and a coarse verbalized score.
+
+```{python}
+# @save
+import random
+
+def qa_fixture(n: int = 400, seed: int = 0) -> list[dict]:
+    """Build an illustrative QA fixture with two competing confidence signals.
+
+    Each item has a ground-truth ``correct`` label plus two confidence scores on
+    the same question: ``logprob_conf``, a token-probability-style signal that is
+    monotone in latent skill but systematically overconfident, and
+    ``verbal_conf``, a coarse rounded "how sure are you" number. The two are
+    deliberately miscalibrated in different ways so calibration and abstention
+    have something to fix. Values are synthetic, not measured on any model.
+
+    Args:
+        n: Number of items to generate.
+        seed: Seed for the internal RNG, so the fixture is reproducible.
+
+    Returns:
+        A list of dicts with ``correct``, ``logprob_conf``, and ``verbal_conf``.
+    """
+    rng = random.Random(seed)
+    items = []
+    for _ in range(n):
+        skill = rng.random()
+        correct = int(rng.random() < skill)
+        logprob_conf = min(0.99, max(0.5, 0.5 + 0.5 * skill ** 0.5))
+        verbal_conf = min(0.95, max(0.5, round((0.4 + 0.6 * skill) * 10) / 10))
+        items.append({"correct": correct, "logprob_conf": logprob_conf, "verbal_conf": verbal_conf})
+    return items
+```
+
+Two proper scoring rules grade a probability against an outcome: the **Brier score** $(q-y)^2$ and log loss; both are minimized in expectation by truthful probabilities. **Expected calibration error (ECE)** bins predictions and averages the gap between mean confidence and bin accuracy — readable, but sensitive to bins. We compute all three for both signals.
+
+```{python}
+# @save
+def brier(items: list[dict], key: str) -> float:
+    """Mean squared error between a confidence score and the binary outcome."""
+    return sum((it[key] - it["correct"]) ** 2 for it in items) / len(items)
+
+def ece(items: list[dict], key: str, bins: int = 10) -> float:
+    """Expected calibration error: accuracy-weighted gap between confidence and accuracy.
+
+    Predictions are grouped into ``bins`` equal-width confidence buckets; each
+    bucket contributes the absolute difference between its mean confidence and
+    its empirical accuracy, weighted by its share of the data.
+
+    Args:
+        items: Scored items with a ``correct`` field.
+        key: Which confidence field to grade.
+        bins: Number of equal-width confidence buckets.
+
+    Returns:
+        The weighted calibration gap, in [0, 1]; lower is better.
+    """
+    buckets = [[] for _ in range(bins)]
+    for it in items:
+        buckets[min(bins - 1, int(it[key] * bins))].append(it)
+    error = 0.0
+    for bucket in buckets:
+        if bucket:
+            confidence = sum(it[key] for it in bucket) / len(bucket)
+            accuracy = sum(it["correct"] for it in bucket) / len(bucket)
+            error += len(bucket) / len(items) * abs(confidence - accuracy)
+    return error
+```
+
+```{python}
+fixture = qa_fixture()
+accuracy = sum(it["correct"] for it in fixture) / len(fixture)
+print(f"base accuracy: {accuracy:.3f}")
+for key in ("logprob_conf", "verbal_conf"):
+    print(f"{key:13}  ECE {ece(fixture, key):.3f}   Brier {brier(fixture, key):.3f}")
+```
+
+The raw logprob signal is badly overconfident; the verbalized signal is coarser but here better calibrated — a reminder that neither is trustworthy by default. Open-ended answers add a second problem: "Paris" and "The capital is Paris" are different strings with the same meaning, and surface entropy counts them apart. **Semantic entropy** first groups mutually equivalent answers into meaning clusters $c$, sums the mass in each, and computes
+
 $$
+H_{\text{sem}}(x) = -\sum_c P(c \mid x)\,\log P(c \mid x), \qquad P(c \mid x) = \sum_{y \in c} p(y \mid x).
+$$ {#eq-ch09-semantic}
 
-Calibration is population- and event-specific. A score calibrated for exact short-answer correctness may not be calibrated for every atomic claim in a long response, for policy compliance, or after a domain shift.
+Real systems cluster with a bidirectional-entailment model (Kuhn et al., 2023; Farquhar et al., 2024); we use a deterministic normalizer — lowercase, drop punctuation and a few stopwords, keep the content words as the cluster key — which collapses paraphrases of a single answer.
 
-Token log probability is one possible signal, not a probability that a world claim is true. Summing token log probabilities gives a sequence log probability, which usually becomes more negative with length. Averaging removes that direct length scaling but changes the quantity and can favor verbose continuations differently. A probability assigned to “True” after showing the model its own answer, often called **P(True)**, asks a more relevant event; [Kadavath et al.](https://arxiv.org/abs/2207.05221) found useful calibration in studied settings and weaker cross-task generalization for some self-knowledge signals. Verbalized confidence can outperform raw conditional probabilities for some post-trained models, as [Tian et al.](https://arxiv.org/abs/2305.14975) reported, but it remains a learned utterance that must be calibrated on the deployment task.
+```{python}
+# @save
+import math, re
 
-Open-ended answers introduce a symmetry: “Paris” and “The capital is Paris” are different strings with the same meaning. Surface-form entropy counts them separately. **Semantic entropy** first groups mutually equivalent answers into meaning clusters $c$, sums probability mass inside each cluster, and computes
+def normalize_answer(answer: str) -> tuple:
+    """Canonicalize an answer to a content-word key for meaning-equivalence.
+
+    Lowercases, keeps alphanumeric words, drops a small stopword set, and sorts
+    the remainder, so "Paris", "The city is Paris", and "paris." map to the same
+    key. This is a deterministic stand-in for the entailment-based clustering a
+    production semantic-entropy estimator would use.
+
+    Args:
+        answer: One sampled answer string.
+
+    Returns:
+        A sorted tuple of content words used as the cluster identity.
+    """
+    words = re.findall(r"[a-z0-9]+", answer.lower())
+    stop = {"the", "a", "an", "is", "was", "it", "of", "in", "city", "capital", "named"}
+    return tuple(sorted(w for w in words if w not in stop))
+
+def semantic_entropy(samples: list[tuple[str, float]]) -> dict:
+    """Compare surface-form entropy with entropy over meaning clusters.
+
+    Groups ``(answer, probability)`` samples by ``normalize_answer`` and computes
+    entropy before and after grouping (@eq-ch09-semantic). Paraphrases of one
+    answer collapse into a single cluster, so semantic entropy is at most surface
+    entropy and is lower whenever surface variation is meaning-preserving.
+
+    Args:
+        samples: Sampled answers with their probabilities.
+
+    Returns:
+        A dict with surface and semantic entropy (nats) and the cluster masses.
+    """
+    surface, clusters = {}, {}
+    for answer, prob in samples:
+        surface[answer] = surface.get(answer, 0.0) + prob
+        key = normalize_answer(answer)
+        clusters[key] = clusters.get(key, 0.0) + prob
+    entropy = lambda ps: -sum(p * math.log(p) for p in ps if p > 0)
+    return {"surface_nats": entropy(surface.values()), "semantic_nats": entropy(clusters.values()),
+            "clusters": {(" ".join(k) or "<empty>"): round(v, 3) for k, v in clusters.items()}}
+```
+
+We sample five surface answers to one question — three of them paraphrases of "Paris" — and compare surface entropy with entropy after clustering.
+
+```{python}
+samples = [("Paris", 0.36), ("The city is Paris", 0.24), ("Lyon", 0.20),
+           ("It was Marseille", 0.12), ("paris.", 0.08)]
+result = semantic_entropy(samples)
+print(f"surface entropy  {result['surface_nats']:.3f} nats")
+print(f"semantic entropy {result['semantic_nats']:.3f} nats")
+print("clusters:", result["clusters"])
+```
+
+Three surface answers about Paris collapse into one meaning cluster holding most of the mass, and the entropy drops accordingly. The remaining uncertainty is real disagreement between Paris, Lyon, and Marseille — the kind an abstention policy should react to — not paraphrase noise. @fig-ch09-semantic shows the collapse.
+
+```{python}
+#| label: fig-ch09-semantic
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How does meaning-clustering change the uncertainty estimate? Five surface answers (left) become three meaning clusters (right); the three Paris paraphrases merge into one bar carrying most of the mass. Surface entropy overstates uncertainty by counting paraphrase as disagreement; semantic entropy keeps only genuine ambiguity."
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 2, figsize=(8.0, 3.2))
+axes[0].bar(range(len(samples)), [p for _, p in samples], color="0.55")
+axes[0].set_xticks(range(len(samples))); axes[0].set_xticklabels([a for a, _ in samples], rotation=30, ha="right", fontsize=7)
+axes[0].set_title(f"surface  ({result['surface_nats']:.2f} nats)"); axes[0].set_ylabel("probability")
+clusters = result["clusters"]
+axes[1].bar(range(len(clusters)), list(clusters.values()), color="0.30")
+axes[1].set_xticks(range(len(clusters))); axes[1].set_xticklabels(list(clusters), rotation=30, ha="right", fontsize=7)
+axes[1].set_title(f"semantic  ({result['semantic_nats']:.2f} nats)")
+plt.show()
+```
+
+A miscalibrated but well-ranked score can often be *fixed* by a monotone map. **Temperature scaling** (Guo et al., 2017) fits one scalar on a held-out split and rescales the confidence in logit space, changing calibration without touching the ranking. We fit it on the logprob signal and re-score.
+
+```{python}
+# @save
+import math
+
+def fit_temperature(items: list[dict], key: str) -> float:
+    """Fit one scalar calibration temperature by minimizing held-out log loss.
+
+    Rescales each confidence in logit space by ``1/tau`` and grid-searches ``tau``
+    over [0.30, 5.0] for the value minimizing binary NLL. Because the map is
+    monotone it changes only how confidence values map to probabilities, never
+    the order of examples — so it improves calibration without changing which
+    items a threshold answers first.
+
+    Args:
+        items: Scored items with a ``correct`` field.
+        key: Which confidence field to calibrate.
+
+    Returns:
+        The temperature minimizing held-out log loss.
+    """
+    def nll(tau: float) -> float:
+        total = 0.0
+        for it in items:
+            q = it[key]
+            calibrated = 1 / (1 + math.exp(-math.log(q / (1 - q)) / tau))
+            p = calibrated if it["correct"] else 1 - calibrated
+            total -= math.log(max(p, 1e-12))
+        return total / len(items)
+    return min((0.30 + i * 0.01 for i in range(471)), key=nll)
+
+def calibrate(q: float, tau: float) -> float:
+    """Apply a fitted temperature to one confidence in logit space."""
+    return 1 / (1 + math.exp(-math.log(q / (1 - q)) / tau))
+```
+
+We fit the temperature on the fixture and re-score the logprob signal.
+
+```{python}
+tau = fit_temperature(fixture, "logprob_conf")
+for it in fixture:
+    it["cal_conf"] = calibrate(it["logprob_conf"], tau)
+print(f"fitted temperature: {tau:.2f}")
+print(f"logprob  raw   ECE {ece(fixture, 'logprob_conf'):.3f}   Brier {brier(fixture, 'logprob_conf'):.3f}")
+print(f"logprob  cal   ECE {ece(fixture, 'cal_conf'):.3f}   Brier {brier(fixture, 'cal_conf'):.3f}")
+```
+
+Temperature scaling cuts the calibration error roughly in half. @fig-ch09-reliability makes the correction visible as points pulled toward the diagonal.
+
+```{python}
+#| label: fig-ch09-reliability
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "Does calibration move confidence toward accuracy? Each point bins items by confidence and plots bin accuracy against mean confidence; the diagonal is perfect calibration. Raw logprob confidence sits below the line (overconfident); after temperature scaling the points move toward the diagonal. Calibration changes the meaning of a threshold, not the ranking of examples."
+import matplotlib.pyplot as plt
+def reliability(items, key, bins=10):
+    xs, ys = [], []
+    for b in range(bins):
+        group = [it for it in items if int(it[key] * bins) == b or (b == bins - 1 and it[key] == 1.0)]
+        if group:
+            xs.append(sum(it[key] for it in group) / len(group))
+            ys.append(sum(it["correct"] for it in group) / len(group))
+    return xs, ys
+fig, ax = plt.subplots(figsize=(4.6, 4.2))
+ax.plot([0, 1], [0, 1], "--", color="0.6", label="perfect")
+ax.plot(*reliability(fixture, "logprob_conf"), "o-", color="0.6", label="raw logprob")
+ax.plot(*reliability(fixture, "cal_conf"), "s-", color="0.1", label="calibrated")
+ax.set_xlabel("mean confidence"); ax.set_ylabel("bin accuracy"); ax.legend(); ax.grid(alpha=0.3)
+plt.show()
+```
+
+## Abstention and selective prediction {#sec-ch09-abstention}
+
+Calibration tells us whether a confidence can be trusted; an **abstention policy** turns it into an action. Below a threshold, the system can say it lacks support, ask a clarifying question, retrieve evidence, narrow the claim, or escalate to a human. The model may propose the confidence, but deterministic caller code must enforce the threshold — this is the mechanism behind Chapter 1's `decide_response`, which routed answer, retrieve, or abstain from a confidence and an evidence score (@sec-ch01). Writing $g_t(x) = \mathbf{1}[q(x) \ge t]$ for "answer at threshold $t$" and $\ell$ for a wrong-answer loss, **coverage** is the answered fraction $C(t) = \mathbb{E}[g_t]$, and two different quantities are both called risk:
 
 $$
-P(c\mid x)=\sum_{y\in c}p(y\mid x), \qquad
-H_{sem}(x)=-\sum_c P(c\mid x)\log P(c\mid x).
-$$
+R_{\text{selective}}(t) = \frac{\mathbb{E}[\ell\, g_t]}{\mathbb{E}[g_t]}, \qquad R_{\text{marginal}}(t) = \mathbb{E}[\ell\, g_t].
+$$ {#eq-ch09-risk}
 
-In the fixture, surface probabilities `[0.36, 0.24, 0.20, 0.12, 0.08]` have entropy 1.489 nats. The first two are paraphrases, so merging them lowers semantic entropy to 1.085 nats. Real semantic-entropy systems sample responses and use bidirectional entailment or another semantic equivalence model. The clustering model can make mistakes, the samples are correlated, and entropy may reflect legitimate ambiguity rather than ignorance. [Kuhn, Gal, and Farquhar](https://arxiv.org/abs/2302.09664) introduced the linguistic-invariance formulation; later work demonstrated hallucination detection with semantic entropy in open-ended generation.
+Selective risk is the error rate *among answered queries*; marginal error is the wrong-answer rate over *all* queries, counting abstentions as zero loss. They differ by coverage: $R_{\text{marginal}} = C \cdot R_{\text{selective}}$. A requirement of "ten percent risk" is incomplete until it names which. Sweeping $t$ traces a **risk-coverage curve**.
 
-Calibration needs a loss, not only a diagram. For binary correctness $y\in\{0,1\}$ and score $q$:
+```{python}
+# @save
+def risk_curve(items: list[dict], key: str) -> list[dict]:
+    """Trace coverage, selective risk, and marginal error as the threshold sweeps.
 
-$$
-\mathrm{Brier}(q,y)=(q-y)^2,
-$$
+    For each distinct confidence value used as a threshold, reports the fraction
+    answered (coverage), the error rate among answered items (selective risk,
+    @eq-ch09-risk), and the wrong-answer rate over all items (marginal error).
+    A useful confidence ranking lowers selective risk as coverage falls.
 
-and log loss is $-y\log q-(1-y)\log(1-q)$. Both are **proper scoring rules**: in expectation, truthful probabilities minimize the score. Expected calibration error (ECE) bins predictions, compares mean confidence with bin accuracy, and weights the gaps. ECE is readable but depends on bin boundaries and sample size; report a proper score and a reliability diagram with it.
+    Args:
+        items: Scored items with a ``correct`` field.
+        key: Which confidence field to threshold on.
 
-The lab fits one scalar temperature on a calibration split, then evaluates a disjoint deterministic fixture. It moves ECE from 0.060 to 0.024 and Brier score from 0.2015 to 0.1983. Temperature calibration is monotone, so it changes the meaning of a threshold but not the ranking of examples. A risk–coverage curve and its area can therefore remain unchanged even when ECE improves. Calibration measures probability fidelity; discrimination measures whether safer cases rank above riskier ones.
+    Returns:
+        One row per threshold, from most selective to least.
+    """
+    rows = []
+    for t in sorted({it[key] for it in items}, reverse=True):
+        answered = [it for it in items if it[key] >= t]
+        errors = sum(1 - it["correct"] for it in answered)
+        rows.append({"threshold": t, "coverage": len(answered) / len(items),
+                     "selective_risk": errors / len(answered), "marginal_error": errors / len(items)})
+    return rows
+```
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `selective_prediction.py` after calibration | 64 lines | Confidence is evaluated against correctness on held-out items; semantic grouping removes paraphrase-only uncertainty. |
-:::
+We sweep the calibrated confidence and print a handful of operating points.
 
-## Abstention spends coverage to buy reliability {#sec-ch09-abstention}
+```{python}
+curve = risk_curve(fixture, "cal_conf")
+for row in curve[:: max(1, len(curve) // 5)]:
+    print({k: round(v, 3) for k, v in row.items()})
+```
 
-An **abstention policy** maps uncertainty to an action. Below a threshold, the system might say it lacks support, ask a clarifying question, retrieve evidence, narrow the claim, route to a qualified reviewer, or refuse a request. The model may propose a confidence score; deterministic caller code must enforce the threshold and record the branch.
+As coverage falls, selective risk falls with it — the ranking is doing its job. @fig-ch09-riskcoverage plots both risks against coverage; the gap between them is exactly the coverage factor.
 
-Let $g_t(x)=\mathbf{1}[q(x)\geq t]$ mean “answer at threshold $t$,” and let loss $\ell(x,y)$ be one for a wrong answer and zero for a correct one. **Coverage** is the fraction answered,
+```{python}
+#| label: fig-ch09-riskcoverage
+#| code-fold: true
+#| code-summary: "Show the code that draws this figure"
+#| fig-cap: "How much reliability does abstention buy, and at what coverage cost? Sweeping the confidence threshold traces selective risk (error among answered) and marginal error (wrong answers over all queries) against coverage. Selective risk falls as the system answers less; marginal error falls faster because abstentions count as zero loss. The two are the same requirement read two ways, related by R_marginal = C · R_selective."
+import matplotlib.pyplot as plt
+cov = [r["coverage"] for r in curve]
+fig, ax = plt.subplots(figsize=(6.2, 3.8))
+ax.plot(cov, [r["selective_risk"] for r in curve], "o-", color="0.15", label="selective risk (answered)")
+ax.plot(cov, [r["marginal_error"] for r in curve], "s-", color="0.55", label="marginal error (all)")
+ax.set_xlabel("coverage (fraction answered)"); ax.set_ylabel("risk"); ax.legend(); ax.grid(alpha=0.3)
+plt.show()
+```
 
-$$
-C(t)=\mathbb{E}[g_t(X)].
-$$
+A threshold picked by eye has no guarantee attached. **Conformal risk control (CRC)** picks one that provably bounds a monotone loss (Angelopoulos et al., 2024). For a wrong-answer loss on $n$ calibration items, accept a threshold only when $(e_t + 1)/(n + 1) \le \alpha$, where $e_t$ is the number of wrong answers it would release, and take the lowest accepted threshold to maximize coverage.
 
-Two quantities are often both called risk:
+```{python}
+# @save
+import math
 
-$$
-R_{selective}(t)=\frac{\mathbb{E}[\ell g_t]}{\mathbb{E}[g_t]},
-\qquad
-R_{marginal}(t)=\mathbb{E}[\ell g_t].
-$$
+def crc_threshold(items: list[dict], key: str, alpha: float) -> float:
+    """Lowest threshold whose released wrong-answer rate satisfies the CRC bound.
 
-Selective risk is the error rate *among answered queries*. Marginal error is the fraction of all incoming queries that receive a wrong answer; abstentions count as zero loss. They differ by coverage: $R_{marginal}=C\,R_{selective}$. A requirement saying “ten percent risk” is incomplete until it names one.
+    Scans thresholds upward and returns the first where the conformal correction
+    ``(errors + 1) / (n + 1) <= alpha`` holds, controlling expected marginal loss
+    up to the finite-sample correction under exchangeability. The lowest such
+    threshold maximizes coverage.
 
-Sweeping $t$ creates a risk–coverage curve. A useful confidence ranking lowers selective risk as coverage falls. Area under the risk–coverage curve (AURC) summarizes that ranking, but important operating regions and slices should still be reported. Chapter 22 owns interval estimates and release comparisons; here the curve is the mechanism that turns a threshold into an explicit trade.
+    Args:
+        items: Calibration items with a ``correct`` field.
+        key: Which confidence field to threshold on.
+        alpha: Target marginal wrong-answer rate.
 
-**Split conformal prediction** adds a finite-sample coverage statement without assuming that raw model probabilities are calibrated. On a held-out calibration set, define nonconformity $s_i=1-p_i(y_i)$ using the probability assigned to the true answer. Sort the $n$ scores and choose the order statistic at rank $\lceil(n+1)(1-\alpha)\rceil$. For a new input, return all answers whose nonconformity is at most that threshold. Under exchangeability of calibration and future examples, the set contains the true answer with marginal probability at least $(1-\alpha)$.
-
-One safe interface answers only when this conformal set is a singleton and abstains otherwise. On the synthetic fixture with $\alpha=0.10$, the threshold is 0.8625. Test set coverage of the true label is 0.93; 0.66 of queries produce singleton sets; singleton error is 0.106. The guarantee concerns true-label inclusion in the *set*. It does not guarantee that each singleton is correct or that the conditional error among answered cases is below ten percent.
-
-**Conformal risk control (CRC)** extends the idea to a bounded loss that changes monotonically with a threshold. For the lab's marginal wrong-answer loss, a simple binary correction accepts a threshold only when
-
-$$
-\frac{e_t+1}{n+1}\leq \alpha,
-$$
-
-where $e_t$ is the number of wrong answers that the threshold would release on $n$ calibration examples. Choose the lowest accepted threshold to maximize coverage. Under the method's exchangeability and loss assumptions, this controls expected marginal loss up to the conformal correction. With $\alpha=0.10$, the fixture selects confidence 0.85, answers 40 percent of queries, and incurs marginal error 0.07. Yet its selective risk is 0.175. The build is designed to make that distinction impossible to miss.
-
-```python
-# code/ch09/selective_prediction.py — changed region: crc_threshold
-def crc_threshold(items, alpha):
-    for threshold in sorted({item["confidence"] for item in items}):
-        errors = sum(item["confidence"] >= threshold and not item["correct"]
-                     for item in items)
+    Returns:
+        The selected threshold, or ``inf`` if none qualifies.
+    """
+    for t in sorted({it[key] for it in items}):
+        errors = sum(it[key] >= t and not it["correct"] for it in items)
         if (errors + 1) / (len(items) + 1) <= alpha:
-            return threshold
+            return t
     return math.inf
 ```
 
-A conformal guarantee is not permanent certification. Exchangeability can fail when users, prompts, languages, evidence availability, or models change. Calibration data can be contaminated or too small for critical slices. A learned confidence model can be attacked. Monitor coverage and outcomes, freeze the policy version used for each decision, and fall back to a conservative route when drift invalidates the evidence. For consequential applications, also price the cost of abstention: delayed care, inaccessible service, and overloaded human queues are real harms.
+We select a threshold at two risk budgets and read off both risks it produces.
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| `selective_prediction.py` after selective output | 58 lines | Split conformal controls set coverage, while CRC targets a declared marginal loss; neither is mislabeled as per-answer certainty. |
-:::
-
-## Streaming tokens are not text chunks {#sec-ch09-streaming}
-
-An inference server emits token IDs. A user interface displays Unicode text. Those boundaries need not align. UTF-8 represents one Unicode scalar value with one to four bytes, and byte-level tokenizers can expose a piece that ends inside a multibyte character. Decoding each event independently may emit replacement characters or raise an error. A token can also decode to an empty string until combined with neighbors.
-
-Stop sequences create the same boundary problem at a different level. If the requested stop is `STOP`, one chunk may end in `ST` and the next begin with `OP`. Checking each chunk separately leaks the stop marker and may stream text that should have remained hidden. Buffer at least the longest possible stop-prefix suffix, run an incremental decoder, and emit only text that can no longer participate in a stop.
-
-```python
-# code/ch09/decoding_runtime.py — changed region: stream_until
-decoder = codecs.getincrementaldecoder("utf-8")()
-pending, emitted = "", []
-for chunk in chunks:
-    pending += decoder.decode(chunk)
-    if stop in pending:
-        emitted.append(pending.split(stop, 1)[0])
-        return "".join(emitted)
-    keep = max(0, len(stop) - 1)
-    if len(pending) > keep:
-        emitted.append(pending[:-keep] if keep else pending)
-        pending = pending[-keep:] if keep else ""
+```{python}
+for alpha in (0.10, 0.20):
+    t = crc_threshold(fixture, "cal_conf", alpha)
+    answered = [it for it in fixture if it["cal_conf"] >= t]
+    errors = sum(1 - it["correct"] for it in answered)
+    print(f"alpha {alpha}:  threshold {t:.3f}   coverage {len(answered)/len(fixture):.3f}"
+          f"   marginal {errors/len(fixture):.3f}   selective {errors/len(answered):.3f}")
 ```
 
-The lab splits the UTF-8 bytes for `🙂` across three events and splits `STOP` across two. The emitted text is exactly `A🙂`; neither a replacement character nor stop text leaks. A production implementation must additionally handle several stop strings, normalization policy, end-of-sequence tokens, cancellation, maximum-token termination, client disconnects, and an explicit finish reason. Never infer “the model chose to finish” when the server actually hit a length limit.
+At $\alpha = 0.10$ the marginal error lands under the target, but the selective risk is roughly double it — the same operating point, read as marginal or conditional, gives two very different numbers. That distinction is the whole reason to name which risk a requirement means. A second conformal tool, **split conformal prediction** (Angelopoulos and Bates, 2021), controls *set* coverage without assuming raw probabilities are calibrated. On a calibration set it scores nonconformity $s_i = 1 - p_i(y_i)$, sorts, and takes the rank-$\lceil (n+1)(1-\alpha)\rceil$ value as a threshold $\hat q$; a new input returns every answer with nonconformity at most $\hat q$, and under exchangeability the true answer is in that set with probability at least $(1-\alpha)$.
 
-This edge is where byte-level reproducibility meets user-visible behavior. Comparing only token IDs misses detokenizer and stop-policy changes. Comparing only final text misses token-score drift and hidden stop leakage. Preserve both representations when debugging.
+```{python}
+# @save
+import math, random
 
-::: {.artifact-checkpoint}
-| Artifact state | New code | Invariant now verified |
-|---|---:|---|
-| Integrated inference lab complete | Four modules; largest 112 lines | A partial Unicode scalar and a cross-chunk stop are buffered into exactly one safe user-visible string. |
+def multiclass_fixture(n_cal: int = 200, n_test: int = 200) -> tuple:
+    """Build illustrative calibration and test sets of per-class probabilities.
+
+    Each item has a probability over four answer options and the index of the
+    true one; the true-class probability varies with a latent skill so answer
+    sets range from confident singletons to genuine multi-answer ambiguity.
+    Synthetic, for exercising the conformal machinery, not measured from a model.
+
+    Returns:
+        A ``(calibration, test)`` pair of item lists, each item a dict with
+        ``probs`` and ``true_index``.
+    """
+    rng = random.Random(7)
+    def make(n):
+        out = []
+        for _ in range(n):
+            skill = rng.random()
+            true_p = 0.30 + 0.55 * skill
+            others = sorted((rng.random() for _ in range(3)), reverse=True)
+            scale = (1 - true_p) / sum(others)
+            probs = [true_p] + [o * scale for o in others]
+            order = list(range(4)); rng.shuffle(order)
+            shuffled = [0.0] * 4
+            for src, dst in enumerate(order):
+                shuffled[dst] = probs[src]
+            out.append({"probs": shuffled, "true_index": order[0]})
+        return out
+    return make(n_cal), make(n_test)
+
+def split_conformal(calibration: list[dict], test: list[dict], alpha: float) -> dict:
+    """Split-conformal answer sets with guaranteed marginal true-label coverage.
+
+    Scores nonconformity ``1 - p(true)`` on the calibration set, takes the
+    rank-``ceil((n+1)(1-alpha))`` value as the set threshold, and returns every
+    answer within it. Under exchangeability the true label is in the set with
+    probability at least ``1 - alpha``. A singleton set is a confident answer; a
+    larger set is an abstention signal.
+
+    Args:
+        calibration: Items with ``probs`` and ``true_index``.
+        test: Held-out items scored the same way.
+        alpha: Target miscoverage; coverage is guaranteed at ``1 - alpha``.
+
+    Returns:
+        A dict with the threshold ``qhat`` and coverage / singleton statistics.
+    """
+    scores = sorted(1 - it["probs"][it["true_index"]] for it in calibration)
+    rank = min(len(scores), math.ceil((len(scores) + 1) * (1 - alpha))) - 1
+    qhat = scores[rank]
+    contained = singleton = errors = 0
+    for it in test:
+        answer_set = [i for i, p in enumerate(it["probs"]) if 1 - p <= qhat + 1e-12]
+        contained += int(it["true_index"] in answer_set)
+        if len(answer_set) == 1:
+            singleton += 1
+            errors += int(answer_set[0] != it["true_index"])
+    return {"qhat": qhat, "set_coverage": contained / len(test),
+            "singleton_coverage": singleton / len(test),
+            "singleton_risk": errors / singleton if singleton else 0.0}
+```
+
+We build the calibration and test sets and read the coverage the guarantee delivers.
+
+```{python}
+cal, test = multiclass_fixture()
+print({k: round(v, 3) for k, v in split_conformal(cal, test, 0.10).items()})
+```
+
+Set coverage clears the guaranteed level, and most queries resolve to a singleton set — a confident answer — while the rest return a larger set that a safe interface treats as an abstention. The guarantee is about *true-label inclusion in the set*, not that each singleton is correct; these are different promises, and conflating them is how a "guaranteed" system ships an unbounded conditional error. A conformal guarantee also assumes exchangeability, which users, prompts, and model updates break, so monitor coverage, freeze the policy version per decision, and price the cost of abstention — delayed care or an overloaded queue is a real harm too.
+
+::: {.callout-note title="In the interview"}
+**Q. A stakeholder says "get the hallucination rate under five percent." What do you pin down before agreeing?** Ask which rate: marginal error over all traffic, or selective risk among answered queries — they can differ by more than 2× at the same threshold ($R_{\text{marginal}} = C \cdot R_{\text{selective}}$). Then name the event (exact answer, or per-atomic-claim support), the calibration population and its drift, and the confidence signal. Only then is "five percent" a measurable target with a coverage cost attached. **The trap** is quoting one number without its coverage, which lets a system hit 5% marginal error by abstaining on half of traffic while still being wrong a fifth of the time when it does answer.
 :::
+
+## Streaming tokens are not text {#sec-ch09-streaming}
+
+The last edge is where bytes meet users. A server emits token IDs; a UI shows Unicode text, and the boundaries need not align. UTF-8 encodes one scalar value in one to four bytes, and a byte-level tokenizer can emit a piece that ends inside a multibyte character. Decoding each event on its own then produces replacement characters. Stop sequences have the same problem one level up: a requested stop of `STOP` can arrive as `ST` then `OP`, and checking each chunk alone leaks the marker. The fix is to run an incremental decoder and hold back the longest possible stop-prefix.
+
+```{python}
+# @save
+import codecs
+
+def stream_incremental(pieces: list[bytes], stop: str = "") -> str:
+    """Decode a byte-piece stream into safe text, buffering across boundaries.
+
+    Runs a stateful UTF-8 decoder so a multibyte character split across pieces is
+    emitted only once complete, and withholds the last ``len(stop) - 1``
+    characters so a stop sequence straddling two pieces is caught before any of
+    it reaches the user. Returns text up to the stop if one is found.
+
+    Args:
+        pieces: Successive byte fragments (e.g. token ``token_bytes``).
+        stop: Optional stop string to detect across piece boundaries.
+
+    Returns:
+        The safely decoded text, truncated at the stop if present.
+    """
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    pending, emitted = "", []
+    for piece in pieces:
+        pending += decoder.decode(piece)
+        if stop and stop in pending:
+            emitted.append(pending.split(stop, 1)[0])
+            return "".join(emitted)
+        hold = max(0, len(stop) - 1)
+        if len(pending) > hold:
+            emitted.append(pending[:-hold] if hold else pending)
+            pending = pending[-hold:] if hold else ""
+    return "".join(emitted) + pending + decoder.decode(b"", final=True)
+```
+
+We drive it with the real Chapter 2 tokenizer. The emoji `🙂` is four UTF-8 bytes the tokenizer never merged, so it streams as four separate single-byte pieces — the exact case that breaks naive per-piece decoding.
+
+```{python}
+ids = tok.encode("Hi 🙂")
+pieces = [tok.token_bytes[i] for i in ids]
+print("token pieces:", pieces)
+naive = "".join(p.decode("utf-8", errors="replace") for p in pieces)
+print("naive per-piece decode:", repr(naive))
+print("incremental decode:    ", repr(stream_incremental(pieces)))
+print("stop across chunks:    ", repr(stream_incremental([b"ans", b"wer STO", b"P hidden"], "STOP")))
+```
+
+Naive decoding emits replacement characters where the emoji was split; the incremental decoder reassembles it, and the stop marker straddling two chunks is caught before it leaks. A production streamer must also handle several stop strings, end-of-sequence tokens, cancellation, length limits, and an explicit finish reason — never infer "the model chose to stop" when the server hit a token cap.
 
 ## Landscape 2026 (dated) {#sec-ch09-landscape}
 
 ::: {.landscape-2026}
-**Verified on 2026-07-19.** Current [Hugging Face generation documentation](https://huggingface.co/docs/transformers/main_classes/text_generation) exposes top-$p$, min-$p$, typical sampling, penalties, stopping criteria, and many additional processors. Names, defaults, and composition order have changed across releases; pin and inspect the effective `GenerationConfig` instead of copying a default into the durable design.
+**Verified 2026-07-19.** Sampler surfaces move: current [Hugging Face generation docs](https://huggingface.co/docs/transformers/main_classes/text_generation) expose top-$p$, min-$p$, typical sampling, penalties, and stopping criteria, but names, defaults, and composition order have changed across releases — pin and inspect the effective `GenerationConfig` rather than copying a default. On determinism, the [PyTorch reproducibility note](https://docs.pytorch.org/docs/stable/notes/randomness.html) states full reproducibility is not guaranteed across releases or platforms; [Thinking Machines Lab's 2025 batch-invariance analysis](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) traced request-level nondeterminism to batch-dependent reductions, and [vLLM's batch-invariance mode](https://docs.vllm.ai/en/stable/features/batch_invariance/) is documented as beta with coverage limits and a performance cost.
 
-The [PyTorch reproducibility note](https://docs.pytorch.org/docs/stable/notes/randomness.html) states that complete reproducibility is not guaranteed across releases or platforms and documents deterministic-algorithm controls with possible performance cost. [Thinking Machines Lab's 2025 batch-invariance analysis](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) identified batch-dependent reduction strategies as a request-level source of inference variation. As of this verification date, [vLLM's batch-invariance mode](https://docs.vllm.ai/en/stable/features/batch_invariance/) is documented as beta, has hardware/model coverage limits, and can trade performance for invariant scheduling; its separate [reproducibility page](https://docs.vllm.ai/en/stable/usage/reproducibility/) limits guarantees to the same hardware and vLLM version.
-
-Uncertainty research continues beyond scalar log probabilities. 2026 work includes [adaptive Bayesian estimation of semantic entropy](https://arxiv.org/abs/2603.22812) and [geometry-calibrated conformal abstention](https://arxiv.org/abs/2604.27914). These are research directions, not default production guarantees; their estimators, tasks, and assumptions require independent validation.
-
-**Verify live:** sampler parameter names and defaults; processor order; log-probability availability; batch-invariance feature status and supported kernels/models; deterministic-mode performance; model/tokenizer revisions; and the assumptions and benchmark status of named uncertainty methods.
+**Verify live:** sampler parameter names and defaults; processor order; log-probability availability; batch-invariance feature status and supported kernels; deterministic-mode performance; and the task assumptions of any named uncertainty method before trusting its guarantee.
 :::
 
-## Build {#sec-ch09-build}
+## Summary
 
-Run the deterministic build from the `newbook` directory:
+Autoregressive inference is two machines: a compute-bound prefill and a bandwidth-bound decode, whose costs split apart as context grew. Decoding is caller policy layered on logits — temperature reshapes gaps without reordering, truncation trades fixed against adaptive support, and processor order is part of the policy. A seed pins randomness but not the numerical or batch path, so batching one prompt drifts its logits. Its core is knowing when not to answer: hallucination is failure against a named reference, confidence must be calibrated before trust, and a risk-coverage curve with a conformal threshold turns abstention into a guarantee at a stated coverage cost. @sec-ch10 carries this anatomy into serving.
 
-```bash
-python code/ch09/inference_lab.py
-python code/ch09/render_metrics.py
-python -m unittest discover -s code/ch09 -p "test_*.py" -v
-```
+## Exercises
 
-The first command prints the complete measurement record. The second regenerates [`inference_metrics.svg`](../code/ch09/inference_metrics.svg) from that same record. The six tests exercise temperature and truncation invariants, sign-aware processors, KV accounting, roofline placement, seed replay versus batch invariance, calibration, both conformal paths, semantic entropy, streaming, and the optional adapter's import boundary.
+1. **Sweep the sampler on the real vector.** Using `softmax` and `truncate` on the trained model's `"the cat s"` logits, sweep temperature over $\{0.7, 1.0, 1.5\}$ crossed with top-$p \in \{0.8, 0.95\}$ and min-$p \in \{0.05, 0.2\}$. For each setting, draw 200 samples with a seeded generator and report support size, distinct tokens drawn, and entropy. Explain why a setting that looks best on this vector is not a universal default.
 
-At the pinned fixture, request anatomy is:
+2. **Break a necessary repetition.** Add a `no_repeat_ngram` rule alongside `process_logits`. Construct a short code or JSON continuation in which a repeated bracket or key token is *required*, then show the rule making valid output unreachable at penalty 2.0. Name the deterministic constraint that should own syntax instead of a penalty.
 
-| Prompt tokens | KV MiB | TTFT (ms) | TPOT (ms) | Total for 128 output tokens (ms) |
-|---:|---:|---:|---:|---:|
-| 128 | 16 | 29.408 | 7.008 | 919.474 |
-| 512 | 64 | 96.634 | 7.034 | 989.895 |
-| 2,048 | 256 | 365.534 | 7.134 | 1,271.580 |
+3. **Hunt for a real greedy flip.** Extend the batch-drift measurement to search prompts for one whose top-two logits are close enough that batching flips the greedy token. (a) Report the smallest batch size at which it flips and the logit gap involved. (b) Repeat in float64 and explain what changes. (c) State which of the four reproducibility claims your finding violates.
 
-The decode probe reproduces 20 seeded draws exactly, then flips one greedy token when its reduction order changes; maximum probability drift is 0.244919. Calibration temperature 1.49 lowers ECE from 0.060 to 0.024 and Brier score from 0.2015 to 0.1983. Semantic grouping lowers entropy from 1.489 to 1.085 nats. Split conformal reaches 0.93 set coverage and answers with a singleton on 0.66 of items. CRC answers 0.40 of items at marginal error 0.07, while selective risk remains 0.175.
+4. **Compare confidence signals under shift.** The fixture's `logprob_conf` and `verbal_conf` are miscalibrated differently. Fit `fit_temperature` to each, then re-score a *shifted* fixture built with a different `seed` and lower base accuracy. Report ECE and Brier before and after on the shifted data, and explain why a calibrator fit on one population can fail on another.
 
-The three panels in @fig-ch09-build-metrics connect those results. Panel A explains phase placement, Panel B distinguishes calibration from accuracy, and Panel C places marginal and conditional error on the same coverage axis.
+5. **Separate calibration from ranking.** Replace scalar temperature scaling with any other monotone calibrator. Show that ECE and Brier change but the risk-coverage curve and the order in which items are answered do not. Explain why calibration changes the *meaning* of a threshold without changing *which* items clear it.
 
-![How do request phase, calibration, and abstention describe different inference risks? The illustrative roofline places decode below the ridge and prefill above it; temperature calibration moves fixture confidence toward observed accuracy; and the CRC point reaches marginal error 0.07 at coverage 0.40 while selective risk is 0.175. All values are deterministic analytical or synthetic fixtures, not deployed-model measurements.](../code/ch09/inference_metrics.svg){#fig-ch09-build-metrics fig-alt="Three grayscale panels. The first is an illustrative roofline with decode bandwidth-bound and prefill compute-bound. The second compares raw and temperature-calibrated reliability points to the diagonal. The third plots selective risk and marginal error against answered coverage and marks the conformal-risk-control operating point."}
+6. **Stress the conformal guarantee.** Rerun `crc_threshold` and `split_conformal` with calibration sizes 50, 200, and 1,000 over many random splits. Plot the realized coverage, marginal error, and selective risk, and identify the smallest calibration set at which the guarantee is reliable. Then construct an exchangeability violation (e.g., sort by difficulty before splitting) and show the guarantee break.
 
-To replace only the model seam, install compatible `torch` and `transformers` packages and run:
-
-```bash
-python code/ch09/hf_inference_adapter.py MODEL_ID "The prompt to profile" --max-new-tokens 16 --batch-size 8
-```
-
-Record the exact model revision, tokenizer, dtype, device, library versions, prompt bytes, warm-up policy, and whether synchronization is included in each timer. The adapter uses a hand-rolled cached greedy loop to expose TTFT, mean TPOT, token IDs, text, and measured cache storage. Its batch probe compares a request alone with an identical request in a larger batch. A zero flip on one prompt is not proof of batch invariance; sweep prompts, near ties, batch shapes, and load.
-
-::: {.callout-warning title="Honesty boundary"}
-The default timing values are analytical outputs of a declared seven-billion-parameter configuration and illustrative hardware ceilings. The QA labels, confidence distribution, batch-order flip, and semantic clusters are synthetic. They teach equations and failure distinctions; they do not estimate any model, GPU, domain, or production error rate. The optional adapter supplies measurements, not a benchmark protocol. Chapter 10 owns serving experiments, and Chapter 22 owns statistical evaluation.
-:::
-
-## What endures, what changes {#sec-ch09-endures}
-
-**What endures.** Prefill and decode create different latency terms. KV storage depends on KV heads and grows linearly with cached tokens. Roofline placement follows arithmetic intensity. Temperature rescales probability gaps without reordering logits; truncation changes support; processor order changes the final policy. A seed controls randomness, not every numerical or scheduling path. Hallucination is defined against a reference and task. Token likelihood, semantic uncertainty, calibration, discrimination, set coverage, marginal error, and selective risk are different quantities. Abstention is a caller-enforced action with an explicit coverage cost. Token events require buffered detokenization and stop handling.
-
-**What changes.** Model and tokenizer revisions, cache layouts, accelerator ceilings, kernel selection, deterministic-mode support, sampler names/defaults, processor order, log-probability APIs, uncertainty estimators, benchmark results, and provider guarantees all move. Keep those facts in adapters, measurement metadata, and the dated landscape. Removing the dated block leaves the request, decoding, calibration, and abstention mechanisms intact.
-
-Chapter 10 now takes the same prefill/decode anatomy into a multi-request serving system, where batching, caching, scheduling, and capacity turn per-request mechanisms into production trade-offs.
-
-## Exercises {#sec-ch09-exercises}
-
-1. **Temperature and adaptive support.** Sweep top-$p$ and min-$p$ over temperatures 0.7, 1.0, and 1.5 on at least 100 fixture draws per setting. Predict support and entropy first. Add repetition and distinct-$n$ measurements, then state why a winner on this vector is not a universal default.
-
-2. **Break a necessary repetition.** Add `no_repeat_ngram` to the shared processor pipeline. Construct a tiny code or JSON continuation in which a repeated bracket or key token is necessary. Demonstrate the failure at penalty 2.0 and name the deterministic constraint that should own syntax instead.
-
-3. **Compare beam search without moving its boundary.** Implement width-$B$ beam search with length normalization against the same logits interface. On one closed task and one open-ended prompt, compare complete-sequence likelihood, diversity, and task quality with sampling. Explain why verifier-driven search remains Chapter 8's mechanism.
-
-4. **Probe batch dependence.** Extend the optional adapter over batch sizes 1, 2, 8, and 32 and at least 100 prompts. Record max log-probability drift and greedy flip rate with full environment metadata. Repeat with a documented deterministic or batch-invariant mode and report its performance cost.
-
-5. **Separate calibration from ranking.** Replace scalar temperature scaling with another held-out calibrator. Show ECE and Brier score before and after, then verify whether AURC changes. Explain why a monotone calibrator can improve threshold meaning without changing which examples are answered first.
-
-6. **Stress the calibration split.** Repeat split conformal and CRC with calibration sizes 50, 200, and 1,000 over many random splits. Plot set coverage, marginal error, selective risk, and participation. Identify which statement each method guarantees and what exchangeability violation would invalidate it.
-
-7. **Design a consequential abstention contract.** A medical-information endpoint has a stated wrong-answer budget. Define the event, whether the budget is marginal or conditional, the confidence signal, calibration population, conformal target, decoding policy, clarification/retrieval/escalation branches, drift trigger, and user-visible message. Defend the residual harm from both wrong answers and abstentions.
-
-## Notes and sources {#sec-ch09-sources}
-
-The decoding foundation is Holtzman et al., [The Curious Case of Neural Text Degeneration](https://arxiv.org/abs/1904.09751), which motivates nucleus sampling and analyzes high-likelihood degeneration. [Locally Typical Sampling](https://arxiv.org/abs/2202.00666) defines information-content typicality. Nguyen et al., [Turning Up the Heat](https://arxiv.org/abs/2407.01082), gives the min-$p$ rule and its evaluated high-temperature regime. Current parameter surfaces are documented in the official [Hugging Face generation reference](https://huggingface.co/docs/transformers/main_classes/text_generation).
-
-The performance model follows Williams, Waterman, and Patterson, [Roofline: An Insightful Visual Performance Model](https://www2.eecs.berkeley.edu/Pubs/TechRpts/2008/EECS-2008-134.pdf). Reproducibility claims are grounded in the official [PyTorch reproducibility note](https://docs.pytorch.org/docs/stable/notes/randomness.html), the primary [batch-invariance analysis](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/), and current [vLLM reproducibility](https://docs.vllm.ai/en/stable/usage/reproducibility/) and [batch-invariance](https://docs.vllm.ai/en/stable/features/batch_invariance/) documentation. UTF-8's variable-width encoding is specified by the [Unicode Standard](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-2/).
-
-Hallucination and factuality sources include [TruthfulQA](https://arxiv.org/abs/2109.07958), [Why Language Models Hallucinate](https://arxiv.org/abs/2509.04664), [FActScore](https://arxiv.org/abs/2305.14251) for atomic long-form factual precision, and [ALCE](https://arxiv.org/abs/2305.14627) for citation-grounded generation. These works study different reference contracts; their scores should not be collapsed into one universal hallucination number.
-
-Confidence mechanisms follow Kadavath et al., [Language Models (Mostly) Know What They Know](https://arxiv.org/abs/2207.05221); Tian et al., [Just Ask for Calibration](https://arxiv.org/abs/2305.14975); and Kuhn, Gal, and Farquhar, [Semantic Uncertainty](https://arxiv.org/abs/2302.09664). Selective risk follows Geifman and El-Yaniv, [Selective Classification for Deep Neural Networks](https://arxiv.org/abs/1705.08500). Finite-sample mechanisms follow [A Gentle Introduction to Conformal Prediction](https://arxiv.org/abs/2107.07511), [Conformal Risk Control](https://arxiv.org/abs/2208.02814), and Quach et al., [Conformal Language Modeling](https://arxiv.org/abs/2306.10193). The guarantee statements in this chapter intentionally distinguish prediction-set coverage, marginal loss control, and conditional selective risk.
+7. **Design a consequential abstention contract.** For a medical-information endpoint with a stated wrong-answer budget, specify the event, whether the budget is marginal or selective, the confidence signal and its calibration population, the conformal target, the decoding policy, the clarify/retrieve/escalate branches, the drift trigger, and the user-visible message. Defend the residual harm from both wrong answers *and* abstentions.
