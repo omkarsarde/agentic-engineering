@@ -33,6 +33,11 @@ jobs:
       - name: Render HTML book
         run: quarto render --to html
 
+      # book.omkarsarde.com: the CNAME file must ship inside the rendered
+      # output, or the next publish force-push detaches the custom domain.
+      - name: Attach custom domain
+        run: echo "book.omkarsarde.com" > _book/CNAME
+
       - name: Publish rendered HTML
         uses: quarto-dev/quarto-actions/publish@v2
         with:
