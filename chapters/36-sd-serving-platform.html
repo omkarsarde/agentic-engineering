@@ -2,7 +2,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
 
 <meta charset="utf-8">
-<meta name="generator" content="quarto-1.9.38">
+<meta name="generator" content="quarto-1.10.18">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
@@ -13,10 +13,13 @@
 /* Default styles provided by pandoc.
 ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
 */
-code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
-div.columns{display: flex; gap: min(4vw, 1.5em);}
-div.column{flex: auto; overflow-x: auto;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
 div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
 ul.task-list{list-style: none;}
 ul.task-list li input[type="checkbox"] {
@@ -96,14 +99,14 @@ div.csl-indent {
 <script src="../site_libs/quarto-html/tippy.umd.min.js"></script>
 <script src="../site_libs/quarto-html/anchor.min.js"></script>
 <link href="../site_libs/quarto-html/tippy.css" rel="stylesheet">
-<link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
-<link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-39d72d2d8fc74c86a6f3fad29307908e.css" rel="stylesheet" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
-<link href="../site_libs/quarto-html/quarto-syntax-highlighting-3acd1a9e0a36fa73befe01192217db1c.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-12106144976485bf479025c3edc80393.css" rel="stylesheet" class="quarto-color-scheme" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-dark-568ff95e532a50685ac0bab835720aee.css" rel="stylesheet" class="quarto-color-scheme quarto-color-alternate" id="quarto-text-highlighting-styles">
+<link href="../site_libs/quarto-html/quarto-syntax-highlighting-12106144976485bf479025c3edc80393.css" rel="stylesheet" class="quarto-color-scheme-extra" id="quarto-text-highlighting-styles">
 <script src="../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
-<link href="../site_libs/bootstrap/bootstrap-dark-a92ea776b62a439b3a62120afa2478ff.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
-<link href="../site_libs/bootstrap/bootstrap-3da3cb77be5016edbba6a5071c5b890e.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-99ecdce729d23aa88cb77998323f2bd7.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme" id="quarto-bootstrap" data-mode="light">
+<link href="../site_libs/bootstrap/bootstrap-dark-0f0148182b9ad04f512fdc82eab1d942.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme quarto-color-alternate" id="quarto-bootstrap" data-mode="dark">
+<link href="../site_libs/bootstrap/bootstrap-99ecdce729d23aa88cb77998323f2bd7.min.css" rel="stylesheet" append-hash="true" class="quarto-color-scheme-extra" id="quarto-bootstrap" data-mode="light">
 <script src="../site_libs/quarto-contrib/glightbox/glightbox.min.js"></script>
 <link href="../site_libs/quarto-contrib/glightbox/glightbox.min.css" rel="stylesheet">
 <link href="../site_libs/quarto-contrib/glightbox/lightbox.css" rel="stylesheet">
@@ -897,7 +900,7 @@ Table&nbsp;36.1: Requirements for the serving platform. Out of scope, stated alo
 <section id="sec-ch36-numbers" class="level2" data-number="36.2">
 <h2 data-number="36.2" class="anchored" data-anchor-id="sec-ch36-numbers"><span class="header-section-number">36.2</span> The numbers first</h2>
 <p>Numbers before boxes. The model-infra anchors are KV memory per request, concurrency per device, the fleet a load implies, and the cost per token — and the first of these carries the trap. We recall Chapter 3’s KV equation (<a href="03-attention-position-long-context.html#eq-ch03-kvbytes" class="quarto-xref">Equation&nbsp;<span>3.1</span></a>) in one sentence — a request’s cache is layers times <em>KV heads</em> (not query heads) times head dimension times retained tokens times bytes, doubled for keys and values — and import its calculator rather than rebuild it.</p>
-<div id="1295618f" class="cell" data-execution_count="1">
+<div id="874f884f" class="cell" data-execution_count="1">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> importlib.util</span>
@@ -933,7 +936,7 @@ the trap (32 query heads)      : 34.4 GB  -- 4x too high</code></pre>
 </div>
 </div>
 <p>Sixteen concurrent 4K requests hold 8.6 GB of cache; compute it from the thirty-two <em>query</em> heads and you get 34 GB and a fleet sized four times too large. The audible fix is one clause — “GQA caches eight KV heads, not thirty-two query heads” (<a href="03-attention-position-long-context.html#sec-ch03-gqa" class="quarto-xref"><span>Section 3.2</span></a>) — and it is the single most reliable way to fail this round if you skip it. With the per-request number correct, capacity is a division: how many caches fit on a device, how long a request stays resident, and therefore how many devices a QPS number needs.</p>
-<div id="c62872fb" class="cell" data-execution_count="2">
+<div id="6d31148c" class="cell" data-execution_count="2">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>per_device_mem <span class="op">=</span> sd.kv_concurrency_per_device(hbm_bytes<span class="op">=</span><span class="fl">80e9</span>, weights_bytes<span class="op">=</span><span class="fl">16e9</span>,</span>
@@ -959,7 +962,7 @@ same under a 3x burst    : 36</code></pre>
 </div>
 </div>
 <p>Two device numbers, and the gap between them is the design. Memory alone would fit about a hundred requests per card, which says four devices carry 50 QPS. But interactive TTFT will not survive a batch of a hundred — every request in the batch waits for the slowest — so we cap the running batch near 32 to hold the latency SLO, and <em>that</em> cap, not memory, binds: twelve devices at peak, thirty-six under a threefold burst. Which bound is active is the answer; the senior sentence is “memory says four, the TTFT batch cap says twelve, so I provision for twelve and the burst is a buy-or-shed decision, not a given.” The last anchor turns throughput into money, because self-hosting only pays if the arithmetic clears the vendor’s price.</p>
-<div id="04bae71d" class="cell" data-execution_count="3">
+<div id="c692cfd4" class="cell" data-execution_count="3">
 <details class="code-fold">
 <summary>Show the code</summary>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cost_per_million(gpu_hour_price: <span class="bu">float</span>, throughput_tok_s: <span class="bu">float</span>) <span class="op">-&gt;</span> <span class="bu">float</span>:</span>
