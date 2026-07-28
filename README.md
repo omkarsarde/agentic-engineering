@@ -1,6 +1,6 @@
 # Agentic Engineering
 
-This directory is a clean-room rewrite of the book. It does not modify or replace the legacy manuscript in `genai-gym/book`.
+Source for the book, published at **<https://book.omkarsarde.com>**.
 
 ## Render locally
 
@@ -16,7 +16,7 @@ Build the deployable website with:
 quarto render --to html
 ```
 
-The HTML site is written to `_book/`. A full `quarto render` also requests the configured PDF and EPUB formats; PDF rendering requires a TeX distribution. The CI pipeline renders the HTML site and the EPUB together, so the download link on the landing page always matches the published content. PDF remains a manual build requiring a TeX distribution. GitHub Pages deployment is defined in `.github/workflows/publish.yml` for the case where this directory becomes the repository root. See [DEPLOYMENT.md](DEPLOYMENT.md) for the $0 hosting paths, nested-repository setup, and the rationale for Quarto Markdown and the visual stack.
+The HTML site is written to `_book/`. CI renders and publishes the HTML site only; the EPUB is rendered locally and attached to a GitHub Release, which the landing page links via `releases/latest`. PDF remains a manual build requiring a TeX distribution. See [DEPLOYMENT.md](DEPLOYMENT.md) for how publishing and the custom domain work, and for the rationale for Quarto Markdown and the visual stack.
 
 ## Validate source
 

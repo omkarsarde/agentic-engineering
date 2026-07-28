@@ -1,8 +1,9 @@
 # Editorial contract (v2)
 
 Binding for every chapter and appendix. Where this contract and any older document
-disagree, this contract wins. The section-level rhythm is specified in
-`_redo/analysis/d2l-style-template.md`; this file states the book-level rules.
+disagree, this contract wins. This file states the book-level rules; the
+section-level rhythm is the d2l.ai teaching pattern the chapters already exhibit
+(working code produces real output, narrated as "we", measured before claimed).
 
 ## Reader and promise
 
